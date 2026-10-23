@@ -2,7 +2,7 @@
 import { h, sheet, group, caption, footer, toggle, segmented, selectRow, alertBox, toast, icon } from "../ui.js";
 import {
   CATEGORIES, GOAL_CATEGORIES, PROFILE_DEFS, addMonths, mShort, mIndex, parseNumber, plainNumber, fmtSek,
-  goalPlannedBy, roundTo10,
+  goalPlannedBy, roundTo10, CUR, CURRENCIES, inSweden, localSym, rateShown,
 } from "../core.js";
 import { store } from "../store.js";
 
@@ -49,7 +49,8 @@ export function openExpenseSheet(ctx, snap, original = null) {
   const amountFooter = footer("");
   amountFooter.classList.add("amt");
 
-  const curSeg = segmented(["SEK", "EUR"], currency, (i) => { currency = i; validate(); }, "small");
+  if (CUR.single) currency = 0;
+  const curSeg = CUR.single ? null : segmented([CUR.local, CUR.second], currency, (i) => { currency = i; validate(); }, "small");
   const perSeg = segmented(["Per month", "Per year"], per, (i) => { per = i; validate(); }, "small");
   const active = toggle(original ? original.active : true, () => {}, "Include in budget");
   const stepper = monthStepper(() => endMonth, (m) => { endMonth = m; });
@@ -70,10 +71,11 @@ export function openExpenseSheet(ctx, snap, original = null) {
     const v = parseNumber(amount.value);
     amount.classList.toggle("invalid", Boolean(amount.value.trim()) && (v === null || v < 0));
     const eur = currency === 1, yearly = per === 1;
-    let t = "Pick EUR for things billed in euro. Yearly bills are spread over 12 months.";
+    let t = CUR.single ? "Yearly bills are spread over 12 months."
+      : `Pick ${CUR.second} for things billed in ${CUR.second}. Yearly bills are spread over 12 months.`;
     if (v && v > 0) {
       const perMonth = yearly ? v / 12 : v;
-      if (eur && fx) t = `≈ ${fmtSek(perMonth / fx)} a month in the budget, at 1 EUR = ${(1 / fx).toFixed(2)} SEK (set on the Budget page).`;
+      if (eur && fx) t = `≈ ${fmtSek(perMonth / fx)} a month in the budget, at 1 ${CUR.second} = ${rateShown(fx)} ${CUR.local} (set on the Budget page).`;
       else if (eur) t = "Set an exchange rate on the Budget page to convert euro costs.";
       else if (yearly) t = `Counts as ${fmtSek(perMonth)} a month in the budget.`;
       else t = `That's ${fmtSek(v * 12)} a year.`;
@@ -107,7 +109,7 @@ export function openExpenseSheet(ctx, snap, original = null) {
 
   const body = h("div", { class: "form" },
     caption("DETAILS"),
-    group(row("Name", name), row("Amount", amount, null, curSeg), plainRow("Paid", perSeg), catRow),
+    group(row("Name", name), row("Amount", amount, CUR.single ? localSym() : null, curSeg), plainRow("Paid", perSeg), catRow),
     amountFooter,
     caption("BUDGET"),
     group(switchRow("Include in budget", active), switchRow("Last month", hasEnd, stepper)),
@@ -135,7 +137,7 @@ export function openGoalSheet(ctx, snap, original = null) {
   const goalFooter = footer("");
   goalFooter.classList.add("amt");
   const stepper = monthStepper(() => target, (m) => { target = m; }, () => validate());
-  const onceBlock = h("div", null, caption("ONE-OFF"), group(plainRow("Needed by", stepper), row("Already saved", saved, "kr")));
+  const onceBlock = h("div", null, caption("ONE-OFF"), group(plainRow("Needed by", stepper), row("Already saved", saved, localSym())));
   const kindSeg = segmented(["Every year", "One-off"], once ? 1 : 0, (i) => { once = i === 1; kindChanged(); }, "small");
   const active = toggle(original ? original.active : true, () => {}, "Include in the plan");
 
@@ -206,7 +208,7 @@ export function openGoalSheet(ctx, snap, original = null) {
     caption("GOAL"),
     group(row("Name", name), selectRow("Category", GOAL_CATEGORIES.map(([c]) => [c, c]), category, (v) => { category = v; })),
     caption("AMOUNT"),
-    group(plainRow("Repeats", kindSeg), h("label", { class: "form-row" }, amountLabel, amount, h("span", { class: "form-unit" }, "kr"))),
+    group(plainRow("Repeats", kindSeg), h("label", { class: "form-row" }, amountLabel, amount, h("span", { class: "form-unit" }, localSym()))),
     onceBlock,
     goalFooter,
     caption("PLAN"),
@@ -256,7 +258,7 @@ export function openProfilesSheet(ctx, snap) {
     caption("SAVE FOR YOUR FUTURE"),
     group(rows),
     note,
-    footer("Rules of thumb: about 10% is Swedbank's everyday suggestion, 20% matches the 50/30/20 rule, and 30% or more is high saving."),
+    footer(`Rules of thumb: about 10% is ${inSweden() ? "Swedbank's everyday suggestion" : "a common everyday minimum"}, 20% matches the 50/30/20 rule, and 30% or more is high saving.`),
     h("button", { type: "button", class: "link-btn center", onclick: () => {
       for (const [key, , , def] of PROFILE_DEFS) fields[key].value = String(def);
       validate();

@@ -2,7 +2,7 @@
 import { h, chip, dot, segmented, splitBar, kv, appIcon, toast } from "../ui.js";
 import { chart } from "../charts.js";
 import {
-  COLORS, MONTHS, NOTE_TAGS, BROKERS, CAPITAL_GAINS_TAX, ISK_TAX_FREE, CATEGORY_COLORS,
+  COLORS, MONTHS, NOTE_TAGS, CUR, CURRENCIES, inSweden, localSym, secondSym, brokersText, hasMoney, CAPITAL_GAINS_TAX, ISK_TAX_FREE, CATEGORY_COLORS,
   monthFlows, summarize, tagAnalysis, quietMonths, tripComparison, travelFund, incomeAnalysis, investmentStatus,
   buildActions, futureValue, tripStatus, isTrip, mean, mLong, mShort, mNum, fmtSek, fmtEur, fmtAxisSek, pct, toneOf,
   parseNumber, plainNumber, expenseMonthlySek, shortNote, roundTo10, investedSek,
@@ -11,11 +11,9 @@ import { store } from "../store.js";
 import { statCard } from "./overview.js";
 
 const LIVING_C = COLORS.purple;
-// subtitles that mention amounts get blurred in privacy mode
-const MONEY_RX = /\d\s?kr\b|€\s?\d/;
 const card = (...children) => h("div", { class: "card" }, children);
 const head = (title, sub = null, right = null) => h("div", { class: "card-head" },
-  h("div", { class: "card-head-text" }, h("div", { class: "card-title" }, title), sub ? h("div", { class: `card-sub ${typeof sub === "string" && MONEY_RX.test(sub) ? "amt-soft" : ""}` }, sub) : null),
+  h("div", { class: "card-head-text" }, h("div", { class: "card-title" }, title), sub ? h("div", { class: `card-sub ${typeof sub === "string" && hasMoney(sub) ? "amt-soft" : ""}` }, sub) : null),
   right);
 const signedPct = (x, d = 0) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(d)}%`;
 const syncNow = () => { if (store.mode === "drive" && !store.drive.tokenValid()) store.syncFromTap(); };
@@ -29,7 +27,7 @@ function kpis(snap, summ, inv) {
     chipText = `Plan ${pct(plan)}`;
     tone = summ.rate >= plan - 0.02 ? "up" : summ.rate < plan - 0.10 ? "down" : "flat";
   }
-  cards.push(statCard("SAVINGS RATE", COLORS.green, pct(summ.rate), `of income, last ${summ.n} months`, chipText, tone));
+  cards.push(statCard("SAVINGS RATE", COLORS.green, pct(summ.rate), `of income, last ${summ.n === 1 ? "month" : `${summ.n} months`}`, chipText, tone));
   const budget = snap.fixed + snap.living + snap.goals;
   if (snap.plan_ready) {
     const over = summ.spending - budget;
@@ -40,7 +38,11 @@ function kpis(snap, summ, inv) {
     cards.push(statCard("BUFFER", COLORS.blue, `${(snap.bank / snap.fixed).toFixed(1)} months`, "of fixed costs in the bank",
       `Target ${snap.buffer_months} months`, snap.shortfall <= 0 ? "up" : "flat"));
   } else cards.push(statCard("BUFFER", COLORS.blue, "—", "fill in fixed costs in Budget"));
-  if (inv && inv.after !== null) {
+  if (inv && !inv.taxed) {
+    cards.push(statCard("INVESTED", COLORS.orange, fmtEur(inv.value), "market value in your latest log",
+      inv.gain_sek === null ? "Add what it cost below" : `${inv.gain_sek >= 0 ? "Gain" : "Loss"} ${fmtSek(inv.gain_sek, true)}`,
+      inv.gain_sek === null ? "flat" : toneOf(inv.gain_sek), "vc"));
+  } else if (inv && inv.after !== null) {
     cards.push(statCard("INVESTED AFTER TAX", COLORS.orange, fmtEur(inv.after), `of ${fmtEur(inv.value)} market value`,
       inv.gain_sek >= 0 ? `${fmtSek(inv.tax_sek)} tax if sold today` : "At a loss, so no tax", "flat", "vsc"));
   } else cards.push(statCard("INVESTED AFTER TAX", COLORS.orange, inv ? fmtEur(inv.value) : "—", "market value, before tax",
@@ -206,7 +208,8 @@ function incomeCard(inc) {
 function investmentsCard(inv, ctx) {
   if (!inv) return null;
   const entries = ctx.entries;
-  let cur = inv.cost_input && inv.cost_input[1] === "EUR" ? 1 : 0;
+  const taxed = inv.taxed;
+  let cur = !CUR.single && inv.cost_input && inv.cost_input[1] === "EUR" ? 1 : 0;
   const input = h("input", { class: "fx-input wide amt", type: "text", inputmode: "decimal", autocomplete: "off", placeholder: "e.g. 40 000",
     "aria-label": "What your holdings cost" });
   if (inv.cost_input) { const a = inv.cost_input[0]; input.value = plainNumber(a, a === Math.round(a) ? 0 : 2); }
@@ -220,45 +223,58 @@ function investmentsCard(inv, ctx) {
   input.addEventListener("change", saveCost);
   input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") input.blur(); });
 
+  const localName = CURRENCIES[CUR.local][3].toLowerCase();
+  const inLocal = taxed ? ", in kronor" : "";
   let costNote;
-  if (inv.cost_sek === null) costNote = "Type it once, in kronor or euro, to see what your holdings are worth after tax. Money you log under “Added this month” is added on top by itself.";
-  else {
+  if (inv.cost_sek === null) {
+    costNote = `Type it once${CUR.single ? "" : `, in ${CUR.local} or ${CUR.second},`} to see ${taxed ? "what your holdings are worth after tax" : "how much you've gained"}. Money you log under “Added this month” is added on top by itself.`;
+  } else {
     const c = inv.cost_input[1];
     costNote = `As of ${mLong(inv.as_of)}`;
-    if (c === "EUR") costNote += `, converted at that month's rate (1 € = ${(1 / inv.as_of_rate).toFixed(2)} kr)`;
+    if (c === "EUR" && !CUR.single) costNote += `, converted at that month's rate (1 ${secondSym()} = ${(1 / inv.as_of_rate).toFixed(2)} ${localSym()})`;
     if (inv.added_since_eur > 0.5) costNote += `, plus ${fmtEur(inv.added_since_eur)} logged since`;
     costNote += ".";
-    if (c === "EUR") costNote += " Type it in kronor for the exact tax figure.";
+    if (c === "EUR" && taxed && !CUR.single) costNote += ` Type it in ${localName} for the exact tax figure.`;
   }
   const rows = [];
   if (inv.cost_sek !== null) {
-    rows.push(kv("Worth today, in kronor", fmtSek(inv.value_sek)), kv("What it cost, in kronor", fmtSek(inv.cost_sek)));
-    if (inv.gain_sek >= 0) rows.push(kv("Taxable gain", fmtSek(inv.gain_sek, true)),
-      kv("Tax if you sold everything today (30%)", `${fmtSek(inv.tax_sek)}  ·  ${fmtEur(inv.tax)}`));
-    else rows.push(kv("Loss if you sold everything today", fmtSek(inv.gain_sek, true)), kv("Tax", "None, the loss can lower other tax", { amt: false }));
-    rows.push(kv("Worth after tax", `${fmtEur(inv.after)}  ·  ${fmtSek(inv.after_sek)}`, { strong: true, tone: "up" }));
+    rows.push(kv(`Worth today${inLocal}`, fmtSek(inv.value_sek)), kv(`What it cost${inLocal}`, fmtSek(inv.cost_sek)));
+    if (!taxed) rows.push(kv(inv.gain_sek >= 0 ? "Gain if you sold today" : "Loss if you sold today", fmtSek(inv.gain_sek, true),
+      { tone: toneOf(inv.gain_sek), strong: true }));
+    else {
+      if (inv.gain_sek >= 0) rows.push(kv("Taxable gain", fmtSek(inv.gain_sek, true)),
+        kv("Tax if you sold everything today (30%)", CUR.single ? fmtSek(inv.tax_sek) : `${fmtSek(inv.tax_sek)}  ·  ${fmtEur(inv.tax)}`));
+      else rows.push(kv("Loss if you sold everything today", fmtSek(inv.gain_sek, true)), kv("Tax", "None, the loss can lower other tax", { amt: false }));
+      rows.push(kv("Worth after tax", CUR.single ? fmtSek(inv.after_sek) : `${fmtEur(inv.after)}  ·  ${fmtSek(inv.after_sek)}`, { strong: true, tone: "up" }));
+    }
   }
   if (inv.logged_months) {
     const n = inv.logged_months;
     rows.push(kv(`Added in ${n} logged month${n !== 1 ? "s" : ""}`, fmtEur(inv.added_logged)),
       kv("Market result in those months", fmtEur(inv.market_logged, 0, true), { tone: toneOf(inv.market_logged) }));
   }
-  const isk = inv.isk_tax_year;
-  const compare = isk < 1
-    ? `For comparison: in an ISK, holdings up to ${fmtSek(ISK_TAX_FREE)} are tax-free in 2026 (yours would pay 0 kr), and selling isn't taxed.`
-    : `For comparison: in an ISK these holdings would pay about ${fmtSek(isk)} a year (2026: the first ${fmtSek(ISK_TAX_FREE)} is tax-free), with no tax when you sell.`;
+  let swedish = [];
+  if (taxed) {
+    const isk = inv.isk_tax_year;
+    const compare = isk < 1
+      ? `For comparison: in an ISK, holdings up to ${fmtSek(ISK_TAX_FREE)} are tax-free in 2026 (yours would pay ${fmtSek(0)}), and selling isn't taxed.`
+      : `For comparison: in an ISK these holdings would pay about ${fmtSek(isk)} a year (2026: the first ${fmtSek(ISK_TAX_FREE)} is tax-free), with no tax when you sell.`;
+    swedish = [h("div", { class: "hairline" }),
+      h("div", { class: "hint" }, `How it's taxed: ${Math.round(CAPITAL_GAINS_TAX * 100)}% of the gain when you sell, worked out in kronor (what you get in SEK minus what you paid in SEK), so the currency's moves count too. Dividends are taxed 30%, minus tax already withheld abroad. Losses are set off against gains, and 70% of a loss that's left is deductible. Foreign brokers usually don't report to Skatteverket, so check that your sales (K4) and dividends are in your tax return.`),
+      h("div", { class: "hint amt-soft" }, compare)];
+  }
 
-  return card(head("Investments", `${BROKERS}  ·  regular accounts`, chip("30% tax on gains", "flat")),
+  return card(head("Investments", taxed ? `${brokersText("Your brokers")}  ·  regular accounts` : CUR.brokers || null,
+    taxed ? chip("30% tax on gains", "flat") : null),
     h("div", { class: "block-value amt" }, fmtEur(inv.value)),
-    h("div", { class: "muted amt-soft" }, `≈ ${fmtSek(inv.value_sek)}  ·  market value in your latest log`),
+    h("div", { class: "muted amt-soft" }, CUR.single ? "market value in your latest log" : `≈ ${fmtSek(inv.value_sek)}  ·  market value in your latest log`),
     h("div", { class: "cost-row" }, h("span", { class: "cost-label" }, "What your holdings cost"), input,
-      segmented(["kr", "€"], cur, (i) => { cur = i; if (input.value.trim()) saveCost(); }, "small")),
+      CUR.single ? h("span", { class: "eq-unit" }, localSym())
+        : segmented([localSym(), secondSym()], cur, (i) => { cur = i; if (input.value.trim()) saveCost(); }, "small")),
     h("div", { class: "hint amt-soft" }, costNote),
     rows.length ? h("div", { class: "hairline" }) : null,
     rows.length ? h("div", { class: "kv-list" }, rows) : null,
-    h("div", { class: "hairline" }),
-    h("div", { class: "hint" }, `How it's taxed: ${Math.round(CAPITAL_GAINS_TAX * 100)}% of the gain when you sell, worked out in kronor (what you get in SEK minus what you paid in SEK), so the euro's moves count too. Dividends are taxed 30%, minus tax already withheld abroad. Losses are set off against gains, and 70% of a loss that's left is deductible. Foreign brokers usually don't report to Skatteverket, so check that your sales (K4) and dividends are in your tax return.`),
-    h("div", { class: "hint amt-soft" }, compare));
+    swedish);
 }
 
 // ---------------------------------------------------------------------------
@@ -339,8 +355,8 @@ function growthCard(startSek, monthly, fx, source) {
     const [total, putIn] = futureValue(startSek, monthly, years, annual);
     const growth = Math.max(total - putIn, 0);
     big.textContent = `≈ ${fmtSek(roundTo10(total, 3))}`;
-    bigSub.textContent = `after ${years} years  ·  ≈ ${fmtEur(total * fx)}`;
-    after.textContent = `≈ ${fmtSek(roundTo10(total - CAPITAL_GAINS_TAX * growth, 3))} after the 30% tax on the growth, if you sold everything then`;
+    bigSub.textContent = CUR.single ? `after ${years} years` : `after ${years} years  ·  ≈ ${fmtEur(total * fx)}`;
+    after.textContent = inSweden() ? `≈ ${fmtSek(roundTo10(total - CAPITAL_GAINS_TAX * growth, 3))} after the 30% tax on the growth, if you sold everything then` : "";
     barWrap.replaceChildren(splitBar([[putIn, COLORS.blue], [growth, COLORS.green]], 10));
     legend.replaceChildren(h("span", { class: "legend-item" }, dot(COLORS.blue), h("span", { class: "amt" }, `Your deposits ${fmtSek(roundTo10(putIn, 3))}`)),
       h("span", { class: "legend-item" }, dot(COLORS.green), h("span", { class: "amt" }, `Growth ${fmtSek(roundTo10(growth, 3))}`)));

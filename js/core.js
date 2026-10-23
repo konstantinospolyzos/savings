@@ -24,10 +24,79 @@ export const SERIES = {             // Overview chart lines
 };
 
 // Swedish tax on the investments (check the rules yearly)
-export const BROKERS = "Freedom24 + IBKR";
+export const DEFAULT_BROKERS = "Freedom24 + IBKR";
 export const CAPITAL_GAINS_TAX = 0.30;
 export const ISK_TAX_FREE = 300000;
 export const ISK_TAX_RATE = 0.01065;
+
+// ---------------------------------------------------------------------------
+// Countries and currencies.
+// Field names in the data stay as in the desktop app: *_sek = your own currency (salary, bank,
+// budget), *_eur = the second currency (investments, overview), sek_to_eur = 1 own -> second.
+// With only one currency, the second currency is your own and every rate is 1.
+// ---------------------------------------------------------------------------
+// [symbol, before the number?, thousands separator: "," | " " | "in" (Indian), name]
+export const CURRENCIES = {
+  EUR: ["€", true, ",", "Euro"], SEK: ["kr", false, " ", "Swedish krona"], GBP: ["£", true, ",", "British pound"],
+  INR: ["₹", true, "in", "Indian rupee"], USD: ["$", true, ",", "US dollar"], NOK: ["kr", false, " ", "Norwegian krone"],
+  DKK: ["kr", false, " ", "Danish krone"], ISK: ["kr", false, " ", "Icelandic króna"], CHF: ["CHF ", true, ",", "Swiss franc"],
+  PLN: ["zł", false, " ", "Polish złoty"], CZK: ["Kč", false, " ", "Czech koruna"], HUF: ["Ft", false, " ", "Hungarian forint"],
+  RON: ["lei", false, " ", "Romanian leu"], TRY: ["₺", true, ",", "Turkish lira"], JPY: ["¥", true, ",", "Japanese yen"],
+  CNY: ["CN¥", true, ",", "Chinese yuan"], KRW: ["₩", true, ",", "South Korean won"], AUD: ["A$", true, ",", "Australian dollar"],
+  NZD: ["NZ$", true, ",", "New Zealand dollar"], CAD: ["C$", true, ",", "Canadian dollar"], HKD: ["HK$", true, ",", "Hong Kong dollar"],
+  SGD: ["S$", true, ",", "Singapore dollar"], ZAR: ["R", true, " ", "South African rand"], BRL: ["R$", true, ",", "Brazilian real"],
+  MXN: ["MX$", true, ",", "Mexican peso"], ILS: ["₪", true, ",", "Israeli shekel"], THB: ["฿", true, ",", "Thai baht"],
+  PHP: ["₱", true, ",", "Philippine peso"], IDR: ["Rp", true, ",", "Indonesian rupiah"], MYR: ["RM", true, ",", "Malaysian ringgit"],
+};
+export const COUNTRIES = [
+  ["SE", "Sweden", "SEK"], ["GB", "United Kingdom", "GBP"], ["IN", "India", "INR"],
+  ["AU", "Australia", "AUD"], ["AT", "Austria", "EUR"], ["BE", "Belgium", "EUR"], ["BR", "Brazil", "BRL"],
+  ["BG", "Bulgaria", "EUR"], ["CA", "Canada", "CAD"], ["CN", "China", "CNY"], ["HR", "Croatia", "EUR"],
+  ["CY", "Cyprus", "EUR"], ["CZ", "Czechia", "CZK"], ["DK", "Denmark", "DKK"], ["EE", "Estonia", "EUR"],
+  ["FI", "Finland", "EUR"], ["FR", "France", "EUR"], ["DE", "Germany", "EUR"], ["GR", "Greece", "EUR"],
+  ["HK", "Hong Kong", "HKD"], ["HU", "Hungary", "HUF"], ["IS", "Iceland", "ISK"], ["ID", "Indonesia", "IDR"],
+  ["IE", "Ireland", "EUR"], ["IL", "Israel", "ILS"], ["IT", "Italy", "EUR"], ["JP", "Japan", "JPY"],
+  ["LV", "Latvia", "EUR"], ["LT", "Lithuania", "EUR"], ["LU", "Luxembourg", "EUR"], ["MY", "Malaysia", "MYR"],
+  ["MT", "Malta", "EUR"], ["MX", "Mexico", "MXN"], ["NL", "Netherlands", "EUR"], ["NZ", "New Zealand", "NZD"],
+  ["NO", "Norway", "NOK"], ["PH", "Philippines", "PHP"], ["PL", "Poland", "PLN"], ["PT", "Portugal", "EUR"],
+  ["RO", "Romania", "RON"], ["SG", "Singapore", "SGD"], ["SK", "Slovakia", "EUR"], ["SI", "Slovenia", "EUR"],
+  ["ZA", "South Africa", "ZAR"], ["KR", "South Korea", "KRW"], ["ES", "Spain", "EUR"], ["CH", "Switzerland", "CHF"],
+  ["TH", "Thailand", "THB"], ["TR", "Turkey", "TRY"], ["US", "United States", "USD"], ["XX", "Other country", null],
+];
+export const DEFAULT_CURRENCY = { country: "SE", local: "SEK", second: "EUR" };
+
+/** The live settings every formatter reads. configure() is called before each render. */
+export const CUR = { country: "SE", local: "SEK", second: "EUR", single: false, brokers: DEFAULT_BROKERS };
+
+export function currencySettings(data) {
+  const c = getSetting(data, "currency");
+  const out = { ...DEFAULT_CURRENCY };
+  if (c && typeof c === "object") {
+    if (typeof c.country === "string") out.country = c.country;
+    if (CURRENCIES[c.local]) out.local = c.local;
+    out.second = c.second === null ? null : CURRENCIES[c.second] && c.second !== out.local ? c.second : out.second;
+  }
+  if (out.second === out.local) out.second = null;
+  return out;
+}
+export function configure(data) {
+  const c = currencySettings(data);
+  CUR.country = c.country; CUR.local = c.local; CUR.second = c.second || c.local; CUR.single = !c.second;
+  const b = getSetting(data, "brokers");
+  CUR.brokers = typeof b === "string" ? b.trim() : DEFAULT_BROKERS;
+  return CUR;
+}
+export const inSweden = () => CUR.country === "SE";
+export const symOf = (code) => CURRENCIES[code][0].trim();
+export const localSym = () => symOf(CUR.local);
+export const secondSym = () => symOf(CUR.second);
+export const brokersText = (fallback = "your investment account") => CUR.brokers || fallback;
+const brokersAnd = (fallback) => (CUR.brokers ? CUR.brokers.replace(/\s\+\s/g, " and ") : fallback);
+/** Does this text show an amount of money? (used to blur it in privacy mode) */
+export function hasMoney(text) {
+  const syms = [...new Set([localSym(), secondSym()])].map((x) => x.replace(/[.*+?^${}()|[\]\\$]/g, "\\$&")).join("|");
+  return new RegExp(`\\d\\s?(${syms})|(${syms})\\s?\\d`).test(String(text));
+}
 
 export const CATEGORIES = [
   ["Home", COLORS.blue], ["Transport", COLORS.orange], ["Food", COLORS.green],
@@ -100,7 +169,7 @@ const NBSP = " ";
 /** Accepts '42 086', '42,086', '4092.50', '4 092,50', '0,0885' ... */
 export function parseNumber(text, decimalComma = false) {
   let t = String(text ?? "").trim();
-  for (const junk of [" ", " ", " ", "kr", "SEK", "sek", "€", "EUR", "eur", "%"]) t = t.split(junk).join("");
+  for (const junk of [" ", " ", " ", "kr", "SEK", "sek", "€", "EUR", "eur", "%", "£", "₹", "$", "zł", "Kč", "Ft", "lei", "₺", "¥", "₩", "₪", "฿", "₱", "Rp", "RM", "CHF"]) t = t.split(junk).join("");
   t = t.replace(/−/g, "-");
   if (!t) return null;
   if (t.includes(",") && t.includes(".")) t = t.replace(/,/g, "");
@@ -123,31 +192,47 @@ function roundEven(v, d) {
   const f = 10 ** d, x = v * f, r = Math.round(x);
   return (Math.abs(x % 1) === 0.5 ? 2 * Math.round(x / 2) : r) / f;
 }
-const group = (v, d) => roundEven(v, d).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const group = (v, d, style = ",") => {
+  const t = roundEven(v, d).toLocaleString(style === "in" ? "en-IN" : "en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+  return style === " " ? t.replace(/,/g, NBSP) : t;
+};
 
-export function fmtEur(v, decimals = 0, signed = false) {
+/** Any currency: €1,234 · 1 234 kr · £1,234 · ₹12,34,567 */
+export function fmtMoney(code, v, decimals = 0, signed = false) {
+  const [symbol, before, style] = CURRENCIES[code] || CURRENCIES.EUR;
   if (roundEven(v, decimals) === 0) v = 0;
-  return `${sign(v, signed)}€${group(Math.abs(v), decimals)}`;
+  const n = group(Math.abs(v), decimals, style);
+  return before ? `${sign(v, signed)}${symbol}${n}` : `${sign(v, signed)}${n}${NBSP}${symbol}`;
 }
-export function fmtSek(v, signed = false) {
-  if (roundEven(v, 0) === 0) v = 0;
-  return `${sign(v, signed)}${group(Math.abs(v), 0).replace(/,/g, NBSP)}${NBSP}kr`;
-}
+/** The second currency (investments, overview totals); your own currency when you use only one. */
+export const fmtEur = (v, decimals = 0, signed = false) => fmtMoney(CUR.second, v, decimals, signed);
+/** Your own currency (salary, bank, budget). */
+export const fmtSek = (v, signed = false) => fmtMoney(CUR.local, v, 0, signed);
 export const fmtNative = (v, currency) => currency === "EUR"
   ? fmtEur(v, Math.abs(v - Math.round(v)) < 0.005 ? 0 : 2) : fmtSek(v);
-export function fmtAxisSek(v) {
-  let s;
-  if (Math.abs(v) >= 1000) { const k = Math.abs(v) / 1000; s = Math.abs(k - Math.round(k)) < 0.05 ? `${roundEven(k, 0)}k` : `${roundEven(k, 1).toFixed(1)}k`; }
-  else s = String(roundEven(Math.abs(v), 0));
-  return `${v < 0 ? "−" : ""}${s} kr`;
-}
-export function fmtAxisEur(v) {
+function fmtAxis(code, v) {
+  const [symbol, before, style] = CURRENCIES[code] || CURRENCIES.EUR;
   const a = Math.abs(v);
-  const s = a >= 10000 ? `€${(a / 1000).toFixed(a % 1000 ? 1 : 0)}k` : `€${group(a, 0)}`;
-  return (v < 0 ? "−" : "") + s;
+  const short = (x, unit) => (Math.abs(x - Math.round(x)) < 0.05 ? `${roundEven(x, 0)}${unit}` : `${roundEven(x, 1).toFixed(1)}${unit}`);
+  let s;
+  if (a >= 1e6) s = short(a / 1e6, "M");
+  else if (before) s = a >= 10000 ? `${(a / 1000).toFixed(a % 1000 ? 1 : 0)}k` : group(a, 0, style);
+  else s = a >= 1000 ? short(a / 1000, "k") : String(roundEven(a, 0));
+  return (v < 0 ? "−" : "") + (before ? `${symbol.trim()}${s}` : `${s} ${symbol}`);
 }
+export const fmtAxisSek = (v) => fmtAxis(CUR.local, v);
+export const fmtAxisEur = (v) => fmtAxis(CUR.second, v);
 export const plainNumber = (v, d = 0) => group(v, d).replace(/,/g, " ");
 export const rateText = (r) => r.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+/** A rate as people read it: how much of your own currency one unit of the second costs (1 € = 11.07 kr). */
+export const rateShown = (r) => { const v = 1 / r; return v.toFixed(v >= 10 ? 2 : 4).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, ""); };
+/** What the user typed for "1 second = x own" -> sek_to_eur. Typed the other way round? Take the reading closer to the last rate. */
+export function rateFromInput(v, previous = null) {
+  if (v === null || !(v > 0)) return null;
+  const asLabelled = 1 / v;
+  if (!previous) return asLabelled;
+  return Math.abs(Math.log(v / previous)) < Math.abs(Math.log(asLabelled / previous)) ? v : asLabelled;
+}
 export const pct = (x) => `${Math.round(x * 100)}%`;
 export const toneOf = (v) => (v == null || Math.abs(v) < 0.005 ? "flat" : v > 0 ? "up" : "down");
 export const nMonths = (n) => `${n} month${n !== 1 ? "s" : ""}`;
@@ -321,11 +406,11 @@ export function rateForMonth(entries, month) {
   return rate;
 }
 
-/** Value of the investments and what they'd be worth after the 30 % tax (worked out in kronor). */
+/** Value of the investments and what they'd be worth after the 30 % tax (worked out in kronor; Sweden only). */
 export function investmentStatus(data, entries) {
   if (!entries.length) return null;
   const latest = entries.at(-1);
-  const res = { value: latest.invested_eur, value_sek: investedSek(latest), cost_input: null, as_of: null,
+  const res = { taxed: inSweden(), value: latest.invested_eur, value_sek: investedSek(latest), cost_input: null, as_of: null,
     as_of_rate: null, added_since_eur: 0, cost_sek: null, gain_sek: null, tax_sek: null, tax: null,
     after: null, after_sek: null,
     isk_tax_year: Math.max(0, investedSek(latest) - ISK_TAX_FREE) * ISK_TAX_RATE };
@@ -339,7 +424,7 @@ export function investmentStatus(data, entries) {
     const later = entries.filter((e) => e.month > asOf && e.added_eur);
     const costSek = (currency === "SEK" ? amount : amount / asOfRate) + sum(later.map((e) => e.added_eur / e.sek_to_eur));
     const gain = investedSek(latest) - costSek;
-    const taxSek = CAPITAL_GAINS_TAX * Math.max(gain, 0);
+    const taxSek = (inSweden() ? CAPITAL_GAINS_TAX : 0) * Math.max(gain, 0);
     Object.assign(res, { cost_input: [amount, currency], as_of: asOf, as_of_rate: asOfRate,
       added_since_eur: sum(later.map((e) => e.added_eur)), cost_sek: costSek, gain_sek: gain, tax_sek: taxSek,
       tax: taxSek * latest.sek_to_eur, after: latest.invested_eur - taxSek * latest.sek_to_eur,
@@ -398,7 +483,7 @@ export function bankHolidays(year) {
 
 export function paydayFor(month) {
   let d = day(mYear(month), mNum(month), 25);
-  while (weekday(d) >= 5 || bankHolidays(d.getFullYear()).has(isoDay(d))) d = addDays(d, -1);
+  while (weekday(d) >= 5 || (inSweden() && bankHolidays(d.getFullYear()).has(isoDay(d)))) d = addDays(d, -1);
   return d;
 }
 
@@ -406,7 +491,7 @@ export function paydayReason(p) {
   const d25 = day(p.getFullYear(), p.getMonth() + 1, 25);
   if (sameDay(p, d25)) return "";
   if (weekday(d25) >= 5) return `a ${WEEKDAYS[weekday(d25)]}`;
-  return bankHolidays(d25.getFullYear()).get(isoDay(d25)) || "a bank holiday";
+  return (inSweden() && bankHolidays(d25.getFullYear()).get(isoDay(d25))) || "a bank holiday";
 }
 
 /** {prev: last payday <= today, next: next payday > today, isToday} */
@@ -482,6 +567,7 @@ export function loadProfiles(data) {
 }
 
 export function budgetRate(data, entries) {
+  if (CUR.single) return [1, "", false];
   const s = getSetting(data, "budget_rate");
   if (s && typeof s === "object" && s.sek_to_eur) return [Number(s.sek_to_eur), s.source || "Your rate", true];
   if (entries.length) return [entries.at(-1).sek_to_eur, `From your ${mLong(entries.at(-1).month)} log`, false];
@@ -528,7 +614,7 @@ export function buildActions(snap, summ, tags, fund, inv, flows) {
     const ps = paydayStatus(snap.today);
     const when = ps.isToday ? "today" : shortDate(ps.next);
     const moves = joinAnd([
-      snap.invest > 0 ? `${fmtSek(snap.invest)} to Freedom24 / IBKR` : "",
+      snap.invest > 0 ? `${fmtSek(snap.invest)} to ${brokersText("your investments")}` : "",
       snap.to_buffer > 0 ? `${fmtSek(snap.to_buffer)} to your buffer` : "",
       snap.goals > 0 ? `${fmtSek(snap.goals)} to your saving goals` : "",
     ]);
@@ -552,7 +638,7 @@ export function buildActions(snap, summ, tags, fund, inv, flows) {
     const months = snap.bank / snap.fixed;
     if (snap.shortfall > 0)
       items.push([4, `Top up your buffer: ${fmtSek(snap.shortfall)} to go`,
-        `Your bank savings cover ${months.toFixed(1)} months of fixed costs. Finansinspektionen suggests 2–3 months of necessary costs before you invest for the long term.`, COLORS.green]);
+        `Your bank savings cover ${months.toFixed(1)} months of fixed costs. ${inSweden() ? "Finansinspektionen suggests" : "A common rule of thumb is"} 2–3 months of necessary costs before you invest for the long term.`, COLORS.green]);
     else if (snap.bank > 2 * snap.target)
       items.push([4, "Your buffer is more than enough",
         `The bank holds ${months.toFixed(1)} months of fixed costs. Keep 3–6 months there and consider investing what you won't need for 5+ years.`, COLORS.green]);
@@ -568,15 +654,15 @@ export function buildActions(snap, summ, tags, fund, inv, flows) {
   if (extra && extra.n)
     items.push([7, "Decide where extra money goes before it arrives",
       `${extra.n} of your months had extra income (bonus, tax return, raise). Sending a fixed share of it, say half, straight to savings is an easy win.`, COLORS.green]);
-  if (inv) {
+  if (inv && inv.taxed) {
     if (inv.tax_sek)
       items.push([8, `Selling everything today would mean about ${fmtSek(inv.tax_sek)} in tax`,
-        "Freedom24 and IBKR are regular accounts: 30% of the gain is taxed when you sell, worked out in kronor. As foreign brokers they usually don't report to Skatteverket, so add sales (K4) and dividends to your tax return yourself.", COLORS.orange]);
+        `${brokersAnd("Your broker accounts")} ${/\+| and /.test(CUR.brokers) ? "are regular accounts" : "is a regular account"}: 30% of the gain is taxed when you sell, worked out in kronor. As foreign brokers they usually don't report to Skatteverket, so add sales (K4) and dividends to your tax return yourself.`, COLORS.orange]);
     else if (inv.cost_sek === null)
       items.push([9, "Tell the app what your investments cost",
-        "Type it under Investments below, in kronor or euro, to see what your holdings are worth after the 30% tax.", COLORS.orange]);
+        `Type it under Investments below${CUR.single ? "" : `, in ${CURRENCIES[CUR.local][3].toLowerCase()} or ${CURRENCIES[CUR.second][3].toLowerCase()}`}, to see what your holdings are worth after the 30% tax.`, COLORS.orange]);
     if ([2, 3, 4, 5].includes(snap.today.getMonth() + 1))
-      items.push([1, "Check your tax return for Freedom24 and IBKR",
+      items.push([1, `Check your tax return for ${brokersAnd("your foreign brokers")}`,
         "Foreign brokers are usually not pre-filled. Add each sale on K4 (gain worked out in kronor) and your dividends under capital; tax already withheld abroad is credited. The deadline is in early May.", COLORS.orange]);
   }
   if (flows.length && !flows.slice(-3).some((f) => f.exact))
@@ -589,21 +675,84 @@ export function buildActions(snap, summ, tags, fund, inv, flows) {
 // ---------------------------------------------------------------------------
 // Exchange rate (ECB, via Frankfurter)
 // ---------------------------------------------------------------------------
-export async function fetchSekToEur(month, today = todayDate()) {
+export async function fetchSekToEur(month, today = todayDate(), from = CUR.local, to = CUR.second) {
   const key = month >= monthOf(today) ? "latest" : `${month}-01`;
+  if (from === to) return [1, key];
   let lastError = null;
   for (const base of ["https://api.frankfurter.app", "https://api.frankfurter.dev/v1"]) {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 7000);
-      const resp = await fetch(`${base}/${key}?base=SEK&symbols=EUR`, { signal: ctrl.signal });
+      const resp = await fetch(`${base}/${key}?base=${from}&symbols=${to}`, { signal: ctrl.signal });
       clearTimeout(timer);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
-      return [Number(data.rates.EUR), data.date || key];
+      const rate = Number(data.rates?.[to]);
+      if (!(rate > 0)) throw new Error(`No rate for ${from} → ${to}`);
+      return [rate, data.date || key];
     } catch (err) { lastError = err; }
   }
   throw lastError;
+}
+
+// ---------------------------------------------------------------------------
+// Changing the second currency: re-express the logged months
+// ---------------------------------------------------------------------------
+/** One rate per month (1 own -> to) from the ECB, in one request. Returns Map month -> rate. */
+export async function fetchMonthlyRates(months, from, to, today = todayDate()) {
+  const out = new Map();
+  if (!months.length) return out;
+  if (from === to) { for (const m of months) out.set(m, 1); return out; }
+  const first = [...months].sort()[0];
+  const startIso = isoDay(addDays(day(mYear(first), mNum(first), 1), -10));
+  let lastError = null, series = null;
+  for (const base of ["https://api.frankfurter.app", "https://api.frankfurter.dev/v1"]) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12000);
+      const resp = await fetch(`${base}/${startIso}..${isoDay(today)}?base=${from}&symbols=${to}`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      series = Object.entries((await resp.json()).rates || {}).map(([d, r]) => [d, Number(r[to])]).filter(([, r]) => r > 0).sort();
+      if (series.length) break;
+      throw new Error(`No rates for ${from} → ${to}`);
+    } catch (err) { lastError = err; series = null; }
+  }
+  if (!series) throw lastError;
+  for (const m of months) {
+    const target = `${m}-01`;
+    let pick = series[0][1];
+    for (const [d, r] of series) { if (d <= target) pick = r; else break; }
+    out.set(m, pick);
+  }
+  return out;
+}
+
+/**
+ * The data with its second-currency amounts re-expressed. newRate(month) gives the new 1 own -> second
+ * rate (1 when you go to one currency). Costs and the investment cost typed in the old second
+ * currency are turned into your own currency, so nothing depends on the old rate any more.
+ */
+export function convertSecond(data, newRate) {
+  const d = JSON.parse(JSON.stringify(data));
+  const s = getSetting(data, "budget_rate");
+  const oldFx = (s && s.sek_to_eur) || (data.entries.length ? data.entries.at(-1).sek_to_eur : 1);
+  const r2 = (v) => Math.round(v * 100) / 100;
+  for (const e of d.entries) {
+    const r0 = e.sek_to_eur, r1 = newRate(e.month);
+    e.invested_eur = r2(e.invested_eur / r0 * r1);
+    if (e.added_eur !== null && e.added_eur !== undefined) e.added_eur = r2(e.added_eur / r0 * r1);
+    e.sek_to_eur = r1;
+  }
+  for (const x of d.expenses) if (x.currency === "EUR") { x.amount = r2(x.amount / oldFx); x.currency = "SEK"; }
+  const basis = getSetting(data, "inv_basis");
+  if (basis && typeof basis === "object" && (basis.currency === "EUR" || ("eur" in basis && !basis.currency))) {
+    const amount = Number(basis.amount ?? basis.eur);
+    const asOf = (basis.as_of || (data.entries.at(-1)?.month ?? "")).slice(0, 7);
+    d.settings.inv_basis = { amount: r2(data.entries.length ? amount / rateForMonth(data.entries, asOf) : amount / oldFx), currency: "SEK", as_of: asOf };
+  }
+  d.settings.budget_rate = null;
+  return d;
 }
 
 // ---------------------------------------------------------------------------
@@ -612,9 +761,10 @@ export async function fetchSekToEur(month, today = todayDate()) {
 export function toCsv(entries) {
   const q = (v) => (/[",\n;]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
   const r2 = (v, d) => (v === null || v === undefined ? "" : String(roundTo(v, d)));
-  const lines = [["Month", "Income (SEK)", "Bank savings (SEK)", "Invested (EUR)", "1 SEK in EUR", "1 EUR in SEK",
-    "Income (EUR)", "Bank savings (EUR)", "Saved in bank (SEK)", "Invested change (EUR)",
-    "Added to investments (EUR)", "Trip month", "Note"]];
+  const L = CUR.local, S = CUR.second;
+  const lines = [["Month", `Income (${L})`, `Bank savings (${L})`, `Invested (${S})`, `1 ${L} in ${S}`, `1 ${S} in ${L}`,
+    `Income (${S})`, `Bank savings (${S})`, `Saved in bank (${L})`, `Invested change (${S})`,
+    `Added to investments (${S})`, "Trip month", "Note"]];
   for (const r of computeRows(entries)) {
     const e = r.entry;
     lines.push([e.month, r2(e.income_sek, 2), r2(e.bank_sek, 2), r2(e.invested_eur, 2), r2(e.sek_to_eur, 6),

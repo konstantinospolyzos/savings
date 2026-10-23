@@ -3,7 +3,7 @@ import { chart, linearFit } from "../charts.js";
 import {
   COLORS, SERIES, MONTHS, fmtEur, fmtSek, fmtAxisEur, mLong, mShort, mIndex, mNum, nMonths, pct, toneOf, mean,
   monthFlows, summarize, paydayStatus, paydayReason, shortDate, longDate, daysBetween,
-  bankEur, incomeEur, totalEur, investedSek,
+  bankEur, incomeEur, totalEur, investedSek, CUR,
 } from "../core.js";
 import { store } from "../store.js";
 
@@ -22,7 +22,7 @@ function balanceHero(es, inv) {
   const half = (title, color, hint, value, sub, chips) => h("div", { class: "hero-half" },
     h("div", { class: "cap-row" }, dot(color), h("span", { class: "caption" }, title), h("span", { class: "hint" }, hint)),
     h("div", { class: "big-value amt" }, value),
-    h("div", { class: "muted amt" }, sub),
+    sub ? h("div", { class: "muted amt" }, sub) : null,
     chips.length ? h("div", { class: "chips amt" }, chips) : null);
 
   const bankChips = [];
@@ -34,13 +34,14 @@ function balanceHero(es, inv) {
     const di = last.invested_eur - prev.invested_eur;
     invChips.push(chip(`${di >= 0 ? "▲" : "▼"} ${fmtEur(Math.abs(di))} vs ${vs}`, toneOf(di)));
   }
-  if (inv && inv.after !== null) invChips.push(chip(`≈ ${fmtEur(inv.after)} after tax`, "flat"));
+  if (inv && inv.taxed && inv.after !== null) invChips.push(chip(`≈ ${fmtEur(inv.after)} after tax`, "flat"));
   else if (prev) invChips.push(chip(`${fmtEur(last.invested_eur - first.invested_eur, 0, true)} since ${mShort(first.month)}`, "flat"));
 
   return h("div", { class: "card hero" },
-    half("BANK SAVINGS", COLORS.blue, "money you can use", fmtEur(bankEur(last)), fmtSek(last.bank_sek), bankChips),
+    half("BANK SAVINGS", COLORS.blue, "money you can use", fmtEur(bankEur(last)), CUR.single ? null : fmtSek(last.bank_sek), bankChips),
     h("div", { class: "hairline" }),
-    half("INVESTED", COLORS.orange, "market value, before tax", fmtEur(last.invested_eur), `≈ ${fmtSek(investedSek(last))}`, invChips));
+    half("INVESTED", COLORS.orange, inv && inv.taxed ? "market value, before tax" : "market value", fmtEur(last.invested_eur),
+      CUR.single ? null : `≈ ${fmtSek(investedSek(last))}`, invChips));
 }
 
 /** hide: which parts are money and get blurred in privacy mode, e.g. "vsc" = value, sub, chip */
@@ -57,7 +58,7 @@ function stats(es, snap) {
   const last = es.at(-1);
   const last12 = es.slice(-12);
   const cards = [];
-  cards.push(statCard("INCOME", COLORS.cyan, fmtEur(incomeEur(last)), fmtSek(last.income_sek),
+  cards.push(statCard("INCOME", COLORS.cyan, fmtEur(incomeEur(last)), CUR.single ? `in ${MONTHS[mNum(last.month) - 1]}` : fmtSek(last.income_sek),
     `Average ${fmtEur(mean(last12.map(incomeEur)))}`, "flat", "vsc"));
 
   const summ = summarize(monthFlows(es).slice(-12));
@@ -69,7 +70,7 @@ function stats(es, snap) {
       tone = summ.rate >= plan - 0.02 ? "up" : summ.rate < plan - 0.10 ? "down" : "flat";
     }
     cards.push(statCard("SAVED PER MONTH", COLORS.green, fmtSek(summ.saved, true),
-      `${pct(summ.rate)} of income, last ${summ.n} months`, chipText, tone, "v"));
+      `${pct(summ.rate)} of income, last ${summ.n === 1 ? "month" : `${summ.n} months`}`, chipText, tone, "v"));
   } else cards.push(statCard("SAVED PER MONTH", COLORS.green, "—", "needs two months"));
 
   if (snap.plan_ready) {
@@ -146,7 +147,7 @@ function chartCard(es) {
         series: [{ color: COLORS.blue, values: bankE }, { color: COLORS.orange, values: rows.map((r) => r[2]) }],
         tooltip: (i) => {
           const [e, bankSek, dInv] = rows[i];
-          const out = [["Saved in bank", `${fmtEur(bankE[i], 0, true)} (${fmtSek(bankSek, true)})`, COLORS.blue],
+          const out = [["Saved in bank", CUR.single ? fmtSek(bankSek, true) : `${fmtEur(bankE[i], 0, true)} (${fmtSek(bankSek, true)})`, COLORS.blue],
             ["Invested change", fmtEur(dInv, 0, true), COLORS.orange]];
           if (e.added_eur !== null && e.added_eur !== undefined) out.push(["of which you added", fmtEur(e.added_eur), null]);
           return { title: mLong(e.month), rows: out };
@@ -159,7 +160,7 @@ function chartCard(es) {
   trendRow.append(h("span", null, "Trend lines"), sw);
   render();
   return h("div", { class: "card chart-card" },
-    h("div", { class: "card-title" }, "Your money in EUR"),
+    h("div", { class: "card-title" }, `Your money in ${CUR.second}`),
     segmented(["Balances", "Monthly changes"], st.view, (i) => { st.view = i; save(); render(); }, "full"),
     h("div", { class: "chart-controls" },
       segmented(["6M", "1Y", "All"], st.range, (i) => { st.range = i; save(); render(); }, "small"),

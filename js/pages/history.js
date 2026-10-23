@@ -1,7 +1,7 @@
 import { h, chip, icon, segmented, toast } from "../ui.js";
 import {
   computeRows, monthFlows, tripStatus, isTrip, mLong, mYear, fmtSek, fmtEur, nMonths, pct, toneOf,
-  incomeEur, bankEur, toCsv,
+  incomeEur, bankEur, toCsv, CUR, localSym, secondSym,
 } from "../core.js";
 import { store } from "../store.js";
 import { saveFile } from "../ui.js";
@@ -50,19 +50,19 @@ function monthCell(e, row, flow, q, ctx) {
 
   const grid = h("div", { class: "hrow-grid" },
     h("div", { class: "metric" }, h("div", { class: "metric-cap" }, "Income"),
-      h("div", { class: "metric-value" }, fmtSek(e.income_sek)), h("div", { class: "metric-sub" }, fmtEur(incomeEur(e)))),
+      h("div", { class: "metric-value" }, fmtSek(e.income_sek)), CUR.single ? null : h("div", { class: "metric-sub" }, fmtEur(incomeEur(e)))),
     h("div", { class: "metric" }, h("div", { class: "metric-cap" }, "Bank savings"),
       h("div", { class: "metric-value" }, fmtSek(e.bank_sek)),
-      h("div", { class: "metric-sub" }, saved === null ? fmtEur(bankEur(e)) : chip(fmtSek(saved, true), toneOf(saved), "small"))),
+      h("div", { class: "metric-sub" }, saved === null ? (CUR.single ? "" : fmtEur(bankEur(e))) : chip(fmtSek(saved, true), toneOf(saved), "small"))),
     h("div", { class: "metric" }, h("div", { class: "metric-cap" }, "Invested"),
-      h("div", { class: "metric-value" }, fmtEur(e.invested_eur, 2)),
+      h("div", { class: "metric-value" }, fmtEur(e.invested_eur, CUR.single ? 0 : 2)),
       invSub.length ? h("div", { class: "metric-sub stack" }, invSub) : null));
 
   return h("button", { type: "button", class: "hrow", onclick: () => ctx.openMonth(e) },
     head, grid,
     h("div", { class: "hrow-foot" },
       e.comment ? h("div", { class: "hrow-note" }, highlight(e.comment, q)) : null,
-      h("div", { class: "hrow-rate-line" }, `1 € = ${(1 / e.sek_to_eur).toFixed(2)} kr`)));
+      CUR.single ? null : h("div", { class: "hrow-rate-line" }, `1 ${secondSym()} = ${(1 / e.sek_to_eur).toFixed(2)} ${localSym()}`)));
 }
 
 export function renderHistory(ctx) {

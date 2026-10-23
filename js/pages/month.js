@@ -1,7 +1,7 @@
 import { h, sheet, group, caption, footer, toggle, alertBox, toast, icon } from "../ui.js";
 import {
-  BROKERS, TRAVEL_RX, addMonths, defaultNewMonth, mLong, mShort, parseNumber, plainNumber, rateText,
-  fmtEur, fmtSek, toneOf, fetchSekToEur,
+  CUR, localSym, secondSym, brokersText, rateShown, rateFromInput, TRAVEL_RX, addMonths, defaultNewMonth, mLong, mShort,
+  parseNumber, plainNumber, fmtEur, fmtSek, toneOf, fetchSekToEur,
 } from "../core.js";
 import { store } from "../store.js";
 
@@ -27,7 +27,8 @@ export function openMonthSheet(ctx, original = null) {
   const bank = field(last ? ph(last.bank_sek) : "0");
   const invested = field(last ? ph(last.invested_eur, 2) : "0.00");
   const added = field("optional");
-  const rate = field("0.0885");
+  const rate = field(last ? rateShown(last.sek_to_eur) : "11.30");
+  const single = CUR.single;
   const note = h("textarea", { class: "note-input", rows: "3", placeholder: "What happened this month? Trips, gifts, big buys, bonus…" });
 
   const monthLabel = h("div", { class: "month-label" });
@@ -53,10 +54,12 @@ export function openMonthSheet(ctx, original = null) {
     if (!tripTouched) { tripSwitch.input.checked = TRAVEL_RX.test(note.value || ""); tripText(); }
   });
 
+  // the rate of the month before (or the latest), to tell which way round a typed rate is meant
+  const prevRate = () => ([...entries].reverse().find((e) => e.month < month && !(original && e.month === original.month)) || last)?.sek_to_eur ?? null;
+  let exact = null;   // the full-precision rate behind a rounded number in the field (fetched or saved before)
   const read = () => {
-    const raw = parseNumber(rate.value, true);
-    let r = null;
-    if (raw !== null && raw > 0) r = raw < 1 ? raw : 1 / raw;       // 11.30 is understood as EUR->SEK
+    const raw = single ? 1 : parseNumber(rate.value, true);
+    const r = single ? 1 : exact && rate.value === exact.text ? exact.r : rateFromInput(raw, prevRate());
     return { inc: parseNumber(income.value), bnk: parseNumber(bank.value), inv: parseNumber(invested.value),
       add: parseNumber(added.value), raw, r };
   };
@@ -67,21 +70,22 @@ export function openMonthSheet(ctx, original = null) {
     for (const [f, v] of [[income, inc], [bank, bnk], [invested, inv], [rate, r], [added, add]])
       f.classList.toggle("invalid", Boolean(f.value.trim()) && v === null);
 
-    if (r && (inc !== null || bnk !== null)) {
+    if (single) convFooter.textContent = `Type the amounts as you see them in your bank and ${brokersText("your investment account")}.`;
+    else if (r && (inc !== null || bnk !== null)) {
       const parts = [];
       if (inc !== null) parts.push(`Income ≈ ${fmtEur(inc * r)}`);
       if (bnk !== null) parts.push(`Bank ≈ ${fmtEur(bnk * r)}`);
       convFooter.textContent = parts.join("  ·  ");
-    } else convFooter.textContent = "Type the amounts as you see them in your bank, Freedom24 and IBKR.";
+    } else convFooter.textContent = `Type the amounts as you see them in your bank and ${brokersText("your investment account")}.`;
 
     rateFooter.className = `section-footer ${fetchError ? "tone-text-down" : ""}`;
     if (fetchError) rateFooter.textContent = fetchError;
     else if (r) {
-      let t = `1 EUR = ${(1 / r).toFixed(3)} SEK`;
-      if (raw >= 1) t += "  ·  converted from EUR→SEK";
+      let t = `1 ${CUR.second} = ${rateShown(r)} ${CUR.local}`;
+      if (Math.abs(r - raw) < 1e-12 && raw !== 1) t += `  ·  read as 1 ${CUR.local} = ${raw} ${CUR.second}`;
       if (fetchInfo) t += `  ·  ${fetchInfo}`;
       rateFooter.textContent = t;
-    } else rateFooter.textContent = "Type 0.0885 (SEK→EUR) or 11.30 (EUR→SEK), or tap Fetch.";
+    } else rateFooter.textContent = `How many ${CUR.local} one ${CUR.second} costs, or tap Fetch.`;
 
     const ok = inc !== null && bnk !== null && inv !== null && r !== null && !(added.value.trim() && add === null);
     api?.setRight({ disabled: !ok });
@@ -92,7 +96,7 @@ export function openMonthSheet(ctx, original = null) {
         summary.textContent = `Bank ${fmtSek(dBank, true)}  ·  Invested ${fmtEur(dInv, 0, true)}  vs ${mShort(prev.month)}`;
         summary.className = `form-summary tone-text-${toneOf(dBank)}`;
       } else {
-        summary.textContent = `Bank ≈ ${fmtEur(bnk * r)}  ·  Invested ${fmtEur(inv)}`;
+        summary.textContent = single ? `Bank ${fmtSek(bnk)}  ·  Invested ${fmtEur(inv)}` : `Bank ≈ ${fmtEur(bnk * r)}  ·  Invested ${fmtEur(inv)}`;
         summary.className = "form-summary";
       }
     } else {
@@ -119,7 +123,8 @@ export function openMonthSheet(ctx, original = null) {
     fetchError = "";
     try {
       const [r, d] = await fetchSekToEur(month, ctx.today);
-      rate.value = rateText(r);
+      rate.value = rateShown(r);
+      exact = { text: rate.value, r };
       fetchInfo = `ECB rate of ${d}`;
     } catch {
       fetchError = "Couldn't fetch the rate. Check your connection, or type it in.";
@@ -137,14 +142,15 @@ export function openMonthSheet(ctx, original = null) {
   const body = h("div", { class: "form" },
     caption("MONTH"), group(stepper), monthNote,
     caption("AMOUNTS"),
-    group(row("Income (salary)", income, "kr"), row("Bank savings", bank, "kr"), row(`Invested (${BROKERS})`, invested, "€")),
+    group(row("Income (salary)", income, localSym()), row("Bank savings", bank, localSym()),
+      row(CUR.brokers ? `Invested (${CUR.brokers})` : "Invested", invested, secondSym())),
     convFooter,
     caption("INVESTMENTS"),
-    group(row("Added this month", added, "€")),
-    footer("Money you moved into Freedom24 or IBKR this month. Optional, but it lets Insights tell your own saving apart from market ups and downs."),
-    caption("EXCHANGE RATE"),
-    group(row("1 SEK =", rate, "€", fetchBtn)),
-    rateFooter,
+    group(row("Added this month", added, secondSym())),
+    footer(`Money you moved into ${brokersText("your investments")} this month. Optional, but it lets Insights tell your own saving apart from market ups and downs.`),
+    single ? null : caption("EXCHANGE RATE"),
+    single ? null : group(row(`1 ${CUR.second} =`, rate, CUR.local, fetchBtn)),
+    single ? null : rateFooter,
     caption("TRAVEL"),
     group(h("label", { class: "form-row switch-row" }, h("span", { class: "form-label" }, icon("plane", 15, "inline-icon"), "Trip month"), tripSwitch)),
     tripFooter,
@@ -158,11 +164,12 @@ export function openMonthSheet(ctx, original = null) {
     income.value = plainNumber(original.income_sek);
     bank.value = plainNumber(original.bank_sek);
     invested.value = plainNumber(original.invested_eur, 2);
-    rate.value = rateText(original.sek_to_eur);
+    rate.value = rateShown(original.sek_to_eur);
+    exact = { text: rate.value, r: original.sek_to_eur };
     if (original.added_eur !== null && original.added_eur !== undefined) added.value = plainNumber(original.added_eur, 2);
     note.value = original.comment || "";
     if (original.trip !== null && original.trip !== undefined) { tripSwitch.input.checked = Boolean(original.trip); tripTouched = true; }
-  } else if (last) rate.value = rateText(last.sek_to_eur);
+  } else if (last) { rate.value = rateShown(last.sek_to_eur); exact = { text: rate.value, r: last.sek_to_eur }; }
 
   function save(sh) {
     const { inc, bnk, inv, add, r } = read();

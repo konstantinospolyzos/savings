@@ -5,7 +5,7 @@ import {
   budgetSnapshot, planForRate, paydayStatus, paydayReason, paydayFor, addMonths, monthOf, daysBetween, addDays,
   fmtRange, shortDate, longDate, mLong, mShort, mIndex, fmtSek, fmtEur, plainNumber, parseNumber, pct, roundTo10,
   weekChunks, summarize, monthFlows, travelFund, expenseApplies, expenseMonthlySek, goalApplies, goalPerMonth,
-  goalPlannedBy, fetchSekToEur,
+  goalPlannedBy, fetchSekToEur, CUR, inSweden, localSym, brokersText, hasMoney, rateFromInput, rateShown,
 } from "../core.js";
 import { store } from "../store.js";
 import { openExpenseSheet, openGoalSheet, openProfilesSheet } from "./budget-sheets.js";
@@ -15,11 +15,9 @@ const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, GOALS_C = COLORS.teal,
 let offset = 0;              // pay periods away from the current one
 let salaryOverride = null;   // a salary typed in to try it out (not saved)
 
-// subtitles that mention amounts get blurred in privacy mode
-const MONEY_RX = /\d\s?kr\b|€\s?\d/;
 const card = (...children) => h("div", { class: "card" }, children);
 const head = (title, sub = null, right = null) => h("div", { class: "card-head" },
-  h("div", { class: "card-head-text" }, h("div", { class: "card-title" }, title), sub ? h("div", { class: `card-sub ${typeof sub === "string" && MONEY_RX.test(sub) ? "amt-soft" : ""}` }, sub) : null),
+  h("div", { class: "card-head-text" }, h("div", { class: "card-title" }, title), sub ? h("div", { class: `card-sub ${typeof sub === "string" && hasMoney(sub) ? "amt-soft" : ""}` }, sub) : null),
   right);
 const addBtn = (onClick) => h("button", { type: "button", class: "btn tinted small", onclick: onClick }, "+  Add");
 const weekOf = (snap) => snap.days / 7;
@@ -72,11 +70,11 @@ function periodCard(snap, ctx) {
   });
   const src = salaryOverride !== null ? "Your own figure, not saved" : latest ? `From your ${mLong(latest.month)} log` : "Log a month first";
 
-  const fxInput = h("input", { class: "fx-input", type: "text", inputmode: "decimal", autocomplete: "off", value: (1 / fx).toFixed(2), "aria-label": "SEK per euro" });
+  const fxInput = h("input", { class: "fx-input", type: "text", inputmode: "decimal", autocomplete: "off", value: rateShown(fx), "aria-label": `${CUR.local} per ${CUR.second}` });
   fxInput.addEventListener("change", () => {
     const v = parseNumber(fxInput.value, true);
     if (v === null || v <= 0) { fxInput.classList.add("invalid"); return; }
-    store.setSetting("budget_rate", { sek_to_eur: v < 1 ? v : 1 / v, source: "Your rate" });
+    store.setSetting("budget_rate", { sek_to_eur: rateFromInput(v, fx), source: "Your rate" });
   });
   const fetchBtn = h("button", { type: "button", class: "btn tinted small" }, "Fetch");
   fetchBtn.addEventListener("click", async () => {
@@ -84,7 +82,7 @@ function periodCard(snap, ctx) {
     try {
       const [rate, d] = await fetchSekToEur(monthOf(today), today);
       store.setSetting("budget_rate", { sek_to_eur: rate, source: `ECB rate of ${d}` });
-      toast(`✓  1 EUR = ${(1 / rate).toFixed(2)} SEK`);
+      toast(`✓  1 ${CUR.second} = ${rateShown(rate)} ${CUR.local}`);
     } catch {
       toast("Couldn't fetch the rate. Check your connection, or type it in.");
       fetchBtn.disabled = false; fetchBtn.textContent = "Fetch";
@@ -101,7 +99,7 @@ function periodCard(snap, ctx) {
     h("div", { class: "card-head" }, h("div", { class: "cap-row" }, h("span", { class: "caption" }, "PAY PERIOD"), chip(kind, kind === "Now" ? "info" : "flat"))),
     stepper,
     h("div", { class: "eq" },
-      h("label", { class: "eq-row" }, h("span", { class: "eq-label" }, "Salary"), salaryInput, h("span", { class: "eq-unit" }, "kr")),
+      h("label", { class: "eq-row" }, h("span", { class: "eq-label" }, "Salary"), salaryInput, h("span", { class: "eq-unit" }, localSym())),
       h("div", { class: "eq-note" }, src, salaryOverride !== null
         ? h("button", { type: "button", class: "link-btn", onclick: () => { salaryOverride = null; ctx.refresh(); } }, "Use latest") : null),
       h("div", { class: "eq-row" }, h("span", { class: "eq-label" }, h("span", { class: "eq-sign" }, "−"), "Fixed costs"),
@@ -109,12 +107,12 @@ function periodCard(snap, ctx) {
       h("div", { class: "eq-note" }, `${snap.active.length} active costs`),
       h("div", { class: "eq-row total" }, h("span", { class: "eq-label" }, h("span", { class: "eq-sign" }, "="), "Left to plan"),
         h("span", { class: `eq-value big amt tone-text-${snap.left > 0 ? "up" : "down"}` }, fmtSek(snap.left))),
-      h("div", { class: "eq-note amt" }, snap.left < 0 ? "Fixed costs are higher than the salary" : `≈ ${fmtEur(snap.left * fx)}`)),
+      h("div", { class: "eq-note amt" }, snap.left < 0 ? "Fixed costs are higher than the salary" : CUR.single ? null : `≈ ${fmtEur(snap.left * fx)}`)),
     splitBar([[snap.fixed, FIXED_C], [snap.goals, GOALS_C], [snap.living, LIVING_C], [snap.to_buffer, BUFFER_C], [snap.invest, INVEST_C]], 12),
     h("div", { class: "legend-list" }, legend),
-    h("div", { class: "hairline" }),
-    h("div", { class: "fx-row" }, h("span", { class: "caption" }, "EXCHANGE RATE"), h("span", { class: "fx-eq" }, "1 EUR ="), fxInput, h("span", null, "SEK"), fetchBtn),
-    h("div", { class: "eq-note" }, snap.fx_src, snap.fx_override && latest
+    CUR.single ? null : h("div", { class: "hairline" }),
+    CUR.single ? null : h("div", { class: "fx-row" }, h("span", { class: "caption" }, "EXCHANGE RATE"), h("span", { class: "fx-eq" }, `1 ${CUR.second} =`), fxInput, h("span", null, CUR.local), fetchBtn),
+    CUR.single ? null : h("div", { class: "eq-note" }, snap.fx_src, snap.fx_override && latest
       ? h("button", { type: "button", class: "link-btn", onclick: () => store.setSetting("budget_rate", null) }, "Use latest log") : null));
 }
 
@@ -193,9 +191,9 @@ function planCard(snap) {
     block("SPEND", LIVING_C, fmtSek(snap.living), `≈ ${fmtSek(roundTo10(snap.living / weeks))} per week`,
       "Stays in your everyday account: beers, eating out, small buys. Split week by week below."),
     h("div", { class: "hairline" }),
-    block("SAVE", COLORS.blue, fmtSek(save), `≈ ${fmtEur(save * fx)}`, saveText),
+    block("SAVE", COLORS.blue, fmtSek(save), CUR.single ? "" : `≈ ${fmtEur(save * fx)}`, saveText),
     h("div", { class: "hairline" }),
-    block("INVEST", COLORS.orange, fmtSek(snap.invest), `≈ ${fmtEur(snap.invest * fx)}`, "To Freedom24 / IBKR: long-term money (5+ years)."),
+    block("INVEST", COLORS.orange, fmtSek(snap.invest), CUR.single ? "" : `≈ ${fmtEur(snap.invest * fx)}`, `To ${brokersText("your investment account")}: long-term money (5+ years).`),
     h("div", { class: "hairline" }),
     h("div", { class: "rate-text" }, rateText),
     rateMeter(snap.save_rate, actual && salary > 0 ? actual.rate : null));
@@ -282,7 +280,7 @@ function bufferCard(snap) {
     const src = latest ? `your ${mLong(latest.month)} log` : "your log";
     text = `${fmtSek(bank)} in the bank (${src}). Target: ${fmtSek(target)}, ${months} months of fixed costs.`;
     if (short > 0 && snap.buffer_first) {
-      tip = `${fmtSek(short)} to go. This period ${fmtSek(snap.to_buffer)} of your future money goes here${snap.invest > 0 ? ", the rest to investing." : "."} Finansinspektionen suggests 2–3 months of necessary costs before long-term investing.`;
+      tip = `${fmtSek(short)} to go. This period ${fmtSek(snap.to_buffer)} of your future money goes here${snap.invest > 0 ? ", the rest to investing." : "."} ${inSweden() ? "Finansinspektionen suggests" : "A common rule of thumb is"} 2–3 months of necessary costs before long-term investing.`;
     } else if (short > 0) tip = `${fmtSek(short)} to go, but with the switch off your future money goes straight to investing.`;
     else if (bank < 2 * target) tip = "Your buffer is full, so all your future money goes to investing. Refill it after you use it.";
     else tip = "You hold more than twice the target in the bank (goal money included). What you won't need for 5+ years could work harder invested.";
@@ -337,11 +335,11 @@ function costsCard(snap, ctx) {
     blocks.push(h("div", { class: "list" }, items.map((x) => expenseRow(x, snap, ctx))));
   }
   return card(
-    head("Fixed costs", `${fmtSek(snap.fixed)} per month  ·  ${snap.active.length} active${eur ? `  ·  ${eur} in €` : ""}`,
+    head("Fixed costs", `${fmtSek(snap.fixed)} per month  ·  ${snap.active.length} active${eur ? `  ·  ${eur} in ${CUR.second}` : ""}`,
       addBtn(() => openExpenseSheet(ctx, snap, null))),
-    missing ? h("div", { class: "warn-note" }, `${missing} cost${missing !== 1 ? "s are" : " is"} still at 0 kr. Tap a row to set the amount.`) : null,
+    missing ? h("div", { class: "warn-note" }, `${missing} cost${missing !== 1 ? "s are" : " is"} still at ${fmtSek(0)}. Tap a row to set the amount.`) : null,
     blocks.length ? blocks : h("div", { class: "muted list-empty" }, "No fixed costs yet. Tap “+ Add” to add one."),
-    h("div", { class: "hint" }, "Tap a cost to edit it (amount, SEK or EUR, monthly or yearly). The switch leaves it out of this budget."));
+    h("div", { class: "hint" }, `Tap a cost to edit it (amount, ${CUR.single ? "" : `${CUR.local} or ${CUR.second}, `}monthly or yearly). The switch leaves it out of this budget.`));
 }
 
 // ---------------------------------------------------------------------------
@@ -357,5 +355,5 @@ export function renderBudget(ctx) {
     weeksCard(snap),
     bufferCard(snap),
     costsCard(snap, ctx),
-    h("div", { class: "hint page-foot" }, "The profiles and the buffer target are rules of thumb (Swedbank, Finansinspektionen, the 50/30/20 rule), not financial advice. Change the numbers to fit you.")];
+    h("div", { class: "hint page-foot" }, `The profiles and the buffer target are rules of thumb (${inSweden() ? "Swedbank, Finansinspektionen, the 50/30/20 rule" : "common guidance and the 50/30/20 rule"}), not financial advice. Change the numbers to fit you.`)];
 }

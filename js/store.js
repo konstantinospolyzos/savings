@@ -32,7 +32,7 @@ export function emptyData() {
       active: true, end_month: null, position: i, currency: "SEK" })),
     goals: DEFAULT_GOALS.map(([name, category], i) => ({ id: i + 1, name, category, kind: "year", amount: 0, saved: 0,
       start_month: null, target_month: null, active: true, position: i })),
-    settings: { expenses_seeded: true, goals_seeded: true },
+    settings: { expenses_seeded: true, goals_seeded: true, brokers: "" },
   };
 }
 

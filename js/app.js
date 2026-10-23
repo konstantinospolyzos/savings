@@ -1,6 +1,6 @@
 // Savings Tracker for phones: app shell (navigation bar, tabs, pages).
 import { store, readDesktopFile, describeData } from "./store.js";
-import { todayDate, budgetSnapshot, investmentStatus } from "./core.js";
+import { todayDate, budgetSnapshot, investmentStatus, configure } from "./core.js";
 import { h, icon, alertBox, toast, pickFile } from "./ui.js";
 import { renderOverview } from "./pages/overview.js";
 import { renderHistory } from "./pages/history.js";
@@ -32,6 +32,7 @@ let statusPill = null;
 // ---------------------------------------------------------------------------
 function context() {
   const data = store.data;
+  configure(data);
   const today = todayDate();
   return {
     data, entries: data.entries, today,

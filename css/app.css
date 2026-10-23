@@ -270,6 +270,7 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
 .section-caption { font-size: 13px; color: var(--gray); text-transform: uppercase; padding: 18px 16px 6px; letter-spacing: 0.01em; }
 .section-footer { font-size: 13px; color: var(--gray); padding: 6px 16px 0; line-height: 1.35; }
 .section-footer:empty { display: none; }
+.section-footer + .group { margin-top: 18px; }
 .group { background: var(--card); border-radius: 12px; overflow: hidden; }
 .group > * + * { box-shadow: inset 0 0.5px 0 var(--sep); }
 .form-row { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 4px 14px 4px 16px; }
@@ -355,6 +356,7 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
 .card .hint { line-height: 1.4; }
 .card > .hint, .card > .muted { margin-top: 10px; }
 .card > .muted { font-size: 14px; line-height: 1.4; }
+.card > .muted:empty, .card > .hint:empty { display: none; }
 .head-value { font-size: 13px; font-weight: 600; color: var(--label2); white-space: nowrap; margin-top: 3px; }
 .link-btn { color: var(--blue); font-size: 14px; font-weight: 500; padding: 2px 0; white-space: nowrap; }
 .link-btn:active { opacity: 0.5; }
