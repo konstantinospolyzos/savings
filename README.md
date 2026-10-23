@@ -9,6 +9,6 @@ Data is a JSON file in the user's own Google Drive (or on the device only), sync
 - `js/store.js`: Google Drive sync, offline queue, import of the desktop `savings.db`
 - `vendor/`: sql.js (MIT licence), used only to read `savings.db` files
 
-Status: stage 1 of 3. Overview, History and adding/editing months are done. Budget and Insights come next.
+Status: all four tabs (Overview, History, Budget, Insights) work like the desktop app.
 
 Setup: see SETUP.md.

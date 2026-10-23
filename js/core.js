@@ -624,3 +624,11 @@ export function toCsv(entries) {
   }
   return "﻿" + lines.map((l) => l.map(q).join(",")).join("\r\n");
 }
+
+export function shortNote(text, n = 70) {
+  text = String(text || "").split(/\s+/).filter(Boolean).join(" ");
+  return text.length <= n ? text : `${text.slice(0, n - 1).trimEnd()}…`;
+}
+
+/** round like Python's round(x, -1) / round(x, -2) for display amounts */
+export const roundTo10 = (v, digits = 1) => { const f = 10 ** digits; return Math.round(v / f) * f; };

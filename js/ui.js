@@ -231,3 +231,33 @@ export function pickFile(accept = "") {
     input.click();
   });
 }
+
+/** A rounded bar split into coloured parts: [[value, colour], ...] */
+export function splitBar(parts, height = 10) {
+  const total = parts.reduce((a, [v]) => a + Math.max(v, 0), 0);
+  const el = h("div", { class: "split-bar", style: { height: `${height}px`, borderRadius: `${height / 2}px` } });
+  if (total > 0) for (const [v, color] of parts) {
+    if (v <= 0) continue;
+    el.appendChild(h("span", { style: { flexGrow: String(v), background: color } }));
+  }
+  return el;
+}
+
+/** Key/value row: "Saved per month ........ +2 232 kr" */
+export function kv(label, value, { tone = "", amt = true, strong = false } = {}) {
+  return h("div", { class: "kv" }, h("span", { class: "kv-label" }, label),
+    h("span", { class: `kv-value ${tone ? `tone-text-${tone}` : ""} ${amt ? "amt" : ""} ${strong ? "strong" : ""}` }, value));
+}
+
+/** iOS-style picker row using the phone's own wheel / list */
+export function selectRow(labelText, options, value, onChange) {
+  const sel = h("select", { class: "form-select" }, options.map(([v, text]) => {
+    const o = h("option", { value: v }, text);
+    if (v === value) o.selected = true;
+    return o;
+  }));
+  sel.addEventListener("change", () => onChange(sel.value));
+  const row = h("label", { class: "form-row" }, h("span", { class: "form-label" }, labelText), sel, icon("chevron", 14, "select-chev"));
+  row.select = sel;
+  return row;
+}

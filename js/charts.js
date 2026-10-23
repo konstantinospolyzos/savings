@@ -66,7 +66,8 @@ export function chart(opts) {
     const innerL = pad.l + (bar ? 14 : 10), innerR = W - pad.r - (bar ? 14 : 10);
     const X = (i) => (n === 1 ? (innerL + innerR) / 2 : innerL + ((xi[i] - x0) / span) * (innerR - innerL));
 
-    const all = opts.series.flatMap((ser) => ser.values.filter((v) => v !== null));
+    const all = opts.series.flatMap((ser) => ser.values.filter((v) => v !== null))
+      .concat((opts.lines || []).map((l) => l.value));
     let lo = Math.min(0, ...all), hi = Math.max(0, ...all);
     if (!opts.zeroBased) lo = Math.min(...all);
     if (hi === lo) hi = lo + 1;
@@ -92,13 +93,13 @@ export function chart(opts) {
     if (bar) {
       const k = opts.series.length;
       const slot = n > 1 ? Math.min((innerR - innerL) / span, 60) : 60;
-      const bw = Math.max(3, Math.min(14, (slot * 0.7) / k));
+      const bw = Math.max(3, Math.min(k === 1 ? 22 : 14, (slot * 0.7) / k));
       opts.series.forEach((ser, j) => {
         ser.values.forEach((v, i) => {
           if (v === null) return;
           const x = X(i) - (k * bw) / 2 + j * bw;
           const y = Math.min(Y(v), Y(0)), hh = Math.max(Math.abs(Y(v) - Y(0)), 1);
-          svgEl.appendChild(s("rect", { x, y, width: bw - 1, height: hh, rx: Math.min(3, bw / 3), fill: ser.color, class: "bar" }));
+          svgEl.appendChild(s("rect", { x, y, width: bw - 1, height: hh, rx: Math.min(3, bw / 3), fill: ser.colors ? ser.colors[i] : ser.color, class: "bar" }));
         });
       });
     } else {
@@ -122,6 +123,15 @@ export function chart(opts) {
         marks.push(dots);
       });
     }
+    (opts.lines || []).forEach((l, k) => {
+      const y = Y(l.value);
+      svgEl.appendChild(s("line", { x1: pad.l, x2: W - pad.r + 4, y1: y, y2: y, stroke: l.color, class: `ref-line ${l.dotted ? "dotted" : ""}` }));
+      if (opts.lineLabels === false) return;
+      const right = k % 2 === 1;      // second label on the right, so two close lines don't overlap
+      const t = s("text", { x: right ? W - pad.r - 2 : pad.l + 4, y: y - 5, "text-anchor": right ? "end" : "start",
+        class: "ref-label amt-svg", fill: l.color }, l.label);
+      svgEl.appendChild(t);
+    });
     const guide = s("line", { x1: 0, x2: 0, y1: pad.t - 6, y2: H - pad.b, class: "guide", visibility: "hidden" });
     svgEl.appendChild(guide);
     const hit = s("rect", { x: 0, y: 0, width: W, height: H, fill: "transparent", class: "hit" });
@@ -151,7 +161,8 @@ export function chart(opts) {
     tip.replaceChildren(h("div", { class: "tip-title" }, t.title),
       ...t.rows.map(([label, value, color]) => h("div", { class: "tip-row" },
         color ? h("span", { class: "dot", style: { background: color } }) : null,
-        h("span", { class: "tip-label" }, label), h("span", { class: "tip-value" }, value))));
+        h("span", { class: "tip-label" }, label), h("span", { class: "tip-value" }, value))),
+      t.note ? h("div", { class: "tip-note" }, t.note) : null);
     tip.classList.add("show");
     const tw = tip.offsetWidth;
     let left = X(i) - tw / 2;

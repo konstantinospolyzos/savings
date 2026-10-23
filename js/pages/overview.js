@@ -44,7 +44,7 @@ function balanceHero(es, inv) {
 }
 
 /** hide: which parts are money and get blurred in privacy mode, e.g. "vsc" = value, sub, chip */
-function statCard(title, color, value, sub, chipText = "", tone = "flat", hide = "") {
+export function statCard(title, color, value, sub, chipText = "", tone = "flat", hide = "") {
   const amt = (part) => (hide.includes(part) ? " amt" : "");
   return h("div", { class: "card stat" },
     h("div", { class: "cap-row" }, dot(color, 7), h("span", { class: "caption" }, title)),

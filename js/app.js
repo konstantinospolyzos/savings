@@ -4,7 +4,8 @@ import { todayDate, budgetSnapshot, investmentStatus } from "./core.js";
 import { h, icon, alertBox, toast, pickFile } from "./ui.js";
 import { renderOverview } from "./pages/overview.js";
 import { renderHistory } from "./pages/history.js";
-import { renderSoon } from "./pages/soon.js";
+import { renderBudget } from "./pages/budget.js";
+import { renderInsights } from "./pages/insights.js";
 import { renderWelcome } from "./pages/welcome.js";
 import { openMonthSheet } from "./pages/month.js";
 import { openSettings } from "./pages/settings.js";
@@ -12,8 +13,8 @@ import { openSettings } from "./pages/settings.js";
 const TABS = [
   { key: "overview", title: "Overview", icon: "overview", render: renderOverview },
   { key: "history", title: "History", icon: "history", render: renderHistory },
-  { key: "budget", title: "Budget", icon: "budget", render: (ctx) => renderSoon("budget", ctx) },
-  { key: "insights", title: "Insights", icon: "insights", render: (ctx) => renderSoon("insights", ctx) },
+  { key: "budget", title: "Budget", icon: "budget", render: renderBudget },
+  { key: "insights", title: "Insights", icon: "insights", render: renderInsights },
 ];
 const tabKeys = TABS.map((t) => t.key);
 let current = tabKeys.includes(location.hash.slice(1)) ? location.hash.slice(1) : store.pref("tab", "overview");
@@ -42,6 +43,7 @@ function context() {
     privacy: () => Boolean(store.pref("privacy", false)),
     setPrivacy,
     go,
+    refresh: () => { const y = window.scrollY; render(); window.scrollTo(0, y); },
   };
 }
 
