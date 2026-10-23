@@ -581,7 +581,10 @@ export function budgetSnapshot(data, today = todayDate(), offset = 0, salaryOver
   const start = paydayFor(base), end = paydayFor(addMonths(base, 1));
   const latest = entries.length ? entries.at(-1) : null;
   const [fx, fxSrc, fxOverride] = budgetRate(data, entries);
-  const salary = salaryOverride !== null ? salaryOverride : latest ? latest.income_sek : 0;
+  // a salary you typed on the Budget page is kept (in the data file) until you go back to the latest log
+  const kept = getSetting(data, "budget_salary");
+  const savedSalary = typeof kept === "number" && Number.isFinite(kept) && kept >= 0 ? kept : null;
+  const salary = salaryOverride !== null ? salaryOverride : savedSalary !== null ? savedSalary : latest ? latest.income_sek : 0;
   const expenses = [...data.expenses].sort(byPosition);
   const goals = [...data.goals].sort(byPosition);
   const profiles = loadProfiles(data);
@@ -596,7 +599,7 @@ export function budgetSnapshot(data, today = todayDate(), offset = 0, salaryOver
   const missing = active.filter((e) => e.amount === 0);
   return Object.assign(b, {
     today, base, start, end, days: daysBetween(start, end), fx, fx_src: fxSrc, fx_override: fxOverride,
-    expenses, active, profiles, profile: key, goals_list: goals, latest, buffer_first: bufferFirst, missing,
+    expenses, active, profiles, profile: key, goals_list: goals, latest, salary_kept: salaryOverride === null && savedSalary !== null, buffer_first: bufferFirst, missing,
     plan_ready: salary > 0 && b.fixed > 0 && missing.length <= 2,
   });
 }

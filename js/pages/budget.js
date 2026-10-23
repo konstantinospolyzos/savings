@@ -13,7 +13,6 @@ import { openExpenseSheet, openGoalSheet, openProfilesSheet } from "./budget-she
 const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, GOALS_C = COLORS.teal, BUFFER_C = COLORS.blue, INVEST_C = COLORS.orange;
 
 let offset = 0;              // pay periods away from the current one
-let salaryOverride = null;   // a salary typed in to try it out (not saved)
 
 const card = (...children) => h("div", { class: "card" }, children);
 const head = (title, sub = null, right = null) => h("div", { class: "card-head" },
@@ -65,10 +64,10 @@ function periodCard(snap, ctx) {
   salaryInput.addEventListener("change", () => {
     const v = parseNumber(salaryInput.value);
     if (v === null) { salaryInput.value = salary ? plainNumber(salary) : ""; return; }
-    salaryOverride = latest && Math.abs(v - latest.income_sek) < 0.5 ? null : v;
-    ctx.refresh();
+    // kept in the data file (and on your other devices) until you tap "Use latest"
+    store.setSetting("budget_salary", latest && Math.abs(v - latest.income_sek) < 0.5 ? null : v);
   });
-  const src = salaryOverride !== null ? "Your own figure, not saved" : latest ? `From your ${mLong(latest.month)} log` : "Log a month first";
+  const src = snap.salary_kept ? (latest ? "Your own figure, kept until you tap “Use latest”" : "Your own figure") : latest ? `From your ${mLong(latest.month)} log` : "Log a month first";
 
   const fxInput = h("input", { class: "fx-input", type: "text", inputmode: "decimal", autocomplete: "off", value: rateShown(fx), "aria-label": `${CUR.local} per ${CUR.second}` });
   fxInput.addEventListener("change", () => {
@@ -100,8 +99,8 @@ function periodCard(snap, ctx) {
     stepper,
     h("div", { class: "eq" },
       h("label", { class: "eq-row" }, h("span", { class: "eq-label" }, "Salary"), salaryInput, h("span", { class: "eq-unit" }, localSym())),
-      h("div", { class: "eq-note" }, src, salaryOverride !== null
-        ? h("button", { type: "button", class: "link-btn", onclick: () => { salaryOverride = null; ctx.refresh(); } }, "Use latest") : null),
+      h("div", { class: "eq-note" }, src, snap.salary_kept && latest
+        ? h("button", { type: "button", class: "link-btn", onclick: () => store.setSetting("budget_salary", null) }, "Use latest") : null),
       h("div", { class: "eq-row" }, h("span", { class: "eq-label" }, h("span", { class: "eq-sign" }, "−"), "Fixed costs"),
         h("span", { class: "eq-value amt" }, fmtSek(snap.fixed))),
       h("div", { class: "eq-note" }, `${snap.active.length} active costs`),
@@ -344,7 +343,7 @@ function costsCard(snap, ctx) {
 
 // ---------------------------------------------------------------------------
 export function renderBudget(ctx) {
-  const snap = budgetSnapshot(ctx.data, ctx.today, offset, salaryOverride);
+  const snap = budgetSnapshot(ctx.data, ctx.today, offset);
   snap.entries = ctx.entries;
   return ["Fixed costs and goals first, then your future, and the rest is yours to live on",
     paydayCard(ctx.today),
