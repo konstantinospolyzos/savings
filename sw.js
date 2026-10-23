@@ -1,0 +1,33 @@
+// Offline support: the app's own files are served from the cache and refreshed in the background.
+// Google Drive, Google sign-in and the exchange-rate service always go to the network.
+const CACHE = "savings-tracker-v1";
+const FILES = [
+  "./", "index.html", "manifest.webmanifest", "css/app.css",
+  "js/app.js", "js/core.js", "js/store.js", "js/ui.js", "js/charts.js", "js/config.js",
+  "js/pages/overview.js", "js/pages/history.js", "js/pages/month.js", "js/pages/settings.js",
+  "js/pages/welcome.js", "js/pages/soon.js",
+  "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
+];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(caches.keys()
+    .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+    .then(() => self.clients.claim()));
+});
+
+self.addEventListener("fetch", (event) => {
+  const url = new URL(event.request.url);
+  if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
+  event.respondWith(caches.open(CACHE).then(async (cache) => {
+    const cached = await cache.match(event.request, { ignoreSearch: true });
+    const fresh = fetch(event.request).then((resp) => {
+      if (resp.ok) cache.put(event.request, resp.clone());
+      return resp;
+    }).catch(() => cached);
+    return cached || fresh;
+  }));
+});
