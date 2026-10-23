@@ -1,6 +1,6 @@
-// Offline support: the app's own files are served from the cache and refreshed in the background.
+// Offline support: the newest files when online, the saved copies when offline.
 // Google Drive, Google sign-in and the exchange-rate service always go to the network.
-const CACHE = "savings-tracker-v1";
+const CACHE = "savings-tracker-v2";
 const FILES = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
   "js/app.js", "js/core.js", "js/store.js", "js/ui.js", "js/charts.js", "js/config.js",
@@ -22,12 +22,9 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
-  event.respondWith(caches.open(CACHE).then(async (cache) => {
-    const cached = await cache.match(event.request, { ignoreSearch: true });
-    const fresh = fetch(event.request).then((resp) => {
-      if (resp.ok) cache.put(event.request, resp.clone());
-      return resp;
-    }).catch(() => cached);
-    return cached || fresh;
-  }));
+  // newest version when online, the saved copy when offline
+  event.respondWith(fetch(event.request).then((resp) => {
+    if (resp.ok) { const copy = resp.clone(); caches.open(CACHE).then((c) => c.put(event.request, copy)); }
+    return resp;
+  }).catch(() => caches.match(event.request, { ignoreSearch: true })));
 });

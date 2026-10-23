@@ -2,5 +2,5 @@
 export const CONFIG = {
   // Google OAuth "Web application" client ID, e.g. "1234567890-abc123.apps.googleusercontent.com".
   // Leave empty to use the app without Google Drive (data stays on each device).
-  googleClientId: "",
+  googleClientId: "902106036962-evnjgsvotoiaj1328ii6pbmsphrkmasq.apps.googleusercontent.com",
 };
