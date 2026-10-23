@@ -21,9 +21,9 @@ function balanceHero(es, inv) {
   const vs = prev ? MONTHS[mNum(prev.month) - 1] : "";
   const half = (title, color, hint, value, sub, chips) => h("div", { class: "hero-half" },
     h("div", { class: "cap-row" }, dot(color), h("span", { class: "caption" }, title), h("span", { class: "hint" }, hint)),
-    h("div", { class: "big-value" }, value),
-    h("div", { class: "muted" }, sub),
-    chips.length ? h("div", { class: "chips" }, chips) : null);
+    h("div", { class: "big-value amt" }, value),
+    h("div", { class: "muted amt" }, sub),
+    chips.length ? h("div", { class: "chips amt" }, chips) : null);
 
   const bankChips = [];
   const invChips = [];
@@ -43,12 +43,14 @@ function balanceHero(es, inv) {
     half("INVESTED", COLORS.orange, "market value, before tax", fmtEur(last.invested_eur), `≈ ${fmtSek(investedSek(last))}`, invChips));
 }
 
-function statCard(title, color, value, sub, chipText = "", tone = "flat") {
+/** hide: which parts are money and get blurred in privacy mode, e.g. "vsc" = value, sub, chip */
+function statCard(title, color, value, sub, chipText = "", tone = "flat", hide = "") {
+  const amt = (part) => (hide.includes(part) ? " amt" : "");
   return h("div", { class: "card stat" },
     h("div", { class: "cap-row" }, dot(color, 7), h("span", { class: "caption" }, title)),
-    h("div", { class: "stat-value" }, value),
-    h("div", { class: "stat-sub" }, sub),
-    chipText ? chip(chipText, tone) : null);
+    h("div", { class: `stat-value${amt("v")}` }, value),
+    h("div", { class: `stat-sub${amt("s")}` }, sub),
+    chipText ? chip(chipText, tone, amt("c")) : null);
 }
 
 function stats(es, snap) {
@@ -56,7 +58,7 @@ function stats(es, snap) {
   const last12 = es.slice(-12);
   const cards = [];
   cards.push(statCard("INCOME", COLORS.cyan, fmtEur(incomeEur(last)), fmtSek(last.income_sek),
-    `Average ${fmtEur(mean(last12.map(incomeEur)))}`));
+    `Average ${fmtEur(mean(last12.map(incomeEur)))}`, "flat", "vsc"));
 
   const summ = summarize(monthFlows(es).slice(-12));
   if (summ) {
@@ -67,7 +69,7 @@ function stats(es, snap) {
       tone = summ.rate >= plan - 0.02 ? "up" : summ.rate < plan - 0.10 ? "down" : "flat";
     }
     cards.push(statCard("SAVED PER MONTH", COLORS.green, fmtSek(summ.saved, true),
-      `${pct(summ.rate)} of income, last ${summ.n} months`, chipText, tone));
+      `${pct(summ.rate)} of income, last ${summ.n} months`, chipText, tone, "v"));
   } else cards.push(statCard("SAVED PER MONTH", COLORS.green, "—", "needs two months"));
 
   if (snap.plan_ready) {

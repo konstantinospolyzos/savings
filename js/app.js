@@ -39,6 +39,8 @@ function context() {
     openMonth: (entry) => openMonthSheet(context(), entry),
     openSettings: () => openSettings(context()),
     importDesktop, confirmReplace,
+    privacy: () => Boolean(store.pref("privacy", false)),
+    setPrivacy,
     go,
   };
 }
@@ -78,6 +80,16 @@ store.chooser = (mine, theirs) => alertBox({
     { text: "Use this device's (replaces Drive's)", value: "device", style: "" },
   ],
 });
+
+const privacyBtn = document.getElementById("privacy-btn");
+function setPrivacy(on, announce = false) {
+  store.setPref("privacy", Boolean(on));
+  document.body.classList.toggle("privacy", Boolean(on));
+  privacyBtn.replaceChildren(icon(on ? "eyeOff" : "eye", 23));
+  privacyBtn.setAttribute("aria-label", on ? "Show amounts" : "Hide amounts");
+  privacyBtn.classList.toggle("on", Boolean(on));
+  if (announce) toast(on ? "Amounts hidden" : "Amounts shown");
+}
 
 function go(key) {
   if (!tabKeys.includes(key)) return;
@@ -146,6 +158,7 @@ function render() {
 // ---------------------------------------------------------------------------
 document.getElementById("settings-btn").addEventListener("click", () => store.ready && openSettings(context()));
 document.getElementById("add-btn").addEventListener("click", () => store.ready && openMonthSheet(context(), null));
+privacyBtn.addEventListener("click", () => setPrivacy(!store.pref("privacy", false), true));
 syncBtn.addEventListener("click", () => {
   if (!store.ready) return;
   if (store.mode === "drive") store.syncFromTap().then(() => toast(store.status.text));
@@ -159,6 +172,7 @@ document.addEventListener("keydown", (ev) => {
 
 store.on((kind) => (kind === "status" ? updateChrome() : render()));
 store.load();
+setPrivacy(store.pref("privacy", false));
 render();
 if (store.mode === "drive") store.sync();
 

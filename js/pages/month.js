@@ -33,6 +33,7 @@ export function openMonthSheet(ctx, original = null) {
   const monthLabel = h("div", { class: "month-label" });
   const monthNote = footer("", "warn");
   const convFooter = footer("");
+  convFooter.classList.add("amt");
   const rateFooter = footer("");
   const tripFooter = footer("");
   const summary = h("div", { class: "form-summary" });

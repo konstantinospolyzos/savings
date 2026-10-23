@@ -1,4 +1,4 @@
-import { h, sheet, group, caption, footer, icon, alertBox, toast, saveFile, pickFile } from "../ui.js";
+import { h, sheet, group, caption, footer, icon, alertBox, toast, saveFile, pickFile, toggle } from "../ui.js";
 import { APP_NAME, APP_VERSION, toCsv } from "../core.js";
 import { store, FILE_NAME, FOLDER_NAME, describeData, readBackupFile } from "../store.js";
 
@@ -46,6 +46,12 @@ export function openSettings(ctx) {
         parts.push(footer("Google Drive isn't set up for this website yet. See SETUP.md, step 2."));
       }
     }
+
+    parts.push(caption("PRIVACY"));
+    parts.push(group(h("label", { class: "form-row switch-row" },
+      h("span", { class: "form-label" }, icon("eyeOff", 18, "inline-icon"), "Hide amounts"),
+      toggle(ctx.privacy(), (on) => ctx.setPrivacy(on), "Hide amounts"))));
+    parts.push(footer("Blurs balances, salaries, changes and notes so you can show the app to others. Only on this device. The eye button at the top switches it too."));
 
     parts.push(caption("IMPORT AND BACKUP"));
     parts.push(group(

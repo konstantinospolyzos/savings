@@ -59,7 +59,9 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1
 #navbar.scrolled { background: var(--bar-bg); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); border-bottom-color: var(--sep); }
 #nav-title { flex: 1; text-align: center; font-weight: 600; font-size: 17px; opacity: 0; transition: opacity 0.2s; }
 #navbar.scrolled #nav-title { opacity: 1; }
-.nav-right { display: flex; gap: 2px; }
+.nav-right, .nav-left { display: flex; gap: 2px; }
+#privacy-btn.on { color: var(--orange); }
+body.welcome-mode #privacy-btn { display: none; }
 .nav-btn { width: 44px; height: 44px; border-radius: 22px; display: inline-flex; align-items: center; justify-content: center; color: var(--blue); }
 .nav-btn:active { opacity: 0.5; }
 .sync-state-local, .sync-state-idle { color: var(--gray); }
@@ -354,3 +356,11 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
   .hrow-grid { grid-template-columns: 1fr 1fr; }
   .big-value { font-size: 32px; }
 }
+
+/* ---------- privacy mode: blur the money, keep the layout ---------- */
+body.privacy .amt, body.privacy .metric-value, body.privacy .metric-sub, body.privacy .hrow-rate-sub,
+body.privacy .year-sum, body.privacy .hrow-note, body.privacy .note-text, body.privacy .tip-value,
+body.privacy .series-chip .slope, body.privacy .form-input, body.privacy .note-input, body.privacy .form-summary {
+  filter: blur(7px); -webkit-filter: blur(7px); user-select: none; -webkit-user-select: none;
+}
+body.privacy .chart .axis-label:not(.mid) { visibility: hidden; }
