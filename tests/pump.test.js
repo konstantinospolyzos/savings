@@ -127,6 +127,8 @@ test("no pump in the photo, and API problems, give a clear message", async () =>
   await assert.rejects(pump.readPump("A", "k", { fetchFn: fakeApi({ status: 401, message: "invalid x-api-key" }).fetchFn }), { kind: "key" });
   await assert.rejects(pump.readPump("A", "k", { fetchFn: fakeApi({ status: 400, message: "Your credit balance is too low" }).fetchFn }), { kind: "credit" });
   await assert.rejects(pump.readPump("A", "k", { fetchFn: fakeApi({ status: 529, message: "Overloaded" }).fetchFn }), { kind: "busy" });
+  await assert.rejects(pump.readPump("A", "k", { fetchFn: fakeApi({ status: 400, message: "This API key is not scoped to a workspace." }).fetchFn }),
+    { kind: "key", message: /workspace/ });
   await assert.rejects(pump.readPump("A", "k", { fetchFn: fakeApi(new TypeError("Failed to fetch")).fetchFn }), { kind: "network" });
 });
 

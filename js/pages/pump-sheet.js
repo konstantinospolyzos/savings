@@ -54,8 +54,8 @@ export function openPhotoSetup(ctx, after = null) {
     group(h("label", { class: "form-row" }, h("span", { class: "form-label" }, "Key"), input)),
     status,
     h("div", { class: "section-footer steps" },
-      h("b", null, "Getting a key: "), "sign in at ", link("https://console.anthropic.com", "console.anthropic.com"),
-      ", add a little credit under Billing, then create a key under API keys and paste it here. ",
+      h("b", null, "Getting a key: "), "sign in to the Claude Console at ", link("https://platform.claude.com/settings/keys", "platform.claude.com"),
+      " and add a little credit under Billing (on a Max plan, your plan's monthly API credits work too). Then tap Create key, pick a workspace (Default is fine) and the longest expiry, copy the key (it starts with sk-ant- and is shown only once) and paste it here. ",
       "A photo costs a fraction of an öre; when the numbers don't add up the app takes a second, more careful look, about 20 öre."),
     footer("The key is saved only on this device: it's not in your Google Drive file or the backups. To be safe, set a monthly spend limit in the Console. The photo goes to Anthropic only to read the numbers; the app doesn't keep it."),
     current ? h("button", { type: "button", class: "btn destructive-row", onclick: remove }, `Remove the key (${masked(current)})`) : null);

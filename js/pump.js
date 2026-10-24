@@ -93,7 +93,8 @@ async function post(key, body, fetchFn) {
   try { data = await resp.json(); } catch { /* not JSON */ }
   if (!resp.ok) {
     const msg = data?.error?.message || `HTTP ${resp.status}`;
-    if (resp.status === 401) throw new PumpError("The API key isn't valid. Check it in Settings › Reading pump photos.", "key");
+    if (resp.status === 401) throw new PumpError("The API key isn't valid, or it has expired. Check it in Settings › Reading pump photos.", "key");
+    if (resp.status === 400 && /workspace/i.test(msg)) throw new PumpError("This key isn't tied to a workspace. Create a new key in the Claude Console and pick a workspace for it (Default is fine).", "key");
     if (/credit balance|billing/i.test(msg)) throw new PumpError("Your Anthropic account has no credit left. Add some under Billing in the Claude Console.", "credit");
     if (resp.status === 403) throw new PumpError(`The API key isn't allowed to do this: ${msg}`, "key");
     if (resp.status === 429) throw new PumpError("Too many requests right now. Try again in a minute.", "busy");
