@@ -1,0 +1,17 @@
+SE cols {'SE_exchange_rate': 195, 'SE_price_with_tax_euro95': 196, 'SE_price_with_tax_diesel': 197, 'SE_price_with_tax_heating_oil': 198, 'SE_price_with_tax_fuel_oil_1': 199, 'SE_price_with_tax_fuel_oil_2': 200, 'SE_price_with_tax_LPG': 201}
+units row [None, '1000 l', '1000 l', '1000 l', 't', 't', '1000 l']
+rows 1090 first Notes: last 2026-10-19 00:00:00
+2026-10-19 00:00:00 [0.09005763688760808, 1639.949567723343, 2040.3458213256488, 1873.2889048991358, 1073.4870317002883, None, None]
+2026-10-12 00:00:00 [0.08931362479346223, 1692.4931898361094, 2049.6583753851646, 1833.6980306345731, 1039.34265172152, None, None]
+2026-10-05 00:00:00 [0.08886914019106866, 1589.335703177072, 2117.9293490335485, 1917.9648966896248, 1093.512552766052, None, None]
+2026-09-28 00:00:00 [0.0883353208780531, 1594.8058831323706, 2135.2413762642996, 1934.1018506249725, 1088.5561591802484, None, None]
+2026-09-21 00:00:00 [0.08869179600886917, 1579.2461197339244, 2090.19955654102, 1901.1929046563191, 1061.3543237250553, None, None]
+2026-09-14 00:00:00 [0.08864462370357237, 1513.6955943622017, 1980.9414059037317, 1809.9459267795407, 1032.2666430281004, None, None]
+2005-01-17 00:00:00 [0.110580325548478, 1103.59, 976.42, 853.79, 624.23, None, None]
+2005-01-10 00:00:00 [0.110582771204246, 1092.56, 973.13, 857.57, 606.88, None, None]
+2005-01-03 00:00:00 [0.111410682056196, 1069.54, 1007.15, 850.29, 578.22, None, None]
+Notes: [None, None, None, None, None, None, None]
+numeric 95 values 1089
+non-numeric [('Notes:', None)]
+date types {'datetime', 'str'}
+gaps [(datetime.datetime(2022, 4, 25, 0, 0), datetime.datetime(2022, 4, 11, 0, 0)), (datetime.datetime(2022, 1, 3, 0, 0), datetime.datetime(2021, 12, 20, 0, 0)), (datetime.datetime(2021, 4, 12, 0, 0), datetime.datetime(2021, 3, 29, 0, 0)), (datetime.datetime(2021, 1, 11, 0, 0), datetime.datetime(2020, 12, 21, 0, 0)), (datetime.datetime(2020, 4, 20, 0, 0), datetime.datetime(2020, 4, 6, 0, 0)), (datetime.datetime(2020, 1, 6, 0, 0), datetime.datetime(2019, 12, 16, 0, 0)), (datetime.datetime(2019, 4, 29, 0, 0), datetime.datetime(2019, 4, 15, 0, 0)), (datetime.datetime(2019, 1, 7, 0, 0), datetime.datetime(2018, 12, 17, 0, 0)), (datetime.datetime(2018, 4, 9, 0, 0), datetime.datetime(2018, 3, 26, 0, 0)), (datetime.datetime(2018, 1, 1, 0, 0), datetime.datetime(2017, 12, 18, 0, 0)), (datetime.datetime(2017, 4, 24, 0, 0), datetime.datetime(2017, 4, 10, 0, 0)), (datetime.datetime(2017, 1, 2, 0, 0), datetime.datetime(2016, 12, 19, 0, 0)), (datetime.datetime(2016, 4, 4, 0, 0), datetime.datetime(2016, 3, 21, 0, 0)), (datetime.datetime(2016, 1, 4, 0, 0), datetime.datetime(2015, 12, 14, 0, 0)), (datetime.datetime(2015, 4, 13, 0, 0), datetime.datetime(2015, 3, 30, 0, 0))]
