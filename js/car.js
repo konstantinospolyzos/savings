@@ -15,6 +15,8 @@ export const CAR_TYPES = [
   ["inspection", "Inspection", "Inspection", COLORS.teal, "check"],
   ["repair", "Repair", "Repairs", COLORS.red, "wrench"],
   ["tax", "Vehicle tax", "Tax", COLORS.pink, "receipt"],
+  ["insurance", "Insurance", "Insurance", COLORS.brown, "shield"],
+  ["parking", "Parking", "Parking", COLORS.green, "parking"],
   ["other", "Other", "Other", COLORS.gray, "car"],
 ];
 export const TYPE = Object.fromEntries(CAR_TYPES.map(([key, name, costName, color, icon]) => [key, { key, name, costName, color, icon }]));
@@ -63,7 +65,7 @@ const MONTH_RX = /^\d{4}-\d{2}$/;
 export const newLogId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 export const newCarId = () => `car-${newLogId()}`;
 export const emptyCar = (id = newCarId()) => ({ id, name: "", make: "", model: "", year: null, plate: "", fuel: "95",
-  first_registered: null, service_km: null, service_months: null, logs: [] });
+  first_registered: null, service_km: null, service_months: null, monthly: [], logs: [] });
 export const byDateKm = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.km ?? -1) - (b.km ?? -1));
 
 const optPos = (v) => {
@@ -97,6 +99,70 @@ function normalizeLogs(raw) {
   return logs.sort(byDateKm);
 }
 
+// ---------------------------------------------------------------------------
+// Fixed monthly costs (insurance, a parking space): set once in the car details, counted on the
+// 1st of every month from "from" to "to" (null: still paying). A new price is a new period.
+// ---------------------------------------------------------------------------
+export const MONTHLY_TYPES = ["insurance", "parking"];
+const newMonthlyId = () => `mo-${newLogId()}`;
+
+function normalizeMonthly(raw) {
+  const out = [];
+  for (const e of Array.isArray(raw) ? raw : []) {
+    if (!e || !MONTHLY_TYPES.includes(e.type) || !MONTH_RX.test(e.from || "")) continue;
+    const amount = optPos(e.amount);
+    if (!(amount > 0)) continue;
+    const to = MONTH_RX.test(e.to || "") && e.to >= e.from ? e.to : null;
+    out.push({ id: typeof e.id === "string" && e.id ? e.id : newMonthlyId(), type: e.type, amount, from: e.from, to });
+  }
+  return out.sort((a, b) => (a.type === b.type ? (a.from < b.from ? -1 : 1) : MONTHLY_TYPES.indexOf(a.type) - MONTHLY_TYPES.indexOf(b.type))).slice(0, 100);
+}
+
+/** What you pay every month now for this type (null if nothing), and since when you've been paying. */
+export function monthlyNow(car, type) {
+  const periods = (car.monthly || []).filter((e) => e.type === type);
+  const active = periods.find((e) => e.to === null) || null;
+  return { amount: active ? active.amount : null, since: periods.length ? periods[0].from : null, active, periods };
+}
+
+/**
+ * The periods after you set a monthly cost in the car details. A new price counts from this month
+ * (the months before keep the old one); an empty amount stops it after this month; "since" moves the
+ * start of the first period (when you began paying).
+ */
+export function setMonthly(list, type, amount, since, now) {
+  const rest = (list || []).filter((e) => e.type !== type);
+  let periods = (list || []).filter((e) => e.type === type).map((e) => ({ ...e })).sort((a, b) => (a.from < b.from ? -1 : 1));
+  if (since && periods.length && since <= (periods[0].to ?? "9999-12")) periods[0].from = since;
+  const active = periods.find((e) => e.to === null) || null;
+  if (!(amount > 0)) {
+    if (active) {
+      if (active.from >= now) periods = periods.filter((e) => e !== active);
+      else active.to = now;
+    }
+  } else if (!active) {
+    periods.push({ id: newMonthlyId(), type, amount, from: periods.length ? now : since || now, to: null });
+  } else if (active.amount !== amount) {
+    if (active.from >= now) active.amount = amount;
+    else { active.to = addMonths(now, -1); periods.push({ id: newMonthlyId(), type, amount, from: now, to: null }); }
+  }
+  return normalizeMonthly([...rest, ...periods]);
+}
+
+/** The monthly costs as cost entries, one per month on the 1st, up to this month. */
+export function monthlyEntries(car, today) {
+  const now = monthOf(today);
+  const out = [];
+  for (const e of car.monthly || []) {
+    const end = e.to && e.to < now ? e.to : now;
+    for (let m = e.from; mIndex(m) <= mIndex(end); m = addMonths(m, 1)) {
+      out.push({ id: `${e.id}:${m}`, date: `${m}-01`, type: e.type, km: null, cost: e.amount, litres: null, full: null,
+        tires: null, fitted: null, note: "", photos: [], monthly: true });
+    }
+  }
+  return out;
+}
+
 /** One car: its details and its logs, checked and tidied. */
 export function normalizeCar(raw, id = null) {
   const c = raw && typeof raw === "object" ? raw : {};
@@ -112,6 +178,7 @@ export function normalizeCar(raw, id = null) {
     first_registered: MONTH_RX.test(reg) ? reg : null,
     service_km: optPos(c.service_km) || null,
     service_months: months ? Math.round(months) : null,
+    monthly: normalizeMonthly(c.monthly),
     logs: normalizeLogs(c.logs),
   };
 }
@@ -262,7 +329,7 @@ export function yearForecast(sum, today) {
   const y = today.getFullYear();
   const todayIso = isoDay(today);
   const daysLeft = Math.max(0, daysBetween(today, day(y, 12, 31)));
-  const logs = sum.logs.filter((l) => l.date.startsWith(`${y}-`) && l.date <= todayIso);
+  const logs = sum.cost_logs.filter((l) => l.date.startsWith(`${y}-`) && l.date <= todayIso);
   const costs = sum_(logs.map((l) => l.cost || 0));
   const fuel = sum_(logs.filter((l) => l.type === "fuel").map((l) => l.cost || 0));
   const kmLeft = sum.per_day !== null ? sum.per_day * daysLeft : null;
@@ -499,6 +566,9 @@ export function carSummary(car, today) {
   const T = today.getTime();
   const first = points[0] || null, latest = points.at(-1) || null;
   const firstLog = logs[0] || null;
+  // everything that cost money: the logs and the monthly costs (insurance, parking)
+  const costLogs = [...logs, ...monthlyEntries(car, today)].sort(byDateKm);
+  const firstCost = costLogs[0] || null;
 
   // driving: the last 12 months, or since the first reading
   const yearAgo = T - 365 * DAY_MS;
@@ -512,39 +582,40 @@ export function carSummary(car, today) {
   const thisYear = latest && latest.t >= jan1 ? drivenBetween(points, Math.max(jan1, first.t), latest.t) : 0;
 
   // costs: the last 12 months, or since the first log
-  const fromT = firstLog ? Math.max(dayT(firstLog.date), yearAgo) : T;
+  const fromT = firstCost ? Math.max(dayT(firstCost.date), yearAgo) : T;
   const fromIso = isoDay(new Date(fromT));
   const todayIso = isoDay(today);
-  const inWindow = logs.filter((l) => l.date >= fromIso && l.date <= todayIso);
-  const months = Math.max(1, (T - fromT) / DAY_MS / MONTH_DAYS);
+  const inWindow = costLogs.filter((l) => l.date >= fromIso && l.date <= todayIso);
+  // a full year is 12 months exactly, so a fixed 863 kr a month reads as 863
+  const months = fromT === yearAgo ? 12 : Math.max(1, (T - fromT) / DAY_MS / MONTH_DAYS);
   const costs = sum(inWindow.map((l) => l.cost || 0));
   const fuelCosts = sum(inWindow.filter((l) => l.type === "fuel").map((l) => l.cost || 0));
   const kmWindow = points.length ? drivenBetween(points, fromT, T) : 0;
 
   // year by year
   const years = [];
-  if (firstLog) {
-    for (let yr = Number(firstLog.date.slice(0, 4)); yr <= today.getFullYear(); yr++) {
+  if (firstCost) {
+    for (let yr = Number(firstCost.date.slice(0, 4)); yr <= today.getFullYear(); yr++) {
       const ys = day(yr, 1, 1).getTime(), ye = day(yr + 1, 1, 1).getTime();
-      const yl = logs.filter((l) => l.date.startsWith(`${yr}-`));
+      const yl = costLogs.filter((l) => l.date.startsWith(`${yr}-`));
       const km = points.length >= 2 && latest.t > ys && first.t < ye ? drivenBetween(points, Math.max(ys, first.t), Math.min(ye, latest.t)) : 0;
       const c = sum(yl.map((l) => l.cost || 0));
-      years.push({ year: yr, km, costs: c, per_km: km >= 100 ? c / km : null, logs: yl.length,
+      years.push({ year: yr, km, costs: c, per_km: km >= 100 ? c / km : null, logs: yl.filter((l) => !l.monthly).length,
         from: first && first.t > ys ? first.date : null });
     }
   }
 
   return {
-    logs, points, first, latest, n: logs.length,
+    logs, cost_logs: costLogs, points, first, latest, n: logs.length,
     driven_total: first && latest ? latest.km - first.km : 0,
     per_day: perDay, per_month: perDay === null ? null : perDay * MONTH_DAYS, per_year: perDay === null ? null : perDay * 365.25,
     km_window_from: kmWindowFrom, km_window_full: kmWindowFrom !== null && first.t <= yearAgo,
     this_year: thisYear, this_year_from: first && first.t > jan1 ? first.date : null,
-    costs_from: fromIso, costs_full_year: Boolean(firstLog) && dayT(firstLog.date) <= yearAgo, costs_months: months,
-    costs, costs_fuel: fuelCosts, cost_per_month: firstLog ? costs / months : null,
+    costs_from: fromIso, costs_full_year: Boolean(firstCost) && dayT(firstCost.date) <= yearAgo, costs_months: months,
+    costs, costs_fuel: fuelCosts, cost_per_month: firstCost ? costs / months : null,
     km_window: kmWindow, cost_per_km: kmWindow >= 100 ? costs / kmWindow : null,
     cost_per_km_ex_fuel: kmWindow >= 100 ? (costs - fuelCosts) / kmWindow : null,
-    by_type: costsByType(inWindow), costs_all: sum(logs.map((l) => l.cost || 0)),
+    by_type: costsByType(inWindow), costs_all: sum(costLogs.map((l) => l.cost || 0)),
     fuel: fuelStats(logs, today),
     tyres: tyreStatus(logs, today, latest ? latest.km : null),
     service: serviceStatus({ ...car, logs }, today, latest ? latest.km : null, perDay),

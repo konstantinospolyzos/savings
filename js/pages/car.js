@@ -9,7 +9,7 @@ import {
 import {
   CAR_TYPES, TYPE, NEEDS_KM, TYRE_SETS, FUELS, FUEL_NAME, carSummary, monthlyKm, monthlyCosts, previousReading, fuelStats,
   byDateKm, fmtKm, fmtKmSigned, fmtPerKm, fmtAxisKm, monthPos, parseDay, newLogId, carCsv, emptyCar, carTitle, carLine,
-  energy, priceSummary, paidPrices, fillPreview, consumptionByMonth, yearForecast,
+  energy, priceSummary, paidPrices, fillPreview, consumptionByMonth, yearForecast, MONTHLY_TYPES, monthlyNow, setMonthly,
 } from "../car.js";
 import { store } from "../store.js";
 import { statCard } from "./overview.js";
@@ -44,7 +44,8 @@ function openPhotoViewer(ref, { onDelete = null } = {}) {
 
 const DAY_MS = 86400000;
 const TYRE_ON = { summer: "Summer tyres on", studded: "Studded winter tyres on", winter: "Non-studded winter tyres on" };
-const OTHER_KINDS = [["inspection", "Inspection (besiktning)"], ["repair", "Repair"], ["tax", "Vehicle tax (fordonsskatt)"], ["other", "Other"]];
+const OTHER_KINDS = [["inspection", "Inspection (besiktning)"], ["repair", "Repair"], ["tax", "Vehicle tax (fordonsskatt)"],
+  ["insurance", "Insurance"], ["parking", "Parking"], ["other", "Other"]];
 const RULE_TEXT = { first: "36 months after first registration", second: "24 months after the first inspection", later: "14 months after the last one" };
 const card = (...children) => h("div", { class: "card" }, children);
 const head = (title, sub = null, right = null) => h("div", { class: "card-head" },
@@ -304,9 +305,9 @@ function chartCard(car, sum, today) {
         },
       }));
     } else {
-      const firstMonth = sum.logs.length ? sum.logs[0].date.slice(0, 7) : thisMonth;
+      const firstMonth = sum.cost_logs.length ? sum.cost_logs[0].date.slice(0, 7) : thisMonth;
       const from = st.range === 0 && mIndex(firstMonth) < mIndex(thisMonth) - 11 ? addMonths(thisMonth, -11) : firstMonth;
-      const mc = monthlyCosts(sum.logs, from, mIndex(thisMonth) >= mIndex(firstMonth) ? thisMonth : firstMonth);
+      const mc = monthlyCosts(sum.cost_logs, from, mIndex(thisMonth) >= mIndex(firstMonth) ? thisMonth : firstMonth);
       sub.textContent = "Each colour is a kind of cost, so a service or tyre change stands out from the fuel.";
       if (!mc.some((m) => m.total > 0)) { empty("Add what each visit cost to see this"); return; }
       const used = CAR_TYPES.filter(([k]) => mc.some((m) => m.byType[k] > 0));
@@ -579,7 +580,7 @@ function costsCard(car, sum, today) {
   return card(head("Where the money goes", h("span", { class: "amt-soft" }, `${period}  ·  ${fmtSek(total)}`)),
     splitBar(types.map(([k, , , color]) => [sum.by_type[k], color]), 10),
     h("div", { class: "cost-types" }, rows),
-    sum.costs_all > total + 0.5 ? h("div", { class: "hint amt-soft" }, `All your logs together: ${fmtSek(sum.costs_all)}.`) : null);
+    sum.costs_all > total + 0.5 ? h("div", { class: "hint amt-soft" }, `All your costs together: ${fmtSek(sum.costs_all)}.`) : null);
 }
 
 function forecastCard(car, sum, today) {
@@ -625,6 +626,10 @@ function detailsCard(car, ctx) {
     kv("Registration", car.plate || "—", { amt: false }),
     kv("Runs on", FUEL_NAME[car.fuel], { amt: false }),
     kv("First registered", car.first_registered ? mLong(car.first_registered) : "—", { amt: false }),
+    ...MONTHLY_TYPES.map((t) => {
+      const m = monthlyNow(car, t);
+      return m.amount ? kv(TYPE[t].name, `${fmtSek(m.amount)}/month  ·  since ${mLong(m.since)}`) : null;
+    }),
   ];
   const missing = !makeModel && !car.plate;
   return card(head("Car details", missing ? "Add the make, model and registration number." : null),
@@ -782,6 +787,8 @@ const NOTE_HINTS = {
   inspection: "Optional, e.g. remarks from the inspection.",
   repair: "What was fixed.",
   tax: "Optional, e.g. which year it's for.",
+  insurance: "Optional, e.g. the period it covers. A fixed monthly price goes in Car details instead.",
+  parking: "Optional, e.g. where. A parking space you rent every month goes in Car details instead.",
   other: "What it was: washing, parking, a toll, a part…",
 };
 
@@ -1119,9 +1126,20 @@ export function openCarSheet(ctx, car = null) {
   const monthsI = numField("e.g. 12", "numeric");
   if (c.service_km) kmI.value = plainNumber(c.service_km);
   if (c.service_months) monthsI.value = String(c.service_months);
+  // fixed monthly costs: what you pay now, and the month you started paying
+  const thisMonth = monthOf(ctx.today);
+  const startGuess = c.logs.length ? [...c.logs].sort(byDateKm)[0].date.slice(0, 7) : thisMonth;
+  const monthly = Object.fromEntries(MONTHLY_TYPES.map((t) => {
+    const now = monthlyNow(c, t);
+    const amount = numField("none", "decimal");
+    if (now.amount) amount.value = plainNumber(now.amount, now.amount % 1 ? 2 : 0);
+    const since = h("input", { class: "form-input date-input", type: "month", value: now.since || startGuess, "aria-label": `${TYPE[t].name} since` });
+    return [t, { amount, since, was: now.since }];
+  }));
   let api = null;
 
   const read = () => ({ y: parseNumber(year.value), k: parseNumber(kmI.value), m: parseNumber(monthsI.value), r: reg.value.trim() });
+  const monthlyBad = (f) => (Boolean(f.amount.value.trim()) && !(parseNumber(f.amount.value) >= 0)) || (Boolean(f.since.value) && !MONTH_RX.test(f.since.value));
   const validate = () => {
     const { y, k, m, r } = read();
     const bad = {
@@ -1134,9 +1152,10 @@ export function openCarSheet(ctx, car = null) {
     kmI.classList.toggle("invalid", bad.km);
     monthsI.classList.toggle("invalid", bad.months);
     reg.classList.toggle("invalid", bad.reg);
-    api?.setRight({ disabled: Object.values(bad).some(Boolean) });
+    for (const f of Object.values(monthly)) f.amount.classList.toggle("invalid", monthlyBad(f));
+    api?.setRight({ disabled: Object.values(bad).some(Boolean) || Object.values(monthly).some(monthlyBad) });
   };
-  for (const f of [year, kmI, monthsI, reg]) f.addEventListener("input", validate);
+  for (const f of [year, kmI, monthsI, reg, ...Object.values(monthly).flatMap((x) => [x.amount, x.since])]) f.addEventListener("input", validate);
   reg.addEventListener("change", validate);
 
   const others = ctx.data.cars.length - (isNew ? 0 : 1);
@@ -1152,6 +1171,10 @@ export function openCarSheet(ctx, car = null) {
     caption("SERVICE EVERY"),
     group(row("Kilometres", kmI, "km"), row("or months", monthsI, "months")),
     footer("From your service book, e.g. every 15 000 km or 12 months, whichever comes first. Fill in one or both to get a reminder on the Car page."),
+    caption("EVERY MONTH"),
+    ...MONTHLY_TYPES.flatMap((t, i) => [i ? h("div", { class: "group-gap" }) : null,
+      group(row(TYPE[t].name, monthly[t].amount, `${localSym()}/month`), row("Paying since", monthly[t].since))]),
+    footer("Fixed costs like insurance and a parking space you rent. They're counted on the 1st of every month since the month you started, so you don't log them. If the price changes, type the new one: it counts from this month, and the months before keep the old price. Empty it when you stop paying."),
     !isNew ? h("button", { type: "button", class: "btn destructive-row", onclick: () => remove() }, "Delete Car") : null);
 
   async function remove() {
@@ -1174,6 +1197,12 @@ export function openCarSheet(ctx, car = null) {
       const next = { ...c, name: name.value.trim(), make: make.value.trim(), model: model.value.trim(),
         year: Number.isInteger(y) ? y : null, plate: plate.value.trim(), fuel, first_registered: MONTH_RX.test(r) ? r : null,
         service_km: k > 0 ? k : null, service_months: m > 0 ? Math.round(m) : null };
+      for (const t of MONTHLY_TYPES) {
+        const f = monthly[t];
+        const amount = parseNumber(f.amount.value);
+        const since = MONTH_RX.test(f.since.value) ? f.since.value : null;
+        next.monthly = setMonthly(next.monthly, t, amount > 0 ? Math.round(amount * 100) / 100 : null, f.was && since === f.was ? null : since, thisMonth);
+      }
       if (isNew) store.setPref(PREF, c.id);
       store.saveCar(next);
       sh.close();

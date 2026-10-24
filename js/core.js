@@ -13,7 +13,7 @@ export const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
 export const COLORS = {
   blue: "var(--blue)", green: "var(--green)", red: "var(--red)", orange: "var(--orange)",
   cyan: "var(--cyan)", purple: "var(--purple)", pink: "var(--pink)", indigo: "var(--indigo)",
-  teal: "var(--teal)", gray: "var(--gray)", gray3: "var(--gray3)",
+  teal: "var(--teal)", brown: "var(--brown)", gray: "var(--gray)", gray3: "var(--gray3)",
 };
 
 export const SERIES = {             // Overview chart lines

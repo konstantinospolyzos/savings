@@ -3,7 +3,7 @@
   --bg: #F2F2F7; --card: #FFFFFF; --card2: #F7F7FA; --label: #1C1C1E; --label2: #3C3C43;
   --gray: #8E8E93; --gray2: #AEAEB2; --gray3: #C7C7CC; --sep: rgba(60, 60, 67, 0.16); --fill: #EFEFF4;
   --blue: #007AFF; --green: #34C759; --red: #FF3B30; --orange: #FF9500; --cyan: #32ADE6;
-  --purple: #AF52DE; --pink: #FF2D55; --indigo: #5856D6; --teal: #30B0C7;
+  --purple: #AF52DE; --pink: #FF2D55; --indigo: #5856D6; --teal: #30B0C7; --brown: #A2845E;
   --up-fg: #248A3D; --up-bg: #E3F6E8; --down-fg: #D70015; --down-bg: #FFE7E5;
   --flat-fg: #6E6E73; --flat-bg: #EFEFF4; --info-bg: #E3EEFF; --warn-fg: #C93400;
   --bar-bg: rgba(249, 249, 251, 0.82); --mark: #FFE58F; --shadow: 0 10px 40px rgba(0, 0, 0, 0.18);
@@ -17,7 +17,7 @@
     --bg: #000000; --card: #1C1C1E; --card2: #2C2C2E; --label: #FFFFFF; --label2: #EBEBF5;
     --gray: #8E8E93; --gray2: #636366; --gray3: #48484A; --sep: rgba(84, 84, 88, 0.55); --fill: #2C2C2E;
     --blue: #0A84FF; --green: #30D158; --red: #FF453A; --orange: #FF9F0A; --cyan: #64D2FF;
-    --purple: #BF5AF2; --pink: #FF375F; --indigo: #5E5CE6; --teal: #40C8E0;
+    --purple: #BF5AF2; --pink: #FF375F; --indigo: #5E5CE6; --teal: #40C8E0; --brown: #AC8E68;
     --up-fg: #30D158; --up-bg: rgba(48, 209, 88, 0.16); --down-fg: #FF6961; --down-bg: rgba(255, 69, 58, 0.18);
     --flat-fg: #AEAEB2; --flat-bg: #2C2C2E; --info-bg: rgba(10, 132, 255, 0.18); --warn-fg: #FF9F0A;
     --bar-bg: rgba(22, 22, 24, 0.82); --mark: #7A5C00; --shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
@@ -621,6 +621,7 @@ body.privacy .crow-note { filter: blur(7px); -webkit-filter: blur(7px); }
 .form > .segmented.full { margin-top: 2px; }
 .form > .segmented.full + .group { margin-top: 10px; }
 .form > .segmented.tyre-kind { margin-top: 10px; }
+.form > .group-gap { height: 10px; }
 .chart .dot-mark { stroke: var(--card); stroke-width: 1.5; }
 .segmented.car-picker button { overflow: hidden; text-overflow: ellipsis; }
 .fuel-card .block-value { margin-top: 2px; }
