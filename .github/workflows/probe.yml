@@ -13,42 +13,15 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install openpyxl requests
-      - name: Probe sources
+      - name: Run the real fetch
         run: |
-          mkdir -p probe
-          python - <<'PY'
-          import requests, openpyxl, io
-          out = open("probe/out2.txt", "w")
-          def say(*a):
-              print(*a); print(*a, file=out)
-          url = "https://energy.ec.europa.eu/document/download/906e60ca-8b6a-44e7-8589-652854d2fd3f_en?filename=Weekly_Oil_Bulletin_Prices_History_maticni_4web.xlsx"
-          r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=120)
-          wb = openpyxl.load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
-          ws = wb["Prices with taxes"]
-          rows = list(ws.iter_rows(values_only=True))
-          head = rows[0]
-          cols = {h: i for i, h in enumerate(head) if h and str(h).startswith("SE_")}
-          say("SE cols", cols)
-          say("units row", [rows[2][i] for i in cols.values()])
-          data = [r for r in rows[3:] if r and r[0] is not None]
-          say("rows", len(data), "first", data[-1][0], "last", data[0][0])
-          for r in data[:6] + data[-4:]:
-              say(r[0], [r[i] for i in cols.values()])
-          n95 = sum(1 for r in data if isinstance(r[cols["SE_price_with_tax_euro95"]], (int, float)))
-          say("numeric 95 values", n95)
-          bad = [(r[0], r[cols["SE_price_with_tax_euro95"]]) for r in data if not isinstance(r[cols["SE_price_with_tax_euro95"]], (int, float))][:10]
-          say("non-numeric", bad)
-          import datetime
-          ds = [r[0] for r in data]
-          say("date types", set(type(d).__name__ for d in ds))
-          gaps = [(ds[i], ds[i+1]) for i in range(len(ds)-1) if isinstance(ds[i], datetime.datetime) and isinstance(ds[i+1], datetime.datetime) and (ds[i]-ds[i+1]).days != 7][:15]
-          say("gaps", gaps)
-          out.close()
-          PY
+          mkdir -p data
+          python tools/fetch_fuel_prices.py data/fuel-prices.json
+          python tools/fetch_fuel_prices.py data/fuel-prices.json   # second run: must say "no new prices"
       - name: Save results
         run: |
           git config user.name "fuel-probe"
           git config user.email "actions@users.noreply.github.com"
-          git add probe
+          git add probe data
           git commit -m "probe results" || true
           git push
