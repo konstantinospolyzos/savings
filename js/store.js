@@ -133,7 +133,13 @@ export function applyOp(data, op) {
       break;
     case "putCar": {            // add a car, or change its details (its logs stay)
       const old = d.cars.find((c) => c.id === op.car.id);
-      const car = normalizeCar({ ...op.car, logs: old ? old.logs : [] }, op.car.id);
+      // the months the monthly costs were added for only move on (null: start again, after "since" moved)
+      const added = { ...(old?.monthly_added || {}) };
+      for (const [k, v] of Object.entries(op.car.monthly_added || {})) {
+        if (v === null) delete added[k];
+        else if (!added[k] || v > added[k]) added[k] = v;
+      }
+      const car = normalizeCar({ ...op.car, monthly_added: added, logs: old ? old.logs : [] }, op.car.id);
       d.cars = old ? d.cars.map((c) => (c.id === car.id ? car : c)) : d.cars.concat([car]);
       break;
     }
@@ -143,6 +149,16 @@ export function applyOp(data, op) {
     case "putCarLog": {
       const car = carFor(d, op.carId);
       car.logs = car.logs.filter((l) => l.id !== op.log.id).concat([op.log]).sort(byDateKm);
+      break;
+    }
+    case "putCarLogs": {        // the monthly costs' logs; only months not added yet (on any phone)
+      const car = carFor(d, op.carId);
+      const done = { ...(car.monthly_added || {}) };
+      const ids = new Set(car.logs.map((l) => l.id));
+      const fresh = op.logs.filter((l) => !ids.has(l.id) && !(done[l.type] && l.date.slice(0, 7) <= done[l.type]));
+      car.logs = car.logs.concat(fresh).sort(byDateKm);
+      for (const [k, v] of Object.entries(op.added || {})) if (!done[k] || v > done[k]) done[k] = v;
+      car.monthly_added = done;
       break;
     }
     case "deleteCarLog":
@@ -434,6 +450,7 @@ class Store {
   saveCar(car) { this.commit({ type: "putCar", car: { ...car, logs: undefined } }); }
   deleteCar(id) { this.commit({ type: "deleteCar", id }); }
   saveCarLog(carId, log) { this.commit({ type: "putCarLog", carId, log }); }
+  addCarLogs(carId, logs, added) { this.commit({ type: "putCarLogs", carId, logs, added }); }
   deleteCarLog(carId, id) { this.commit({ type: "deleteCarLog", carId, id }); }
   replaceAll(data) { this.commit({ type: "replaceAll", data: normalize(data) }); }
 

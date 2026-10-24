@@ -65,7 +65,7 @@ const MONTH_RX = /^\d{4}-\d{2}$/;
 export const newLogId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 export const newCarId = () => `car-${newLogId()}`;
 export const emptyCar = (id = newCarId()) => ({ id, name: "", make: "", model: "", year: null, plate: "", fuel: "95",
-  first_registered: null, service_km: null, service_months: null, monthly: [], logs: [] });
+  first_registered: null, service_km: null, service_months: null, monthly: [], monthly_added: {}, logs: [] });
 export const byDateKm = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.km ?? -1) - (b.km ?? -1));
 
 const optPos = (v) => {
@@ -100,8 +100,8 @@ function normalizeLogs(raw) {
 }
 
 // ---------------------------------------------------------------------------
-// Fixed monthly costs (insurance, a parking space): set once in the car details, counted on the
-// last day of every month from "from" to "to" (null: still paying). A new price is a new period.
+// Fixed monthly costs (insurance, a parking space): set once in the car details; on the 1st of every
+// month from "from" to "to" (null: still paying) the app adds a log for each. A new price is a new period.
 // ---------------------------------------------------------------------------
 export const MONTHLY_TYPES = ["insurance", "parking"];
 const newMonthlyId = () => `mo-${newLogId()}`;
@@ -136,9 +136,9 @@ export function monthlyNow(car, type) {
 }
 
 /**
- * The periods after you set a monthly cost in the car details. A new price counts from this month
- * (the months before keep the old one); an empty amount stops it after this month; "since" moves the
- * start of the first period (when you began paying).
+ * The periods after you set a monthly cost in the car details. This month's log is already added, so a
+ * new price counts from next month; an empty amount stops it after this month; "since" moves the start
+ * of the first period (when you began paying).
  */
 export function setMonthly(list, type, amount, since, now) {
   const rest = (list || []).filter((e) => e.type !== type);
@@ -151,31 +151,41 @@ export function setMonthly(list, type, amount, since, now) {
       else active.to = now;
     }
   } else if (!active) {
-    periods.push({ id: newMonthlyId(), type, amount, from: periods.length ? now : since || now, to: null });
+    periods.push({ id: newMonthlyId(), type, amount, from: periods.length ? addMonths(now, 1) : since || now, to: null });
   } else if (active.amount !== amount) {
-    if (active.from >= now) active.amount = amount;
-    else { active.to = addMonths(now, -1); periods.push({ id: newMonthlyId(), type, amount, from: now, to: null }); }
+    if (active.from > now) active.amount = amount;
+    else { active.to = now; periods.push({ id: newMonthlyId(), type, amount, from: addMonths(now, 1), to: null }); }
   }
   return normalizeMonthly([...rest, ...periods]);
 }
 
-/** The monthly costs as cost entries, one per month on its last day, up to the last month that has ended. */
-export function monthlyEntries(car, today) {
+/**
+ * The logs the fixed monthly costs still have to add: one per type on the 1st of every month, from the
+ * month after the last one added (or from the start) up to this month. A log you delete stays deleted,
+ * because the months already added are remembered (car.monthly_added). null when nothing is due.
+ */
+export function dueMonthlyLogs(car, today) {
   const now = monthOf(today);
-  const todayIso = isoDay(today);
-  const out = [];
-  for (const e of car.monthly || []) {
-    const end = e.to && e.to < now ? e.to : now;
-    for (let m = e.from; mIndex(m) <= mIndex(end); m = addMonths(m, 1)) {
-      const [y, mo] = m.split("-").map(Number);
-      const date = isoDay(day(y, mo + 1, 0));                   // the last day of the month
-      if (date > todayIso) break;
-      out.push({ id: `${e.id}:${m}`, date, type: e.type, km: null, cost: e.amount, litres: null, full: null,
-        tires: null, fitted: null, note: "", photos: [], monthly: true });
+  const ids = new Set((car.logs || []).map((l) => l.id));
+  const logs = [], added = {};
+  for (const type of MONTHLY_TYPES) {
+    const periods = (car.monthly || []).filter((e) => e.type === type);
+    if (!periods.length) continue;
+    const done = car.monthly_added?.[type] || null;
+    if (done && done >= now) continue;
+    const start = done ? addMonths(done, 1) : periods.map((e) => e.from).sort()[0];
+    for (let m = start; mIndex(m) <= mIndex(now); m = addMonths(m, 1)) {
+      const p = periods.find((e) => e.from <= m && (e.to === null || m <= e.to));
+      const id = `auto-${type}-${m}`;
+      if (p && !ids.has(id)) logs.push({ id, date: `${m}-01`, type, km: null, cost: p.amount, litres: null, full: null,
+        tires: null, fitted: null, note: "", photos: [] });
     }
+    added[type] = now;
   }
-  return out;
+  return Object.keys(added).length ? { logs, added } : null;
 }
+
+const normAdded = (v) => Object.fromEntries(MONTHLY_TYPES.filter((t) => MONTH_RX.test(v?.[t] || "")).map((t) => [t, v[t]]));
 
 /** One car: its details and its logs, checked and tidied. */
 export function normalizeCar(raw, id = null) {
@@ -193,6 +203,7 @@ export function normalizeCar(raw, id = null) {
     service_km: optPos(c.service_km) || null,
     service_months: months ? Math.round(months) : null,
     monthly: c.monthly === undefined ? defaultMonthly(c) : normalizeMonthly(c.monthly),
+    monthly_added: normAdded(c.monthly_added),      // the last month the monthly costs added their logs for
     logs: normalizeLogs(c.logs),
   };
 }
@@ -580,8 +591,7 @@ export function carSummary(car, today) {
   const T = today.getTime();
   const first = points[0] || null, latest = points.at(-1) || null;
   const firstLog = logs[0] || null;
-  // everything that cost money: the logs and the monthly costs (insurance, parking)
-  const costLogs = [...logs, ...monthlyEntries(car, today)].sort(byDateKm);
+  const costLogs = logs;            // the monthly costs are logs too
   const firstCost = costLogs[0] || null;
 
   // driving: the last 12 months, or since the first reading

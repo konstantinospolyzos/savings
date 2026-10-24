@@ -694,6 +694,7 @@ function logRow(l, ctx, car, perFill, prevKm, today, en) {
       seg.per_km !== null ? h("span", { class: "amt" }, `  ·  ${fmtMoney(CUR.local, seg.per_km, 2)}/km`) : null);
   }
   if (l.km !== null && prevKm !== null && l.km >= prevKm) extra.push(`${fmtKmSigned(l.km - prevKm)}`);
+  if (l.id.startsWith("auto-")) extra.push("every month");
   if (l.photos?.length) extra.push(`📎 ${plural(l.photos.length, "photo")}`);
   return h("button", { type: "button", class: "crow", onclick: () => openCarLogSheet(ctx, car, l) },
     typeBadge(l.type),
@@ -1174,7 +1175,7 @@ export function openCarSheet(ctx, car = null) {
     caption("EVERY MONTH"),
     ...MONTHLY_TYPES.flatMap((t, i) => [i ? h("div", { class: "group-gap" }) : null,
       group(row(TYPE[t].name, monthly[t].amount, `${localSym()}/month`), row("Paying since", monthly[t].since))]),
-    footer("Fixed costs like insurance and a parking space you rent. They're added on the last day of every month since the month you started, so you don't log them. If the price changes, type the new one: it counts from this month, and the months before keep the old price. Empty it when you stop paying."),
+    footer("Fixed costs are logged by themselves: on the 1st of every month the app adds a log for each, from the month you started. If the price changes, type the new one: it's used from next month's log (you can edit any log). Empty it when you stop paying."),
     !isNew ? h("button", { type: "button", class: "btn destructive-row", onclick: () => remove() }, "Delete Car") : null);
 
   async function remove() {
@@ -1201,7 +1202,9 @@ export function openCarSheet(ctx, car = null) {
         const f = monthly[t];
         const amount = parseNumber(f.amount.value);
         const since = MONTH_RX.test(f.since.value) ? f.since.value : null;
-        next.monthly = setMonthly(next.monthly, t, amount > 0 ? Math.round(amount * 100) / 100 : null, f.was && since === f.was ? null : since, thisMonth);
+        const moved = f.was && since && since !== f.was;
+        next.monthly = setMonthly(next.monthly, t, amount > 0 ? Math.round(amount * 100) / 100 : null, f.was && !moved ? null : since, thisMonth);
+        if (moved) next.monthly_added = { ...(next.monthly_added || {}), [t]: null };   // fill in from the new start
       }
       if (isNew) store.setPref(PREF, c.id);
       store.saveCar(next);
