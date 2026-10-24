@@ -17,54 +17,32 @@ jobs:
         run: |
           mkdir -p probe
           python - <<'PY'
-          import re, requests, openpyxl, io, json, traceback
-          out = open("probe/out.txt", "w")
+          import requests, openpyxl, io
+          out = open("probe/out2.txt", "w")
           def say(*a):
               print(*a); print(*a, file=out)
-          UA = {"User-Agent": "Mozilla/5.0 (savings-tracker fuel price probe)"}
-          # 1) EU Weekly Oil Bulletin page: find the history xlsx link
-          try:
-              page = requests.get("https://energy.ec.europa.eu/data-and-analysis/weekly-oil-bulletin_en", headers=UA, timeout=60).text
-              links = sorted(set(re.findall(r'href="([^"]+?\.xlsx[^"]*)"', page)))
-              say("BULLETIN LINKS:"); [say("  ", l) for l in links]
-          except Exception as e:
-              say("bulletin page failed", e)
           url = "https://energy.ec.europa.eu/document/download/906e60ca-8b6a-44e7-8589-652854d2fd3f_en?filename=Weekly_Oil_Bulletin_Prices_History_maticni_4web.xlsx"
-          try:
-              r = requests.get(url, headers=UA, timeout=120)
-              say("HISTORY XLSX", r.status_code, len(r.content), r.headers.get("content-type"))
-              wb = openpyxl.load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
-              for ws in wb.worksheets:
-                  say("SHEET", repr(ws.title), ws.max_row, ws.max_column)
-                  for i, row in enumerate(ws.iter_rows(values_only=True)):
-                      if i < 8 or (i < 12):
-                          say("   ", i, [c for c in row[:40]])
-                      else:
-                          break
-              # find Sweden columns in first sheet header rows
-              ws = wb.worksheets[0]
-              rows = list(ws.iter_rows(min_row=1, max_row=6, values_only=True))
-              for ri, row in enumerate(rows):
-                  for ci, c in enumerate(row):
-                      if c and "SE" == str(c).strip()[:2] or (c and "Swed" in str(c)):
-                          say("SE header", ri, ci, repr(c))
-          except Exception:
-              say("history failed", traceback.format_exc())
-          # 2) Circle K and Preem price pages
-          for name, u in [("circlek", "https://www.circlek.se/drivmedel/drivmedelspriser"),
-                          ("preem", "https://www.preem.se/privat/drivmedel/drivmedelspriser/"),
-                          ("st1", "https://www.st1.se/privat/drivmedel/priser"),
-                          ("okq8", "https://www.okq8.se/pa-macken/drivmedelspriser/")]:
-              try:
-                  r = requests.get(u, headers=UA, timeout=60)
-                  say("PAGE", name, r.status_code, r.url, len(r.text))
-                  open(f"probe/{name}.html", "w").write(r.text)
-                  for m in re.finditer(r".{0,160}(?:95|Bensin|miles).{0,160}", r.text):
-                      s = m.group(0)
-                      if re.search(r"\d{2}[,.]\d{2}", s):
-                          say("   ", name, ":", s.replace("\n", " ")[:320])
-              except Exception as e:
-                  say("page failed", name, e)
+          r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=120)
+          wb = openpyxl.load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
+          ws = wb["Prices with taxes"]
+          rows = list(ws.iter_rows(values_only=True))
+          head = rows[0]
+          cols = {h: i for i, h in enumerate(head) if h and str(h).startswith("SE_")}
+          say("SE cols", cols)
+          say("units row", [rows[2][i] for i in cols.values()])
+          data = [r for r in rows[3:] if r and r[0] is not None]
+          say("rows", len(data), "first", data[-1][0], "last", data[0][0])
+          for r in data[:6] + data[-4:]:
+              say(r[0], [r[i] for i in cols.values()])
+          n95 = sum(1 for r in data if isinstance(r[cols["SE_price_with_tax_euro95"]], (int, float)))
+          say("numeric 95 values", n95)
+          bad = [(r[0], r[cols["SE_price_with_tax_euro95"]]) for r in data if not isinstance(r[cols["SE_price_with_tax_euro95"]], (int, float))][:10]
+          say("non-numeric", bad)
+          import datetime
+          ds = [r[0] for r in data]
+          say("date types", set(type(d).__name__ for d in ds))
+          gaps = [(ds[i], ds[i+1]) for i in range(len(ds)-1) if isinstance(ds[i], datetime.datetime) and isinstance(ds[i+1], datetime.datetime) and (ds[i]-ds[i+1]).days != 7][:15]
+          say("gaps", gaps)
           out.close()
           PY
       - name: Save results
