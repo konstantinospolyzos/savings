@@ -10,7 +10,8 @@ const close = (actual, expected, tol = 0.01) =>
   assert.ok(Math.abs(actual - expected) <= tol, `expected ≈ ${expected}, got ${actual}`);
 const NBSP = " ";
 let n = 0;
-const log = (date, type, o = {}) => ({ id: `t${++n}`, date, type, km: null, cost: null, litres: null, tires: null, note: "", ...o });
+const log = (date, type, o = {}) => ({ id: `t${++n}`, date, type, km: null, cost: null, litres: null,
+  full: type === "fuel" ? true : null, tires: null, note: "", ...o });
 
 // Jan 1 -> Jan 31 is 30 days, Jan 31 -> Mar 2 is 30 days (February 2026 has 28)
 const LOGS = [
@@ -42,19 +43,69 @@ test("kilometres per month, estimated between readings", () => {
   close(m.reduce((a, x) => a + x.km, 0), 2000);
 });
 
-test("fuel use assumes a full tank each time", () => {
+test("real fuel use and fuel cost per km, full tank to full tank", () => {
   const f = car.fuelStats(LOGS);
   close(f.per100, (60 + 66) / 2000 * 100);                // 6.3 l/100 km
+  close(f.per_km, (1200 + 1320) / 2000);                  // 1.26 kr/km: the first full tank only starts the count
   close(f.price, 3320 / 166);                             // 20 kr a litre
   close(f.cost100, 6.3 * 20);
-  close(f.perFill.get(LOGS[1].id), 6.0);
-  close(f.perFill.get(LOGS[3].id), 6.6);
+  const a = f.perFill.get(LOGS[1].id), b = f.perFill.get(LOGS[3].id);
+  close(a.per100, 6.0);
+  close(a.per_km, 1.2);
+  assert.equal(a.km, 1000);
+  assert.equal(a.from, "2026-01-01");
+  close(b.per100, 6.6);
+  close(b.per_km, 1.32);
+  assert.equal(f.perFill.has(LOGS[0].id), false);
+  assert.equal(f.best.id, LOGS[1].id);
+  assert.equal(f.worst.id, LOGS[3].id);
+  assert.equal(f.latest.id, LOGS[3].id);
+});
+
+test("a top-up counts at the next full tank", () => {
+  const logs = [log("2026-01-01", "fuel", { km: 10000, litres: 40, cost: 800 }),
+    log("2026-01-08", "fuel", { km: 10300, litres: 20, cost: 400, full: false }),   // topped up
+    log("2026-01-15", "fuel", { km: 10600, litres: 25, cost: 500 })];
+  const f = car.fuelStats(logs);
+  const seg = f.perFill.get(logs[2].id);
+  close(seg.per100, 45 / 600 * 100);                      // 7.5 l/100 km over both (without the switch: 6.7 and 8.3)
+  close(seg.per_km, 900 / 600);                           // 1.50 kr/km
+  assert.equal(seg.topups, 1);
+  assert.equal(f.perFill.has(logs[1].id), false);
+});
+
+test("a refuel without a price still gives the consumption", () => {
+  const logs = [log("2026-01-01", "fuel", { km: 10000, litres: 40, cost: 800 }), log("2026-01-15", "fuel", { km: 10600, litres: 36 })];
+  const seg = car.fuelStats(logs).perFill.get(logs[1].id);
+  close(seg.per100, 6.0);
+  assert.equal(seg.per_km, null);
+});
+
+test("consumption: last 12 months, winter and summer", () => {
+  const logs = [log("2025-06-01", "fuel", { km: 0, litres: 40 }), log("2025-07-01", "fuel", { km: 1000, litres: 80 }),   // old: 8.0
+    log("2026-01-10", "fuel", { km: 2000, litres: 70 }), log("2026-02-10", "fuel", { km: 3000, litres: 70 }),           // winter 7.0
+    log("2026-06-10", "fuel", { km: 4000, litres: 55 }), log("2026-07-10", "fuel", { km: 5000, litres: 55 })];          // summer 5.5
+  const f = car.fuelStats(logs, day(2026, 10, 24));
+  assert.equal(f.recent.n, 4);
+  close(f.recent.per100, (70 + 70 + 55 + 55) / 4000 * 100);
+  close(f.all.per100, (80 + 70 + 70 + 55 + 55) / 5000 * 100);
+  close(f.winter.per100, 7.0);
+  close(f.summer.per100, (80 + 55 + 55) / 3000 * 100);
+});
+
+test("the refuel being typed in shows its consumption before saving", () => {
+  const p = car.fillPreview(LOGS, { date: "2026-03-20", km: 12500, litres: 35, cost: 700, full: true });
+  close(p.per100, 7.0);                                   // 35 l on the 500 km since 2 March
+  close(p.per_km, 1.4);
+  assert.equal(car.fillPreview(LOGS, { date: "2026-03-20", km: 12500, litres: 35, full: false }), null);
+  close(car.fillPreview(LOGS, { ...LOGS[3], litres: 70 }, LOGS[3].id).per100, 7.0);   // editing the 2 March refuel
 });
 
 test("a refuel without litres is skipped, not counted as zero", () => {
   const logs = [log("2026-01-01", "fuel", { km: 1000, litres: 50 }), log("2026-01-10", "fuel", { km: 1500 }),
     log("2026-01-20", "fuel", { km: 2000, litres: 30 })];
   close(car.fuelStats(logs).per100, 6.0);                 // only 1 500 -> 2 000: 30 l on 500 km
+  assert.equal(car.fuelStats(logs).segments.length, 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -177,6 +228,9 @@ test("data file: car logs are checked and tidied", () => {
   assert.equal(c.logs[2].litres, null);                                 // litres only on refuels
   assert.equal(c.logs[2].tires, null);                                  // tyres only on tyre changes
   assert.equal(c.logs[0].tires, "studded");
+  assert.equal(c.logs[0].full, null);                                   // only refuels have the full-tank switch
+  const fills = car.normalizeCar({ logs: [{ date: "2026-01-01", type: "fuel", km: 1 }, { date: "2026-01-02", type: "fuel", km: 2, full: false }] }).logs;
+  assert.deepEqual(fills.map((l) => l.full), [true, false]);             // older refuels count as full tanks
 });
 
 test("data file: the one car of the first version moves into the list of cars", () => {
@@ -313,8 +367,10 @@ test("fuel price summary and what you paid", () => {
 });
 
 test("CSV export", () => {
-  const csv = car.carCsv([log("2026-04-01", "tires", { km: 12000, cost: 600, tires: "summer", note: "Changed, \"rims\"" })]);
-  const lines = csv.replace("﻿", "").split("\r\n");
-  assert.equal(lines[0], "Date,Type,Odometer (km),Cost (SEK),Litres,Tyres put on,Note");
-  assert.equal(lines[1], '2026-04-01,Tyre change,12000,600,,Summer,"Changed, ""rims"""');
+  const csv = car.carCsv([log("2026-04-01", "tires", { km: 12000, cost: 600, tires: "summer", note: "Changed, \"rims\"" }),
+    log("2026-04-02", "fuel", { km: 12000, litres: 40, cost: 760 }), log("2026-04-20", "fuel", { km: 12600, litres: 39, cost: 741 })]);
+  const lines = csv.replace("\uFEFF", "").split("\r\n");
+  assert.equal(lines[0], "Date,Type,Odometer (km),Cost (SEK),Litres,Price per litre (SEK),Full tank,l/100 km,Fuel cost per km (SEK),Tyres put on,Note");
+  assert.equal(lines[1], '2026-04-01,Tyre change,12000,600,,,,,,Summer,"Changed, ""rims"""');
+  assert.equal(lines[3], "2026-04-20,Refuel,12600,741,39,19,yes,6.5,1.24,,");
 });

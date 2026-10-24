@@ -1,6 +1,6 @@
 // Car monitor pages: Car (odometer, averages, tyres, service, inspection, charts, fuel price, costs,
 // details) and Log (every visit), plus the sheets to add or edit a log and a car.
-import { h, chip, dot, segmented, splitBar, kv, icon, sheet, group, caption, footer, alertBox, toast, saveFile, selectRow } from "../ui.js";
+import { h, chip, dot, segmented, splitBar, kv, icon, sheet, group, caption, footer, alertBox, toast, saveFile, selectRow, toggle } from "../ui.js";
 import { chart } from "../charts.js";
 import {
   COLORS, CUR, MONTHS, WEEKDAYS, localSym, fmtSek, fmtMoney, fmtAxisSek, mLong, mIndex, monthOf, addMonths, isoDay,
@@ -9,7 +9,7 @@ import {
 import {
   CAR_TYPES, TYPE, NEEDS_KM, TYRE_SETS, FUELS, FUEL_NAME, carSummary, monthlyKm, monthlyCosts, previousReading, fuelStats,
   byDateKm, fmtKm, fmtKmSigned, fmtPerKm, fmtAxisKm, monthPos, parseDay, newLogId, carCsv, emptyCar, carTitle, carLine,
-  energy, priceSummary, paidPrices,
+  energy, priceSummary, paidPrices, fillPreview,
 } from "../car.js";
 import { store } from "../store.js";
 import { statCard } from "./overview.js";
@@ -413,23 +413,90 @@ function fuelPriceCard(car, sum, today) {
 }
 
 // ---------------------------------------------------------------------------
+// Real consumption and fuel cost per km, from full tank to full tank
+// ---------------------------------------------------------------------------
+function consumptionCard(car, sum, today, ctx) {
+  const en = energy(car), f = sum.fuel;
+  const kwh = en.unit === "kWh";
+  const title = kwh ? "Energy use" : "Fuel consumption";
+  const tank = kwh ? "full charge" : "full tank";
+  const logBtn = btn(`+  Log ${kwh ? "a charge" : "a refuel"}`, () => openCarLogSheet(ctx, car, null, { type: "fuel" }));
+  const useRecent = f.recent.n >= 2 && f.recent.per100 !== null;
+  const v = useRecent ? f.recent : f.all;
+  if (v.per100 === null) {
+    return card(head(title),
+      h("div", { class: "muted" }, f.fills
+        ? `Log your next ${tank} with the odometer, the ${en.amount.toLowerCase()} and the price, and the app works out what the car really uses and what each kilometre costs.`
+        : `Every time you ${kwh ? "charge" : "refuel"}, log the odometer, the ${en.amount.toLowerCase()} and the price. From the second ${tank} on, the app works out what the car really uses and what each kilometre costs.`),
+      actions(logBtn));
+  }
+  // the number big, its unit small, so "6.6 l/100 km" fits a phone
+  const metric = (cap, color, [num, unit], sub, money = false) => h("div", { class: "fmetric" },
+    h("div", { class: "cap-row" }, dot(color, 7), h("span", { class: "caption" }, cap)),
+    h("div", { class: `fmetric-value ${money ? "amt" : ""}` }, num, unit ? h("span", { class: "fmetric-unit" }, ` ${unit}`) : null),
+    h("div", { class: `fmetric-sub ${money ? "amt" : ""}` }, sub));
+  const chips = [];
+  if (f.latest) chips.push(chip(`Latest ${f.latest.per100.toFixed(1)} ${en.per100}`, "flat"));
+  if (f.segments.length >= 3) chips.push(chip(`Best ${f.best.per100.toFixed(1)}  ·  worst ${f.worst.per100.toFixed(1)}`, "flat"));
+  if (f.winter.n >= 2 && f.summer.n >= 2 && f.winter.per100 !== null && f.summer.per100 !== null)
+    chips.push(chip(`Winter ${f.winter.per100.toFixed(1)}  ·  summer ${f.summer.per100.toFixed(1)}`, "flat"));
+  if (f.price !== null) chips.push(chip(`You paid ${perUnit(f.price, en)} on average`, "flat", "amt"));
+
+  const st = { view: 0, range: 1, ...(store.pref("fuel_use_chart", {}) || {}) };
+  const save = () => store.setPref("fuel_use_chart", st);
+  const body = h("div", { class: "chart-body" });
+  const legend = h("div", { class: "legend" });
+  function draw() {
+    const all = st.range === 0 ? f.segments.filter((x) => daysBetween(parseDay(x.to), today) <= 365) : f.segments;
+    const segs = st.view === 0 ? all : all.filter((x) => x.per_km !== null);
+    const color = st.view === 0 ? COLORS.orange : COLORS.green;
+    const value = (x) => (st.view === 0 ? x.per100 : x.per_km);
+    const avg = st.view === 0 ? v.per100 : v.per_km;
+    const label = (x) => (st.view === 0 ? `${x.toFixed(1)} ${en.per100}` : `${fmtMoney(CUR.local, x, 2)}/km`);
+    legend.replaceChildren(h("span", { class: "legend-item" }, dot(color), `Each ${tank}`),
+      avg !== null ? h("span", { class: "legend-item" }, h("span", { class: "line-swatch dotted", style: { borderColor: COLORS.gray } }),
+        h("span", { class: st.view === 1 ? "amt" : "" }, `Average ${label(avg)}`)) : null);
+    if (segs.length < 2) {
+      body.replaceChildren(h("div", { class: "chart-empty" }, segs.length ? `One ${tank} so far: the line starts with the next one` : "Nothing in this range yet"));
+      return;
+    }
+    body.replaceChildren(chart({
+      xs: segs.map((x) => monthPos(x.to)), kind: "line", zeroBased: false, lineLabels: false,
+      format: st.view === 0 ? (x) => x.toFixed(1) : (x) => `${x.toFixed(2)} kr`, label: title,
+      series: [{ color, values: segs.map(value) }], dots: segs.map((x) => ({ x: monthPos(x.to), y: value(x), color })),
+      lines: avg !== null ? [{ value: avg, color: COLORS.gray, dotted: true, label: "" }] : [],
+      tooltip: (i) => {
+        const x = segs[i];
+        const rows = [[kwh ? "Used" : "Consumption", `${x.per100.toFixed(1)} ${en.per100}`, COLORS.orange]];
+        if (x.per_km !== null) rows.push([kwh ? "Charging cost" : "Fuel cost", `${fmtMoney(CUR.local, x.per_km, 2)}/km`, COLORS.green]);
+        rows.push(["Driven", fmtKm(x.km), null],
+          [kwh ? "Charged" : "Filled", `${plainNumber(x.litres, 1)} ${en.unit}${x.topups ? ` (${plural(x.topups, "top-up")})` : ""}`, null]);
+        return { title: `${dayText(x.from, today)} – ${dayText(x.to, today)}`, rows };
+      },
+    }));
+  }
+  draw();
+  return h("div", { class: "card chart-card fuel-use-card" },
+    head(title, `${useRecent ? "Last 12 months" : "All your logs"}: ${plural(v.n, tank)}, ${fmtKm(v.km)}`),
+    h("div", { class: "fmetrics" },
+      metric(kwh ? "ENERGY USE" : "CONSUMPTION", COLORS.orange, [v.per100.toFixed(1), en.per100],
+        kwh ? `${(v.per100 / 100).toFixed(2)} kWh per km` : `${(v.per100 / 10).toFixed(2)} l/mil`),
+      metric(kwh ? "CHARGING COST" : "FUEL COST", COLORS.green, v.per_km !== null ? [plainNumber(v.per_km, 2), `${localSym()}/km`] : ["—", ""],
+        v.per_km !== null ? `${fmtSek(v.per_km * 100)} per 100 km` : `add the price when you ${kwh ? "charge" : "refuel"}`, true)),
+    chips.length ? h("div", { class: "chips" }, chips) : null,
+    segmented([en.per100, "kr/km"], st.view, (i) => { st.view = i; save(); draw(); }, "full"),
+    h("div", { class: "chart-controls" }, segmented(["1Y", "All"], st.range, (i) => { st.range = i; save(); draw(); }, "small")),
+    legend, body,
+    h("div", { class: "hint" }, `Worked out from ${tank} to ${tank}: the ${en.amount.toLowerCase()} you put in, over the kilometres since the ${tank} before, so it's what the car really used. If you only top up, turn off “${kwh ? "Charged to full" : "Full tank"}” in the log: it then counts at the next ${tank}.`),
+    actions(logBtn));
+}
+
+// ---------------------------------------------------------------------------
 function costsCard(car, sum, today) {
   const en = energy(car);
   const total = sum.costs;
   const period = sum.costs_full_year ? "Last 12 months" : `Since ${dayText(sum.costs_from, today)}`;
-  const f = sum.fuel;
-  const fuelRows = [];
-  if (f.per100 !== null) {
-    fuelRows.push(kv(en.unit === "kWh" ? "Energy use" : "Fuel use", `${f.per100.toFixed(1)} ${en.per100}`, { amt: false }));
-    if (f.price !== null) fuelRows.push(kv(en.unit === "kWh" ? "Price you paid" : "Fuel price you paid", perUnit(f.price, en)));
-    if (f.cost100 !== null) fuelRows.push(kv(`${en.unit === "kWh" ? "Charging" : "Fuel"} per 100 km`, fmtSek(f.cost100)));
-  }
-  const fuelHint = f.per100 !== null ? `${en.unit === "kWh" ? "Energy" : "Fuel"} use assumes you fill up each time, over all your logs.`
-    : f.fills ? `Add the ${en.amount.toLowerCase()} when you ${en.unit === "kWh" ? "charge" : "refuel"} to see how much the car uses.` : null;
-  if (total <= 0) {
-    return card(head("Where the money goes", "Add what each visit cost to see where the money goes."),
-      fuelRows.length ? h("div", { class: "kv-list" }, fuelRows) : null, fuelHint ? h("div", { class: "hint" }, fuelHint) : null);
-  }
+  if (total <= 0) return card(head("Where the money goes", "Add what each visit cost to see where the money goes."));
   const types = CAR_TYPES.filter(([k]) => sum.by_type[k] > 0).sort((a, b) => sum.by_type[b[0]] - sum.by_type[a[0]]);
   const rows = types.map(([k, , , color]) => {
     const v = sum.by_type[k];
@@ -440,9 +507,6 @@ function costsCard(car, sum, today) {
   return card(head("Where the money goes", h("span", { class: "amt-soft" }, `${period}  ·  ${fmtSek(total)}`)),
     splitBar(types.map(([k, , , color]) => [sum.by_type[k], color]), 10),
     h("div", { class: "cost-types" }, rows),
-    fuelRows.length ? h("div", { class: "hairline" }) : null,
-    fuelRows.length ? h("div", { class: "kv-list" }, fuelRows) : null,
-    fuelHint ? h("div", { class: "hint" }, fuelHint) : null,
     sum.costs_all > total + 0.5 ? h("div", { class: "hint amt-soft" }, `All your logs together: ${fmtSek(sum.costs_all)}.`) : null);
 }
 
@@ -487,7 +551,7 @@ export function renderCar(ctx) {
     return [subtitle, picker, noLogsCard(ctx, car), tyreCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx),
       fuelPriceCard(car, sum, today), detailsCard(car, ctx)];
   }
-  return [subtitle, picker, odoHero(sum, today), stats(sum, today), tyreCard(car, sum, today, ctx),
+  return [subtitle, picker, odoHero(sum, today), stats(sum, today), consumptionCard(car, sum, today, ctx), tyreCard(car, sum, today, ctx),
     serviceCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), chartCard(car, sum, today),
     fuelPriceCard(car, sum, today), costsCard(car, sum, today), yearsCard(sum, today), detailsCard(car, ctx)];
 }
@@ -502,16 +566,24 @@ const FILTERS = [["All", () => true], ["Refuels", (l) => l.type === "fuel"],
 function logRow(l, ctx, car, perFill, prevKm, today, en) {
   const sub = [dayText(l.date, today), l.km !== null ? fmtKm(l.km) : null].filter(Boolean).join("  ·  ");
   const extra = [];
+  let use = null;
   if (l.type === "tires" && l.tires) extra.push(TYRE_ON[l.tires]);
-  if (l.type === "fuel" && l.litres) extra.push(`${plainNumber(l.litres, l.litres % 1 ? 1 : 0)} ${en.unit}`);
-  if (perFill.has(l.id)) extra.push(`${perFill.get(l.id).toFixed(1)} ${en.per100}`);
+  if (l.type === "fuel") {
+    if (l.litres) extra.push(`${plainNumber(l.litres, Math.round(l.litres * 100) % 10 ? 2 : Math.round(l.litres * 10) % 10 ? 1 : 0)} ${en.unit}`);
+    if (l.litres > 0 && l.cost > 0) extra.push(perUnit(l.cost / l.litres, en));
+    if (l.full === false) extra.push("top-up");
+    const seg = perFill.get(l.id);
+    if (seg) use = h("div", { class: "crow-use" }, dot(COLORS.orange, 7), `${seg.per100.toFixed(1)} ${en.per100}`,
+      seg.per_km !== null ? h("span", { class: "amt" }, `  ·  ${fmtMoney(CUR.local, seg.per_km, 2)}/km`) : null);
+  }
   if (l.km !== null && prevKm !== null && l.km >= prevKm) extra.push(`${fmtKmSigned(l.km - prevKm)}`);
   return h("button", { type: "button", class: "crow", onclick: () => openCarLogSheet(ctx, car, l) },
     typeBadge(l.type),
     h("div", { class: "crow-main" },
       h("div", { class: "crow-title" }, typeName(l.type, en)),
       h("div", { class: "crow-sub" }, sub),
-      extra.length ? h("div", { class: "crow-extra" }, extra.join("  ·  ")) : null,
+      extra.length ? h("div", { class: `crow-extra ${l.type === "fuel" ? "amt-soft" : ""}` }, extra.join("  ·  ")) : null,
+      use,
       l.note ? h("div", { class: "crow-note" }, l.note) : null),
     h("div", { class: `crow-cost ${l.cost ? "amt" : "muted"}` }, l.cost ? fmtSek(l.cost) : "—"),
     icon("chevron", 16, "chev"));
@@ -602,22 +674,33 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
   const logs = car.logs;
   const today = ctx.today;
   const en = energy(car);
+  const kwh = en.unit === "kWh";
   const MAIN = ["fuel", "service", "tires"];
   let type = original ? original.type : preset.type || "fuel";
   let otherKind = MAIN.includes(type) ? "other" : type;
   let tires = original?.tires || preset.tires || "summer";
   const latestKm = logs.reduce((m, l) => (l.km !== null && l.km > m ? l.km : m), -1);
+  // this week's Swedish average, as a hint in the price field
+  const avg = en.priceKey && inSweden() ? cachedPrices()?.prices?.[en.priceKey]?.at(-1)?.[1] : null;
 
   const date = h("input", { class: "form-input date-input", type: "date", value: original ? original.date : isoDay(today), "aria-label": "Date" });
   const km = numField(latestKm >= 0 ? `Last: ${plainNumber(latestKm)}` : "e.g. 45 210", "numeric");
+  const litres = numField(kwh ? "e.g. 45" : "e.g. 42,5");
+  const price = numField(avg ? `average ${plainNumber(avg, 2)}` : kwh ? "e.g. 2,50" : "e.g. 18,21");
   const cost = numField("optional");
-  const litres = numField("optional");
   const note = h("textarea", { class: "note-input", rows: "2", placeholder: "Note" });
+  const fullSwitch = toggle(original ? original.full !== false : true, () => validate(), "Full tank");
 
   const kindRow = selectRow("What", OTHER_KINDS, otherKind, (v) => { otherKind = v; type = v; update(); });
   const kindGroup = group(kindRow);
   const kmRow = row("Odometer", km, "km");
   const litresRow = row(en.amount, litres, en.unit);
+  const priceRow = row("Price", price, `${localSym()}/${en.unit}`);
+  const costLabel = h("span", { class: "form-label" }, "Cost");
+  const costRow = h("label", { class: "form-row" }, costLabel, cost, h("span", { class: "form-unit" }, localSym()));
+  const moneyCaption = caption("COST");
+  const fullGroup = group(h("label", { class: "form-row switch-row" }, h("span", { class: "form-label" }, kwh ? "Charged to full" : "Full tank"), fullSwitch));
+  const fullFooter = footer(`Turn it off if you only ${kwh ? "topped up the battery" : "topped up"}. The consumption is then worked out at your next full ${kwh ? "charge" : "tank"}, with these ${en.amount.toLowerCase()} included.`);
   const kmFooter = footer("");
   const costFooter = footer("");
   const tyreCaption = caption("TYRES PUT ON");
@@ -628,29 +711,57 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
   const typeSeg = segmented([en.refuel, "Service", "Tyres", "Other"], MAIN.includes(type) ? MAIN.indexOf(type) : 3,
     (i) => { type = i === 3 ? otherKind : MAIN[i]; update(); }, "full");
 
+  // a refuel: type any two of litres, price and total, and the third is worked out (shown in grey)
+  const money = { litres, price, cost };
+  const auto = { litres: false, price: false, cost: false };
+  const typed = (k) => !auto[k] && parseNumber(money[k].value) !== null;
+  function setAuto(k, v) {
+    auto[k] = v !== null && Number.isFinite(v);
+    money[k].value = auto[k] ? plainNumber(v, 2) : "";
+    money[k].classList.toggle("auto", auto[k]);
+  }
+  function recalc(changed) {
+    if (changed) { auto[changed] = false; money[changed].classList.remove("auto"); }
+    if (type !== "fuel") return;
+    const L = parseNumber(litres.value), P = parseNumber(price.value), T = parseNumber(cost.value);
+    const n = ["litres", "price", "cost"].filter(typed).length;
+    if (n === 2 && !typed("cost")) setAuto("cost", L * P);
+    else if (n === 2 && !typed("price")) setAuto("price", L > 0 ? T / L : null);
+    else if (n === 2 && !typed("litres")) setAuto("litres", P > 0 ? T / P : null);
+    else if (n < 2) for (const k of Object.keys(auto)) if (auto[k]) setAuto(k, null);
+  }
+
   let api = null;
-  const read = () => ({ d: date.value, k: parseNumber(km.value), c: parseNumber(cost.value), l: parseNumber(litres.value) });
+  const read = () => ({ d: date.value, k: parseNumber(km.value), c: parseNumber(cost.value), l: parseNumber(litres.value), p: parseNumber(price.value) });
 
   function update() {
     const isFuel = type === "fuel", isTyres = type === "tires", isOther = !MAIN.includes(type);
     kindGroup.style.display = isOther ? "" : "none";
-    litresRow.style.display = isFuel ? "" : "none";
+    for (const el of [litresRow, priceRow, fullGroup, fullFooter]) el.style.display = isFuel ? "" : "none";
     for (const el of [tyreCaption, tyreSeg, tyreFooter]) el.style.display = isTyres ? "" : "none";
+    costLabel.textContent = isFuel ? "Total" : "Cost";
+    moneyCaption.textContent = isFuel ? (kwh ? "CHARGING" : "FUEL") : "COST";
+    if (!isFuel) for (const k of ["litres", "price"]) if (auto[k]) setAuto(k, null);
+    if (!isFuel && auto.cost) setAuto("cost", null);
     noteFooter.textContent = NOTE_HINTS[type];
+    recalc(null);
     validate();
   }
 
   function validate() {
-    const { d, k, c, l } = read();
+    const { d, k, c, l, p } = read();
+    const isFuel = type === "fuel";
     const dateOk = DATE_RX.test(d);
     const kmBad = Boolean(km.value.trim()) && (k === null || k < 0);
     const costBad = Boolean(cost.value.trim()) && (c === null || c < 0);
-    const litresBad = type === "fuel" && Boolean(litres.value.trim()) && (l === null || l <= 0);
+    const litresBad = isFuel && Boolean(litres.value.trim()) && (l === null || l <= 0);
+    const priceBad = isFuel && Boolean(price.value.trim()) && (p === null || p <= 0);
     km.classList.toggle("invalid", kmBad);
     cost.classList.toggle("invalid", costBad);
     litres.classList.toggle("invalid", litresBad);
+    price.classList.toggle("invalid", priceBad);
     const needKm = NEEDS_KM.has(type);
-    const ok = dateOk && !kmBad && !costBad && !litresBad && (!needKm || k !== null);
+    const ok = dateOk && !kmBad && !costBad && !litresBad && !priceBad && (!needKm || k !== null);
     api?.setRight({ disabled: !ok });
 
     // odometer: compared with the reading before this date
@@ -668,28 +779,29 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
     } else if (prev) kmFooter.textContent = `Last reading: ${fmtKm(prev.km)} on ${dayText(prev.date, today)}.${needKm ? "" : " Optional for this one."}`;
     else kmFooter.textContent = needKm ? "What the odometer shows, in kilometres." : "Optional for this one.";
 
-    // cost: price per litre (or kWh) and what the car used since the last fill-up
-    if (type === "fuel") {
-      const parts = [];
-      if (c > 0 && l > 0) parts.push(`${fmtMoney(CUR.local, c / l, 2)} a ${en.unit === "kWh" ? "kWh" : "litre"}`);
-      const prevFuel = dateOk ? [...logs].sort(byDateKm).reverse()
-        .find((x) => x.type === "fuel" && x.km !== null && x.id !== original?.id && x.date <= d && (k === null || x.km < k)) : null;
-      let odd = false;
-      if (l > 0 && k !== null && prevFuel && k > prevFuel.km) {
-        const use = (l / (k - prevFuel.km)) * 100;
-        odd = use > (en.unit === "kWh" ? 40 : 25);
-        parts.push(odd ? `${use.toFixed(1)} ${en.per100} since the last ${en.refuel.toLowerCase()} looks high. Check the odometer and the ${en.amount.toLowerCase()}.`
-          : `${use.toFixed(1)} ${en.per100} since the last ${en.refuel.toLowerCase()} (if you filled up)`);
-      }
-      costFooter.textContent = parts.length ? parts.join("  ·  ") : `Add the ${en.amount.toLowerCase()} to see the price per ${en.unit === "kWh" ? "kWh" : "litre"} and how much the car uses.`;
-      costFooter.className = `section-footer ${odd ? "tone-text-warn" : ""}`;
+    // a refuel: the real consumption and the fuel cost per km since the last full tank, live
+    costFooter.className = "section-footer";
+    if (!isFuel) { costFooter.textContent = `What it cost, in ${CUR.local}. Leave it empty if you don't know.`; return; }
+    const full = fullSwitch.input.checked;
+    const unitWord = kwh ? "charge" : "tank";
+    if (!(l > 0)) { costFooter.textContent = `Type the ${en.amount.toLowerCase()} and the price (or the total) from the ${kwh ? "charger" : "pump"}: the app works out the rest.`; return; }
+    if (!full) { costFooter.textContent = `Top-up: the consumption is worked out at your next full ${unitWord}.`; return; }
+    if (k === null || !dateOk) { costFooter.textContent = "Add the odometer to see the consumption."; return; }
+    const seg = fillPreview(logs, { date: d, km: k, litres: l, cost: c, full: true }, original?.id);
+    if (!seg) { costFooter.textContent = `The first full ${unitWord}: the consumption shows from the next one.`; return; }
+    const high = seg.per100 > (kwh ? 40 : 25), low = seg.per100 < (kwh ? 8 : 2.5);
+    const value = `${seg.per100.toFixed(1)} ${en.per100}${seg.per_km !== null ? ` and ${fmtMoney(CUR.local, seg.per_km, 2)}/km` : ""}`;
+    const over = `over the ${fmtKm(seg.km)} since your full ${unitWord} on ${dayText(seg.from, today)}${seg.topups ? ` (with ${plural(seg.topups, "top-up")})` : ""}`;
+    if (high || low) {
+      costFooter.textContent = `${value} ${over} looks ${high ? "high" : "low"}. ${high ? `Check the odometer and the ${en.amount.toLowerCase()}.` : `Is a ${en.refuel.toLowerCase()} in between missing?`}`;
+      costFooter.className = "section-footer tone-text-warn";
     } else {
-      costFooter.textContent = `What it cost, in ${CUR.local}. Leave it empty if you don't know.`;
-      costFooter.className = "section-footer";
+      costFooter.replaceChildren(h("b", { class: "use-now" }, value), ` ${over}.`);
     }
   }
 
-  for (const f of [date, km, cost, litres]) f.addEventListener("input", validate);
+  for (const [k, f] of Object.entries(money)) f.addEventListener("input", () => { recalc(k); validate(); });
+  for (const f of [date, km]) f.addEventListener("input", validate);
   date.addEventListener("change", validate);
   note.addEventListener("input", () => { note.style.height = "auto"; note.style.height = `${Math.max(note.scrollHeight, 56)}px`; });
 
@@ -706,9 +818,10 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
     caption("WHEN AND HOW FAR"),
     group(h("label", { class: "form-row" }, h("span", { class: "form-label" }, "Date"), date), kmRow),
     kmFooter,
-    caption("COST"),
-    group(row("Cost", cost, localSym()), litresRow),
+    moneyCaption,
+    group(litresRow, priceRow, costRow),
     costFooter,
+    fullGroup, fullFooter,
     tyreCaption, tyreSeg, tyreFooter,
     caption("NOTE"),
     group(h("div", { class: "note-wrap" }, note)),
@@ -718,11 +831,15 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
   function save(sh) {
     const { d, k, c, l } = read();
     if (!DATE_RX.test(d) || (NEEDS_KM.has(type) && k === null)) return;
-    const log = { id: original ? original.id : newLogId(), date: d, type, km: k, cost: c,
-      litres: type === "fuel" ? l : null, tires: type === "tires" ? tires : null, note: note.value.trim() };
+    const isFuel = type === "fuel";
+    const log = { id: original ? original.id : newLogId(), date: d, type, km: k, cost: c === null ? null : Math.round(c * 100) / 100,
+      litres: isFuel ? l : null, full: isFuel ? fullSwitch.input.checked : null, tires: type === "tires" ? tires : null,
+      note: note.value.trim() };
     store.saveCarLog(car.id, log);
     sh.close();
-    toast(`✓  Saved ${typeName(type, en).toLowerCase()}${k !== null ? `  ·  ${fmtKm(k)}` : ""}`);
+    const seg = isFuel && log.full ? fillPreview(logs, log, original?.id) : null;
+    toast(seg ? `✓  ${seg.per100.toFixed(1)} ${en.per100}${seg.per_km !== null ? `  ·  ${fmtMoney(CUR.local, seg.per_km, 2)}/km` : ""}`
+      : `✓  Saved ${typeName(type, en).toLowerCase()}${k !== null ? `  ·  ${fmtKm(k)}` : ""}`);
     syncTap();
   }
 
@@ -738,7 +855,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
   }
 
   api = sheet({ title: original ? "Edit Log" : "New Log", left: { text: "Cancel" }, right: { text: "Save", bold: true, onClick: save }, body });
-  update();
+  update();          // for a refuel being edited, this works out the price from the litres and the total
   note.dispatchEvent(new Event("input"));
   if (!original && matchMedia("(pointer: fine)").matches) setTimeout(() => km.focus(), 350);
   return api;

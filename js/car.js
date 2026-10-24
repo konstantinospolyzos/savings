@@ -83,6 +83,7 @@ function normalizeLogs(raw) {
     logs.push({
       id, date: l.date, type, km: optPos(l.km), cost: optPos(l.cost),
       litres: type === "fuel" ? optPos(l.litres) : null,
+      full: type === "fuel" ? l.full !== false : null,       // a top-up has full: false
       tires: type === "tires" && TYRE_NAME[l.tires] ? l.tires : null,
       note: typeof l.note === "string" ? l.note : "",
     });
@@ -191,26 +192,56 @@ export function monthlyKm(points) {
 // Fuel
 // ---------------------------------------------------------------------------
 /**
- * Fuel use, assuming you fill the tank each time: the litres of one fill-up were used on the
- * kilometres since the fill-up before. Fill-ups without litres are skipped.
+ * Real fuel use, from full tank to full tank: the litres put in at a full tank (plus any top-ups
+ * since the full tank before) were burnt on the kilometres driven since that full tank. The cost of
+ * those refuels over the same kilometres is the fuel cost per km. A refuel without litres breaks
+ * the chain; counting starts again at the next full tank.
  */
-export function fuelStats(logs) {
-  const fuel = logs.filter((l) => l.type === "fuel" && l.km !== null).sort(byDateKm);
-  let litres = 0, dist = 0;
+const WINTER_MONTHS = new Set([11, 12, 1, 2, 3]);
+function sumUp(segs) {
+  const km = sum(segs.map((x) => x.km)), litres = sum(segs.map((x) => x.litres));
+  const priced = segs.filter((x) => x.cost !== null), pkm = sum(priced.map((x) => x.km));
+  return { n: segs.length, km, litres, per100: km >= 50 ? (litres / km) * 100 : null,
+    per_km: pkm >= 50 ? sum(priced.map((x) => x.cost)) / pkm : null };
+}
+
+export function fuelStats(logs, today = null) {
+  const fills = logs.filter((l) => l.type === "fuel" && l.km !== null).sort(byDateKm);
+  const segments = [];
   const perFill = new Map();
-  for (let i = 1; i < fuel.length; i++) {
-    const a = fuel[i - 1], b = fuel[i];
-    const d = b.km - a.km;
-    if (!(b.litres > 0) || d <= 0) continue;
-    litres += b.litres;
-    dist += d;
-    perFill.set(b.id, (b.litres / d) * 100);
+  let start = null, litres = 0, cost = 0, costKnown = true, broken = false, topups = 0;
+  for (const f of fills) {
+    if (start === null) { if (f.full !== false) start = f; continue; }   // the first full tank is where counting starts
+    if (f.litres > 0) litres += f.litres; else broken = true;
+    if (f.cost > 0) cost += f.cost; else costKnown = false;
+    if (f.full === false) { topups += 1; continue; }
+    const km = f.km - start.km;
+    if (!broken && km > 0 && litres > 0) {
+      const seg = { id: f.id, from: start.date, to: f.date, from_km: start.km, km, litres, per100: (litres / km) * 100,
+        cost: costKnown ? cost : null, per_km: costKnown ? cost / km : null, topups };
+      segments.push(seg);
+      perFill.set(f.id, seg);
+    }
+    start = f; litres = 0; cost = 0; costKnown = true; broken = false; topups = 0;
   }
+  const all = sumUp(segments);
+  const recent = today ? sumUp(segments.filter((x) => daysBetween(parseDay(x.to), today) <= 365)) : all;
   const priced = logs.filter((l) => l.type === "fuel" && l.litres > 0 && l.cost > 0);
-  const priceL = priced.length ? sum(priced.map((l) => l.cost)) / sum(priced.map((l) => l.litres)) : null;
-  const per100 = dist >= 50 ? (litres / dist) * 100 : null;
-  return { per100, price: priceL, cost100: per100 !== null && priceL !== null ? per100 * priceL : null,
-    fills: fuel.length, perFill };
+  const price = priced.length ? sum(priced.map((l) => l.cost)) / sum(priced.map((l) => l.litres)) : null;
+  const byUse = [...segments].sort((a, b) => a.per100 - b.per100);
+  return {
+    per100: all.per100, per_km: all.per_km, price, cost100: all.per100 !== null && price !== null ? all.per100 * price : null,
+    fills: fills.length, segments, perFill, all, recent,
+    winter: sumUp(segments.filter((x) => WINTER_MONTHS.has(Number(x.to.slice(5, 7))))),
+    summer: sumUp(segments.filter((x) => !WINTER_MONTHS.has(Number(x.to.slice(5, 7))))),
+    best: byUse[0] || null, worst: byUse.at(-1) || null, latest: segments.at(-1) || null,
+  };
+}
+
+/** What a refuel being typed in would show: its full-tank-to-full-tank stretch, or null. */
+export function fillPreview(logs, draft, exceptId = null) {
+  const others = logs.filter((l) => l.id !== exceptId);
+  return fuelStats([...others, { ...draft, id: "__draft", type: "fuel" }]).perFill.get("__draft") || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -471,7 +502,7 @@ export function carSummary(car, today) {
     km_window: kmWindow, cost_per_km: kmWindow >= 100 ? costs / kmWindow : null,
     cost_per_km_ex_fuel: kmWindow >= 100 ? (costs - fuelCosts) / kmWindow : null,
     by_type: costsByType(inWindow), costs_all: sum(logs.map((l) => l.cost || 0)),
-    fuel: fuelStats(logs),
+    fuel: fuelStats(logs, today),
     tyres: tyreStatus(logs, today, latest ? latest.km : null),
     service: serviceStatus({ ...car, logs }, today, latest ? latest.km : null, perDay),
     inspection: inspectionStatus({ ...car, logs }, today),
@@ -512,9 +543,15 @@ export const monthPos = (iso) => {
 export function carCsv(logs) {
   const q = (v) => (/[",\n;]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
   const f = (v) => (v === null || v === undefined ? "" : String(v));
-  const lines = [["Date", "Type", "Odometer (km)", `Cost (${CUR.local})`, "Litres", "Tyres put on", "Note"]];
+  const { perFill } = fuelStats(logs);
+  const r2 = (v) => (v === null || v === undefined ? "" : String(Math.round(v * 100) / 100));
+  const lines = [["Date", "Type", "Odometer (km)", `Cost (${CUR.local})`, "Litres", `Price per litre (${CUR.local})`, "Full tank",
+    "l/100 km", `Fuel cost per km (${CUR.local})`, "Tyres put on", "Note"]];
   for (const l of [...logs].sort(byDateKm)) {
-    lines.push([l.date, TYPE[l.type].name, f(l.km), f(l.cost), f(l.litres), l.tires ? TYRE_NAME[l.tires] : "", l.note || ""]);
+    const seg = perFill.get(l.id);
+    lines.push([l.date, TYPE[l.type].name, f(l.km), f(l.cost), f(l.litres), l.litres > 0 && l.cost > 0 ? r2(l.cost / l.litres) : "",
+      l.type === "fuel" ? (l.full === false ? "no" : "yes") : "", seg ? r2(seg.per100) : "", seg ? r2(seg.per_km) : "",
+      l.tires ? TYRE_NAME[l.tires] : "", l.note || ""]);
   }
   return "\uFEFF" + lines.map((l) => l.map(q).join(",")).join("\r\n");
 }
