@@ -404,3 +404,15 @@ test("this year so far, and where it lands on 31 December", () => {
   close(f.costs_end, 5400 + s.per_day * 274 * 0.4 + other * 274 / 30.4375);
   assert.equal(f.last, null);                              // 2025 was only logged from October
 });
+
+test("vehicle tax is its own kind of cost", () => {
+  const c = car.normalizeCar({ logs: [{ date: "2026-03-10", type: "tax", cost: 1406 }, { date: "2026-03-12", type: "fuel", km: 1, cost: 700 }] });
+  assert.equal(c.logs[0].type, "tax");
+  assert.equal(c.logs[0].km, null);                                      // no odometer needed
+  assert.equal(car.NEEDS_KM.has("tax"), false);
+  assert.equal(car.TYPE.tax.costName, "Tax");
+  assert.equal(car.costsByType(c.logs).tax, 1406);
+  const s = car.carSummary(c, day(2026, 10, 24));
+  assert.equal(s.by_type.tax, 1406);
+  assert.match(car.carCsv(c.logs), /2026-03-10,Vehicle tax,,1406,/);
+});

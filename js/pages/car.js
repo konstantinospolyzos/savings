@@ -44,7 +44,7 @@ function openPhotoViewer(ref, { onDelete = null } = {}) {
 
 const DAY_MS = 86400000;
 const TYRE_ON = { summer: "Summer tyres on", studded: "Studded winter tyres on", winter: "Non-studded winter tyres on" };
-const OTHER_KINDS = [["inspection", "Inspection (besiktning)"], ["repair", "Repair"], ["other", "Other"]];
+const OTHER_KINDS = [["inspection", "Inspection (besiktning)"], ["repair", "Repair"], ["tax", "Vehicle tax (fordonsskatt)"], ["other", "Other"]];
 const RULE_TEXT = { first: "36 months after first registration", second: "24 months after the first inspection", later: "14 months after the last one" };
 const card = (...children) => h("div", { class: "card" }, children);
 const head = (title, sub = null, right = null) => h("div", { class: "card-head" },
@@ -779,6 +779,7 @@ const NOTE_HINTS = {
   tires: "Optional, e.g. where the other set is stored, or new tyres.",
   inspection: "Optional, e.g. remarks from the inspection.",
   repair: "What was fixed.",
+  tax: "Optional, e.g. which year it's for.",
   other: "What it was: washing, parking, a toll, a part…",
 };
 

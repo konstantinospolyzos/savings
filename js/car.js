@@ -13,6 +13,7 @@ export const CAR_TYPES = [
   ["tires", "Tyre change", "Tyres", COLORS.purple, "tyre"],
   ["inspection", "Inspection", "Inspection", COLORS.teal, "check"],
   ["repair", "Repair", "Repairs", COLORS.red, "wrench"],
+  ["tax", "Vehicle tax", "Tax", COLORS.pink, "receipt"],
   ["other", "Other", "Other", COLORS.gray, "car"],
 ];
 export const TYPE = Object.fromEntries(CAR_TYPES.map(([key, name, costName, color, icon]) => [key, { key, name, costName, color, icon }]));
