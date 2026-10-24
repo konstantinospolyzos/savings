@@ -231,10 +231,10 @@ export async function saveFile(name, type, content) {
 }
 
 /** Ask for a file (must be called from a tap). */
-export function pickFile(accept = "") {
+export function pickFile(accept = "", multiple = false) {
   return new Promise((resolve) => {
-    const input = h("input", { type: "file", accept: accept || null, style: { display: "none" } });
-    input.addEventListener("change", () => { resolve(input.files[0] || null); input.remove(); });
+    const input = h("input", { type: "file", accept: accept || null, multiple: multiple || null, style: { display: "none" } });
+    input.addEventListener("change", () => { resolve(multiple ? [...input.files] : input.files[0] || null); input.remove(); });
     document.body.appendChild(input);
     input.click();
   });

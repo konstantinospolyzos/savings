@@ -1,9 +1,9 @@
 // Offline support: the newest files when online, the saved copies when offline.
 // Google Drive, Google sign-in and the exchange-rate service always go to the network.
-const CACHE = "savings-tracker-v15";
+const CACHE = "savings-tracker-v16";
 const FILES = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
-  "js/app.js", "js/core.js", "js/car.js", "js/pump.js", "js/store.js", "js/ui.js", "js/charts.js", "js/config.js",
+  "js/app.js", "js/core.js", "js/car.js", "js/pump.js", "js/photos.js", "js/store.js", "js/ui.js", "js/charts.js", "js/config.js",
   "js/pages/overview.js", "js/pages/history.js", "js/pages/month.js", "js/pages/settings.js",
   "js/pages/welcome.js", "js/pages/budget.js", "js/pages/budget-sheets.js", "js/pages/insights.js", "js/pages/car.js", "js/pages/pump-sheet.js",
   "data/fuel-prices.json", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",

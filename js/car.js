@@ -86,6 +86,9 @@ function normalizeLogs(raw) {
       full: type === "fuel" ? l.full !== false : null,       // a top-up has full: false
       tires: type === "tires" && TYRE_NAME[l.tires] ? l.tires : null,
       note: typeof l.note === "string" ? l.note : "",
+      // invoice photos: the picture is kept on the device and (with Drive) as a file in Drive
+      photos: (Array.isArray(l.photos) ? l.photos : []).filter((p) => p && typeof p.id === "string" && p.id).slice(0, 12)
+        .map((p) => ({ id: p.id, drive: typeof p.drive === "string" && p.drive ? p.drive : null })),
     });
   }
   return logs.sort(byDateKm);

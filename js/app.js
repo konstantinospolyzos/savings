@@ -10,6 +10,7 @@ import { renderWelcome } from "./pages/welcome.js";
 import { openMonthSheet } from "./pages/month.js";
 import { openSettings } from "./pages/settings.js";
 import { renderCar, renderCarLog, openNewCarLog, carHeading } from "./pages/car.js";
+import { uploadPending } from "./photos.js";
 
 const TABS = [
   { key: "overview", title: "Overview", icon: "overview", render: renderOverview },
@@ -199,6 +200,7 @@ document.addEventListener("keydown", (ev) => {
 });
 
 store.on((kind) => (kind === "status" ? updateChrome() : render()));
+store.onSynced = () => uploadPending(store);     // invoice photos go to Drive after each sync
 store.load();
 setPrivacy(store.pref("privacy", false));
 render();

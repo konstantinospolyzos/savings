@@ -11,7 +11,7 @@ const close = (actual, expected, tol = 0.01) =>
 const NBSP = " ";
 let n = 0;
 const log = (date, type, o = {}) => ({ id: `t${++n}`, date, type, km: null, cost: null, litres: null,
-  full: type === "fuel" ? true : null, tires: null, note: "", ...o });
+  full: type === "fuel" ? true : null, tires: null, note: "", photos: [], ...o });
 
 // Jan 1 -> Jan 31 is 30 days, Jan 31 -> Mar 2 is 30 days (February 2026 has 28)
 const LOGS = [

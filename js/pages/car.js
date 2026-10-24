@@ -15,6 +15,32 @@ import { store } from "../store.js";
 import { statCard } from "./overview.js";
 import { getKey, readPump, shrinkPhoto, exifDate } from "../pump.js";
 import { openPhotoSetup } from "./pump-sheet.js";
+import { putLocal, deleteLocal, newPhotoId, shrinkInvoice, loadPhoto, removePhotos } from "../photos.js";
+
+/** Full-screen photo: tap to zoom in (and scroll), Delete removes it from the log. */
+function openPhotoViewer(ref, { onDelete = null } = {}) {
+  let url = null;
+  const img = h("img", { class: "viewer-img", alt: "Invoice photo" });
+  const scroller = h("div", { class: "viewer-scroll" }, img);
+  const wrap = h("div", { class: "viewer", role: "dialog", "aria-label": "Photo" },
+    h("div", { class: "viewer-bar" },
+      h("button", { type: "button", class: "viewer-btn", onclick: () => close() }, "Done"),
+      h("span", { class: "viewer-hint" }, "Tap to zoom"),
+      onDelete ? h("button", { type: "button", class: "viewer-btn danger", onclick: () => remove() }, "Delete") : h("span")),
+    scroller);
+  scroller.addEventListener("click", () => wrap.classList.toggle("zoom"));
+  document.getElementById("layer").appendChild(wrap);
+  loadPhoto(store, ref).then((blob) => {
+    if (blob) { url = URL.createObjectURL(blob); img.src = url; return; }
+    img.replaceWith(h("div", { class: "viewer-missing" }, "This photo is in your Google Drive. Tap the cloud button at the top of the app to sign in, then open it again."));
+  });
+  function close() { wrap.remove(); if (url) URL.revokeObjectURL(url); }
+  async function remove() {
+    const ok = await alertBox({ title: "Delete this photo?", message: "It's removed from this log when you save.",
+      buttons: [{ text: "Cancel", value: false, style: "cancel" }, { text: "Delete", value: true, style: "destructive" }] });
+    if (ok) { close(); onDelete(); }
+  }
+}
 
 const DAY_MS = 86400000;
 const TYRE_ON = { summer: "Summer tyres on", studded: "Studded winter tyres on", winter: "Non-studded winter tyres on" };
@@ -579,6 +605,7 @@ function logRow(l, ctx, car, perFill, prevKm, today, en) {
       seg.per_km !== null ? h("span", { class: "amt" }, `  ·  ${fmtMoney(CUR.local, seg.per_km, 2)}/km`) : null);
   }
   if (l.km !== null && prevKm !== null && l.km >= prevKm) extra.push(`${fmtKmSigned(l.km - prevKm)}`);
+  if (l.photos?.length) extra.push(`📎 ${plural(l.photos.length, "photo")}`);
   return h("button", { type: "button", class: "crow", onclick: () => openCarLogSheet(ctx, car, l) },
     typeBadge(l.type),
     h("div", { class: "crow-main" },
@@ -706,6 +733,52 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
   const photoNote = h("div", { class: "photo-note" });
   const photoBox = h("div", { class: "photo-box" }, photoBtn, photoNote);
   let dateTouched = Boolean(original);
+
+  // invoice photos (services, repairs, tyres, inspections...): kept on the device, and in Drive with Drive
+  let photos = (original?.photos || []).map((p) => ({ ...p }));
+  const added = new Set();        // taken in this sheet: forgotten again if you cancel
+  const removed = [];             // already saved ones you deleted: removed when you save
+  let saved = false;
+  const photoUrls = [];
+  const photoCaption = caption("PHOTOS");
+  const photoGrid = h("div", { class: "invoice-grid amt-soft" });
+  const photoFooter = footer("A photo of the invoice shows later what was done and changed. Tap one to see it full size. They're kept on this device, and in your Google Drive folder when you save to Drive.");
+  function drawPhotos() {
+    for (const u of photoUrls.splice(0)) URL.revokeObjectURL(u);
+    const tiles = photos.map((p, i) => {
+      const tile = h("button", { type: "button", class: "invoice-tile", "aria-label": `Photo ${i + 1}` });
+      tile.addEventListener("click", () => openPhotoViewer(p, { onDelete: () => {
+        photos = photos.filter((x) => x.id !== p.id);
+        if (added.has(p.id)) { added.delete(p.id); deleteLocal(p.id); } else removed.push(p);
+        drawPhotos();
+      } }));
+      loadPhoto(store, p).then((blob) => {
+        if (!blob) { tile.append(icon("cloud", 22, "invoice-missing")); return; }
+        const u = URL.createObjectURL(blob);
+        photoUrls.push(u);
+        tile.append(h("img", { src: u, alt: "" }));
+      });
+      return tile;
+    });
+    const add = h("button", { type: "button", class: "invoice-tile add" }, icon("camera", 22), h("span", null, photos.length ? "Add more" : "Add photo"));
+    add.addEventListener("click", async () => {
+      const files = await pickFile("image/*", true);
+      if (!files?.length) return;
+      add.disabled = true;
+      for (const f of files) {
+        if (photos.length >= 12) { toast("Up to 12 photos per log"); break; }
+        try {
+          const blob = await shrinkInvoice(f);
+          const id = newPhotoId();
+          await putLocal(id, blob);
+          photos.push({ id, drive: null });
+          added.add(id);
+        } catch { toast("Couldn't add that photo"); }
+      }
+      drawPhotos();
+    });
+    photoGrid.replaceChildren(...tiles, add);
+  }
   const fullGroup = group(h("label", { class: "form-row switch-row" }, h("span", { class: "form-label" }, kwh ? "Charged to full" : "Full tank"), fullSwitch));
   const fullFooter = footer(`Turn it off if you only ${kwh ? "topped up the battery" : "topped up"}. The consumption is then worked out at your next full ${kwh ? "charge" : "tank"}, with these ${en.amount.toLowerCase()} included.`);
   const kmFooter = footer("");
@@ -747,6 +820,8 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
     for (const el of [litresRow, priceRow, fullGroup, fullFooter]) el.style.display = isFuel ? "" : "none";
     photoBox.style.display = isFuel && !kwh ? "" : "none";
     for (const el of [tyreCaption, tyreSeg, tyreFooter]) el.style.display = isTyres ? "" : "none";
+    for (const el of [photoCaption, photoGrid, photoFooter]) el.style.display = isFuel ? "none" : "";
+    photoCaption.textContent = ["service", "repair"].includes(type) ? "INVOICE PHOTOS" : "PHOTOS";
     costLabel.textContent = isFuel ? "Total" : "Cost";
     moneyCaption.textContent = isFuel ? (kwh ? "CHARGING" : "FUEL") : "COST";
     if (!isFuel) for (const k of ["litres", "price"]) if (auto[k]) setAuto(k, null);
@@ -879,6 +954,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
     costFooter,
     fullGroup, fullFooter,
     tyreCaption, tyreSeg, tyreFooter,
+    photoCaption, photoGrid, photoFooter,
     caption("NOTE"),
     group(h("div", { class: "note-wrap" }, note)),
     noteFooter,
@@ -890,7 +966,10 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
     const isFuel = type === "fuel";
     const log = { id: original ? original.id : newLogId(), date: d, type, km: k, cost: c === null ? null : Math.round(c * 100) / 100,
       litres: isFuel ? l : null, full: isFuel ? fullSwitch.input.checked : null, tires: type === "tires" ? tires : null,
+      photos: isFuel ? [] : photos,
       note: note.value.trim() };
+    saved = true;
+    removePhotos(store, isFuel ? removed.concat(photos) : removed);
     store.saveCarLog(car.id, log);
     sh.close();
     const seg = isFuel && log.full ? fillPreview(logs, log, original?.id) : null;
@@ -904,13 +983,20 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
       message: `${typeName(original.type, en)} on ${dayText(original.date, today)}${original.km !== null ? `, ${fmtKm(original.km)}` : ""}. This can't be undone.`,
       buttons: [{ text: "Cancel", value: false, style: "cancel" }, { text: "Delete", value: true, style: "destructive" }] });
     if (!ok) return;
+    saved = true;
+    removePhotos(store, (original.photos || []).concat(photos.filter((p) => added.has(p.id))));
     store.deleteCarLog(car.id, original.id);
     api.close();
     toast("Deleted the log");
     syncTap();
   }
 
-  api = sheet({ title: original ? "Edit Log" : "New Log", left: { text: "Cancel" }, right: { text: "Save", bold: true, onClick: save }, body });
+  api = sheet({ title: original ? "Edit Log" : "New Log", left: { text: "Cancel" }, right: { text: "Save", bold: true, onClick: save }, body,
+    onClose: () => {
+      for (const u of photoUrls.splice(0)) URL.revokeObjectURL(u);
+      if (!saved) for (const id of added) deleteLocal(id);       // cancelled: forget the photos taken here
+    } });
+  drawPhotos();
   update();          // for a refuel being edited, this works out the price from the litres and the total
   note.dispatchEvent(new Event("input"));
   if (!original && matchMedia("(pointer: fine)").matches) setTimeout(() => km.focus(), 350);
@@ -976,6 +1062,7 @@ export function openCarSheet(ctx, car = null) {
       buttons: [{ text: "Cancel", value: false, style: "cancel" }, { text: "Delete", value: true, style: "destructive" }] });
     if (!ok) return;
     if (store.pref(PREF, null) === c.id) store.setPref(PREF, null);
+    for (const l of c.logs) removePhotos(store, l.photos);
     store.deleteCar(c.id);
     api.close();
     toast(`Deleted ${carTitle(c)}`);

@@ -255,7 +255,7 @@ class Drive {
       try { const j = await resp.json(); msg = j.error?.message || msg; } catch { /* keep msg */ }
       throw new Error(msg);
     }
-    return raw ? resp.text() : resp.json();
+    return raw === "blob" ? resp.blob() : raw ? resp.text() : resp.json();
   }
 
   about() { return this.call("GET", `${API}/about?fields=user(emailAddress,displayName)`); }
@@ -305,6 +305,21 @@ class Drive {
   }
 
   remove(id) { return this.call("DELETE", `${API}/files/${id}`); }
+
+  /** An invoice photo as its own file in the Savings Tracker folder */
+  async uploadPhoto(blob, name) {
+    const parent = await this.folder();
+    const boundary = `st${Math.random().toString(36).slice(2)}`;
+    const type = blob.type || "image/jpeg";
+    const meta = { name, mimeType: type, parents: [parent], appProperties: { savingsTracker: "photo" } };
+    const body = new Blob([`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: ${type}\r\n\r\n`,
+      blob, `\r\n--${boundary}--`]);
+    return this.call("POST", `${UPLOAD}/files?uploadType=multipart&fields=id`, {
+      headers: { "Content-Type": `multipart/related; boundary=${boundary}` }, body,
+    });
+  }
+
+  downloadPhoto(id) { return this.call("GET", `${API}/files/${id}?alt=media`, { raw: "blob" }); }
 
   upload(id, data) {
     return this.call("PATCH", `${UPLOAD}/files/${id}?uploadType=media&fields=id,name,version,modifiedTime,webViewLink`, {
@@ -503,6 +518,7 @@ class Store {
       this._status();
       if (later.length) this._again = true;
       this._backupIfDue(result.data);
+      this.onSynced?.();          // e.g. upload invoice photos that aren't in Drive yet
     } catch (err) {
       if (err instanceof AuthError) this._status();
       else this._status("error", err.message || "Couldn't reach Google Drive.");
