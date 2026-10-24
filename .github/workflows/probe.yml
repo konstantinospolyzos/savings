@@ -1,0 +1,76 @@
+name: Fuel price probe
+on:
+  push:
+    branches: [fuel-probe]
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install openpyxl requests
+      - name: Probe sources
+        run: |
+          mkdir -p probe
+          python - <<'PY'
+          import re, requests, openpyxl, io, json, traceback
+          out = open("probe/out.txt", "w")
+          def say(*a):
+              print(*a); print(*a, file=out)
+          UA = {"User-Agent": "Mozilla/5.0 (savings-tracker fuel price probe)"}
+          # 1) EU Weekly Oil Bulletin page: find the history xlsx link
+          try:
+              page = requests.get("https://energy.ec.europa.eu/data-and-analysis/weekly-oil-bulletin_en", headers=UA, timeout=60).text
+              links = sorted(set(re.findall(r'href="([^"]+?\.xlsx[^"]*)"', page)))
+              say("BULLETIN LINKS:"); [say("  ", l) for l in links]
+          except Exception as e:
+              say("bulletin page failed", e)
+          url = "https://energy.ec.europa.eu/document/download/906e60ca-8b6a-44e7-8589-652854d2fd3f_en?filename=Weekly_Oil_Bulletin_Prices_History_maticni_4web.xlsx"
+          try:
+              r = requests.get(url, headers=UA, timeout=120)
+              say("HISTORY XLSX", r.status_code, len(r.content), r.headers.get("content-type"))
+              wb = openpyxl.load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
+              for ws in wb.worksheets:
+                  say("SHEET", repr(ws.title), ws.max_row, ws.max_column)
+                  for i, row in enumerate(ws.iter_rows(values_only=True)):
+                      if i < 8 or (i < 12):
+                          say("   ", i, [c for c in row[:40]])
+                      else:
+                          break
+              # find Sweden columns in first sheet header rows
+              ws = wb.worksheets[0]
+              rows = list(ws.iter_rows(min_row=1, max_row=6, values_only=True))
+              for ri, row in enumerate(rows):
+                  for ci, c in enumerate(row):
+                      if c and "SE" == str(c).strip()[:2] or (c and "Swed" in str(c)):
+                          say("SE header", ri, ci, repr(c))
+          except Exception:
+              say("history failed", traceback.format_exc())
+          # 2) Circle K and Preem price pages
+          for name, u in [("circlek", "https://www.circlek.se/drivmedel/drivmedelspriser"),
+                          ("preem", "https://www.preem.se/privat/drivmedel/drivmedelspriser/"),
+                          ("st1", "https://www.st1.se/privat/drivmedel/priser"),
+                          ("okq8", "https://www.okq8.se/pa-macken/drivmedelspriser/")]:
+              try:
+                  r = requests.get(u, headers=UA, timeout=60)
+                  say("PAGE", name, r.status_code, r.url, len(r.text))
+                  open(f"probe/{name}.html", "w").write(r.text)
+                  for m in re.finditer(r".{0,160}(?:95|Bensin|miles).{0,160}", r.text):
+                      s = m.group(0)
+                      if re.search(r"\d{2}[,.]\d{2}", s):
+                          say("   ", name, ":", s.replace("\n", " ")[:320])
+              except Exception as e:
+                  say("page failed", name, e)
+          out.close()
+          PY
+      - name: Save results
+        run: |
+          git config user.name "fuel-probe"
+          git config user.email "actions@users.noreply.github.com"
+          git add probe
+          git commit -m "probe results" || true
+          git push
