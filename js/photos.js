@@ -1,6 +1,7 @@
-// Invoice photos for car logs. A log only holds references ({id, drive}); the pictures themselves are
-// kept on this device (IndexedDB) and, with Google Drive, as files in the Savings Tracker folder, so
-// they reach your other devices without making the data file big.
+// Invoice photos for car logs. A log only holds references ({id, drive}); the pictures themselves live
+// in Google Drive, as files in the Savings Tracker folder next to the data file. The phone keeps a
+// photo only until it's uploaded (so you can attach one without signal), then deletes its copy.
+// Without Drive ("this device only") the phone is the only place, so it keeps them.
 
 const DB_NAME = "savingsTracker-photos";
 const STORE_NAME = "photos";
@@ -31,6 +32,12 @@ async function run(mode, fn) {
 }
 
 export const putLocal = (id, blob) => run("readwrite", (s) => s.put(blob, id));
+// photos seen in this session, so they don't download again every time (not kept when the app closes)
+const memory = new Map();
+function remember(id, blob) {
+  memory.set(id, blob);
+  while (memory.size > 24) memory.delete(memory.keys().next().value);
+}
 export const getLocal = (id) => run("readonly", (s) => s.get(id)).catch(() => null);
 export const deleteLocal = (id) => run("readwrite", (s) => s.delete(id)).catch(() => null);
 export const newPhotoId = () => `ph-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -56,14 +63,15 @@ export async function shrinkInvoice(file, maxEdge = 2200, quality = 0.82) {
   }
 }
 
-/** The picture: from this device, or from Google Drive (then kept here too). null if not reachable now. */
+/** The picture: not uploaded yet (on this device), or from Google Drive. null if not reachable now. */
 export async function loadPhoto(store, ref) {
+  if (memory.has(ref.id)) return memory.get(ref.id);
   const local = await getLocal(ref.id);
   if (local) return local;
   if (ref.drive && store.mode === "drive" && store.drive.tokenValid()) {
     try {
       const blob = await store.drive.downloadPhoto(ref.drive);
-      if (blob) { putLocal(ref.id, blob).catch(() => {}); return blob; }
+      if (blob) { remember(ref.id, blob); return blob; }
     } catch { /* not reachable now */ }
   }
   return null;
@@ -72,6 +80,7 @@ export async function loadPhoto(store, ref) {
 /** Remove pictures from this device and (when signed in) from Drive. Best effort. */
 export async function removePhotos(store, refs) {
   for (const p of refs || []) {
+    memory.delete(p.id);
     await deleteLocal(p.id);
     if (p.drive && store.mode === "drive" && store.drive.tokenValid()) {
       try { await store.drive.remove(p.drive); } catch { /* stays in the Drive folder */ }
@@ -94,12 +103,13 @@ export async function uploadPending(store) {
           const blob = await getLocal(p.id);
           if (!blob) continue;                                   // taken on another device: it uploads it
           const made = await store.drive.uploadPhoto(blob, `${car.make || "car"}-${log.type}-${log.date}-${p.id}.jpg`.toLowerCase().replace(/[^a-z0-9.-]+/g, "-"));
-          if (made?.id) done.set(p.id, made.id);
+          if (made?.id) { done.set(p.id, made.id); remember(p.id, blob); }
         }
         if (!done.size) continue;
         // the log as it is now (it may have changed meanwhile)
         const fresh = store.data.cars.find((c) => c.id === car.id)?.logs.find((l) => l.id === log.id);
         if (fresh) store.saveCarLog(car.id, { ...fresh, photos: fresh.photos.map((p) => (done.has(p.id) ? { ...p, drive: done.get(p.id) } : p)) });
+        for (const id of done.keys()) await deleteLocal(id);      // in Drive now: the phone's copy can go
       }
     }
   } catch { /* offline or signed out: tried again after the next sync */ }

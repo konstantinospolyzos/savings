@@ -742,7 +742,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
   const photoUrls = [];
   const photoCaption = caption("PHOTOS");
   const photoGrid = h("div", { class: "invoice-grid amt-soft" });
-  const photoFooter = footer("A photo of the invoice shows later what was done and changed. Tap one to see it full size. They're kept on this device, and in your Google Drive folder when you save to Drive.");
+  const photoFooter = footer("A photo of the invoice shows later what was done and changed. Tap one to see it full size. With Google Drive they're saved in your Savings Tracker folder, next to your data (seeing them needs internet); otherwise on this device.");
   function drawPhotos() {
     for (const u of photoUrls.splice(0)) URL.revokeObjectURL(u);
     const tiles = photos.map((p, i) => {
