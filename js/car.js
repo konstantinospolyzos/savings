@@ -10,7 +10,8 @@ import {
 export const CAR_TYPES = [
   ["fuel", "Refuel", "Fuel", COLORS.orange, "fuel"],
   ["service", "Service", "Service", COLORS.blue, "wrench"],
-  ["tires", "Tyre change", "Tyres", COLORS.purple, "tyre"],
+  ["tires", "Tyre change", "Tyre changes", COLORS.purple, "tyre"],
+  ["tyre_buy", "New tyres", "New tyres", COLORS.indigo, "tyre"],
   ["inspection", "Inspection", "Inspection", COLORS.teal, "check"],
   ["repair", "Repair", "Repairs", COLORS.red, "wrench"],
   ["tax", "Vehicle tax", "Tax", COLORS.pink, "receipt"],
@@ -85,7 +86,8 @@ function normalizeLogs(raw) {
       id, date: l.date, type, km: optPos(l.km), cost: optPos(l.cost),
       litres: type === "fuel" ? optPos(l.litres) : null,
       full: type === "fuel" ? l.full !== false : null,       // a top-up has full: false
-      tires: type === "tires" && TYRE_NAME[l.tires] ? l.tires : null,
+      tires: (type === "tires" || type === "tyre_buy") && TYRE_NAME[l.tires] ? l.tires : null,
+      fitted: type === "tyre_buy" ? l.fitted !== false : null,   // new tyres put on at once: also a tyre change
       note: typeof l.note === "string" ? l.note : "",
       // invoice photos: the picture is kept on the device and (with Drive) as a file in Drive
       photos: (Array.isArray(l.photos) ? l.photos : []).filter((p) => p && typeof p.id === "string" && p.id).slice(0, 12)
@@ -317,7 +319,8 @@ export function costsByType(logs) {
 // roads are wintry; studded tyres are allowed 1 Oct - 15 Apr (outside that only in winter conditions).
 // ---------------------------------------------------------------------------
 export function tyreStatus(logs, today, latestKm = null) {
-  const changes = logs.filter((l) => l.type === "tires" && l.tires).sort(byDateKm);
+  // a tyre change, or new tyres fitted when they were bought
+  const changes = logs.filter((l) => (l.type === "tires" || (l.type === "tyre_buy" && l.fitted !== false)) && l.tires).sort(byDateKm);
   const last = changes.at(-1) || null;
   const on = last ? last.tires : null;
   const y = today.getFullYear();
@@ -362,11 +365,11 @@ export function tyreStatus(logs, today, latestKm = null) {
     title = "Winter tyres on";
     detail = "Next change: summer tyres in April.";
   }
-  const costs = changes.filter((l) => l.cost > 0).map((l) => l.cost);
+  const costs = changes.filter((l) => l.type === "tires" && l.cost > 0).map((l) => l.cost);   // what a swap costs, without new tyres
   return {
     on, last, changes, tone, title, detail, deadline, days_left: deadline ? until(deadline) : null,
     km_on: last && last.km !== null && latestKm !== null ? Math.max(0, latestKm - last.km) : null,
-    avg_cost: costs.length ? mean(costs) : null,
+    avg_cost: costs.length ? mean(costs) : null, priced_changes: costs.length,
   };
 }
 
@@ -586,12 +589,12 @@ export function carCsv(logs) {
   const { perFill } = fuelStats(logs);
   const r2 = (v) => (v === null || v === undefined ? "" : String(Math.round(v * 100) / 100));
   const lines = [["Date", "Type", "Odometer (km)", `Cost (${CUR.local})`, "Litres", `Price per litre (${CUR.local})`, "Full tank",
-    "l/100 km", `Fuel cost per km (${CUR.local})`, "Tyres put on", "Note"]];
+    "l/100 km", `Fuel cost per km (${CUR.local})`, "Tyre set", "Note"]];
   for (const l of [...logs].sort(byDateKm)) {
     const seg = perFill.get(l.id);
     lines.push([l.date, TYPE[l.type].name, f(l.km), f(l.cost), f(l.litres), l.litres > 0 && l.cost > 0 ? r2(l.cost / l.litres) : "",
       l.type === "fuel" ? (l.full === false ? "no" : "yes") : "", seg ? r2(seg.per100) : "", seg ? r2(seg.per_km) : "",
-      l.tires ? TYRE_NAME[l.tires] : "", l.note || ""]);
+      l.tires ? `${TYRE_NAME[l.tires]}${l.type === "tyre_buy" ? (l.fitted === false ? " (not fitted)" : " (fitted)") : ""}` : "", l.note || ""]);
   }
   return "\uFEFF" + lines.map((l) => l.map(q).join(",")).join("\r\n");
 }

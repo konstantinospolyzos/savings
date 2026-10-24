@@ -179,9 +179,9 @@ function tyreCard(car, sum, today, ctx) {
         : cell("Studs", "Allowed now", `until ${short(d.studs_until)}`, false));
   const rows = [];
   if (t.last) {
-    rows.push(kv("Changed", `${dayText(t.last.date, today)}${t.last.km !== null ? `  ·  ${fmtKm(t.last.km)}` : ""}`, { amt: false }));
+    rows.push(kv(t.last.type === "tyre_buy" ? "Changed (new tyres)" : "Changed", `${dayText(t.last.date, today)}${t.last.km !== null ? `  ·  ${fmtKm(t.last.km)}` : ""}`, { amt: false }));
     if (t.km_on !== null) rows.push(kv("Driven on them", fmtKm(t.km_on), { amt: false }));
-    if (t.avg_cost !== null) rows.push(kv(`Average change (${plural(t.changes.filter((l) => l.cost > 0).length, "time")})`, fmtSek(t.avg_cost)));
+    if (t.avg_cost !== null) rows.push(kv(`Average change (${plural(t.priced_changes, "time")})`, fmtSek(t.avg_cost)));
   }
   return card(head("Tyres", t.on ? TYRE_ON[t.on] : null, label ? chip(label, t.tone) : null),
     h("div", { class: `status-title tone-text-${t.tone}` }, t.title),
@@ -671,14 +671,15 @@ export function renderCarInsights(ctx) {
 // Log page
 // ---------------------------------------------------------------------------
 const FILTERS = [["All", () => true], ["Refuels", (l) => l.type === "fuel"],
-  ["Service & tyres", (l) => l.type === "service" || l.type === "tires"],
-  ["Other", (l) => !["fuel", "service", "tires"].includes(l.type)]];
+  ["Service & tyres", (l) => ["service", "tires", "tyre_buy"].includes(l.type)],
+  ["Other", (l) => !["fuel", "service", "tires", "tyre_buy"].includes(l.type)]];
 
 function logRow(l, ctx, car, perFill, prevKm, today, en) {
   const sub = [dayText(l.date, today), l.km !== null ? fmtKm(l.km) : null].filter(Boolean).join("  ·  ");
   const extra = [];
   let use = null;
   if (l.type === "tires" && l.tires) extra.push(TYRE_ON[l.tires]);
+  if (l.type === "tyre_buy" && l.tires) extra.push(l.fitted === false ? `${TYRE_ON[l.tires].replace(/ on$/, "")}, not fitted` : TYRE_ON[l.tires]);
   if (l.type === "fuel") {
     if (l.litres) extra.push(`${plainNumber(l.litres, Math.round(l.litres * 100) % 10 ? 2 : Math.round(l.litres * 10) % 10 ? 1 : 0)} ${en.unit}`);
     if (l.litres > 0 && l.cost > 0) extra.push(perUnit(l.cost / l.litres, en));
@@ -776,7 +777,8 @@ const MONTH_RX = /^\d{4}-\d{2}$/;
 const NOTE_HINTS = {
   fuel: "Optional, e.g. the station, or a trip.",
   service: "What was done: oil, filters, brakes…",
-  tires: "Optional, e.g. where the other set is stored, or new tyres.",
+  tires: "Optional, e.g. where the other set is stored.",
+  tyre_buy: "Optional, e.g. the brand, the size, or where you bought them.",
   inspection: "Optional, e.g. remarks from the inspection.",
   repair: "What was fixed.",
   tax: "Optional, e.g. which year it's for.",
@@ -790,7 +792,9 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
   const kwh = en.unit === "kWh";
   const MAIN = ["fuel", "service", "tires"];
   let type = original ? original.type : preset.type || "fuel";
-  let otherKind = MAIN.includes(type) ? "other" : type;
+  const TYRE_KINDS = ["tires", "tyre_buy"];
+  let tyreKind = TYRE_KINDS.includes(type) ? type : "tires";
+  let otherKind = MAIN.includes(type) || TYRE_KINDS.includes(type) ? "other" : type;
   let tires = original?.tires || preset.tires || "summer";
   const latestKm = logs.reduce((m, l) => (l.km !== null && l.km > m ? l.km : m), -1);
   // this week's Swedish average, as a hint in the price field
@@ -872,8 +876,14 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
     (i) => { tires = TYRE_SETS[i][0]; update(); }, "full");
   const tyreFooter = footer("Studded and non-studded are both winter tyres. In Sweden winter tyres are required 1 December – 31 March when the roads are wintry, and studs are allowed 1 October – 15 April.");
   const noteFooter = footer("");
-  const typeSeg = segmented([en.refuel, "Service", "Tyres", "Other"], MAIN.includes(type) ? MAIN.indexOf(type) : 3,
-    (i) => { type = i === 3 ? otherKind : MAIN[i]; update(); }, "full");
+  const typeSeg = segmented([en.refuel, "Service", "Tyres", "Other"], TYRE_KINDS.includes(type) ? 2 : MAIN.includes(type) ? MAIN.indexOf(type) : 3,
+    (i) => { type = i === 3 ? otherKind : i === 2 ? tyreKind : MAIN[i]; update(); }, "full");
+  // Tyres: a change of sets, or new tyres bought (and fitted at once, or later)
+  const tyreKindSeg = segmented(["Tyre change", "New tyres"], tyreKind === "tyre_buy" ? 1 : 0,
+    (i) => { tyreKind = TYRE_KINDS[i]; type = tyreKind; update(); }, "full tyre-kind");
+  const fittedSwitch = toggle(original?.type === "tyre_buy" ? original.fitted !== false : true, () => update(), "Fitted right away");
+  const fittedGroup = group(h("label", { class: "form-row switch-row" }, h("span", { class: "form-label" }, "Fitted right away"), fittedSwitch));
+  const fittedFooter = footer("On: they were put on the car when you bought them, so this also counts as your tyre change. Off: bought for later; log a tyre change when you put them on.");
 
   // a refuel: type any two of litres, price and total, and the third is worked out (shown in grey)
   const money = { litres, price, cost };
@@ -899,13 +909,16 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
   const read = () => ({ d: date.value, k: parseNumber(km.value), c: parseNumber(cost.value), l: parseNumber(litres.value), p: parseNumber(price.value) });
 
   function update() {
-    const isFuel = type === "fuel", isTyres = type === "tires", isOther = !MAIN.includes(type);
+    const isFuel = type === "fuel", isTyres = TYRE_KINDS.includes(type), isOther = !MAIN.includes(type) && !isTyres;
+    tyreKindSeg.style.display = isTyres ? "" : "none";
+    for (const el of [fittedGroup, fittedFooter]) el.style.display = type === "tyre_buy" ? "" : "none";
+    tyreCaption.textContent = type === "tyre_buy" ? "WHICH TYRES" : "TYRES PUT ON";
     kindGroup.style.display = isOther ? "" : "none";
     for (const el of [litresRow, priceRow, fullGroup, fullFooter]) el.style.display = isFuel ? "" : "none";
     photoBox.style.display = isFuel && !kwh ? "" : "none";
     for (const el of [tyreCaption, tyreSeg, tyreFooter]) el.style.display = isTyres ? "" : "none";
     for (const el of [photoCaption, photoGrid, photoFooter]) el.style.display = isFuel ? "none" : "";
-    photoCaption.textContent = ["service", "repair"].includes(type) ? "INVOICE PHOTOS" : "PHOTOS";
+    photoCaption.textContent = ["service", "repair", "tyre_buy"].includes(type) ? "INVOICE PHOTOS" : "PHOTOS";
     costLabel.textContent = isFuel ? "Total" : "Cost";
     moneyCaption.textContent = isFuel ? (kwh ? "CHARGING" : "FUEL") : "COST";
     if (!isFuel) for (const k of ["litres", "price"]) if (auto[k]) setAuto(k, null);
@@ -927,7 +940,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
     cost.classList.toggle("invalid", costBad);
     litres.classList.toggle("invalid", litresBad);
     price.classList.toggle("invalid", priceBad);
-    const needKm = NEEDS_KM.has(type);
+    const needKm = NEEDS_KM.has(type) || (type === "tyre_buy" && fittedSwitch.input.checked);
     const ok = dateOk && !kmBad && !costBad && !litresBad && !priceBad && (!needKm || k !== null);
     api?.setRight({ disabled: !ok });
 
@@ -1028,7 +1041,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
 
   const body = h("div", { class: "form" },
     ctx.data.cars.length > 1 ? footer(`For ${carTitle(car)}`) : null,
-    caption("WHAT"), typeSeg, kindGroup,
+    caption("WHAT"), typeSeg, kindGroup, tyreKindSeg,
     caption("WHEN AND HOW FAR"),
     group(h("label", { class: "form-row" }, h("span", { class: "form-label" }, "Date"), date), kmRow),
     kmFooter,
@@ -1037,7 +1050,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
     group(litresRow, priceRow, costRow),
     costFooter,
     fullGroup, fullFooter,
-    tyreCaption, tyreSeg, tyreFooter,
+    tyreCaption, tyreSeg, tyreFooter, fittedGroup, fittedFooter,
     photoCaption, photoGrid, photoFooter,
     caption("NOTE"),
     group(h("div", { class: "note-wrap" }, note)),
@@ -1046,10 +1059,12 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
 
   function save(sh) {
     const { d, k, c, l } = read();
-    if (!DATE_RX.test(d) || (NEEDS_KM.has(type) && k === null)) return;
+    const needKm = NEEDS_KM.has(type) || (type === "tyre_buy" && fittedSwitch.input.checked);
+    if (!DATE_RX.test(d) || (needKm && k === null)) return;
     const isFuel = type === "fuel";
     const log = { id: original ? original.id : newLogId(), date: d, type, km: k, cost: c === null ? null : Math.round(c * 100) / 100,
-      litres: isFuel ? l : null, full: isFuel ? fullSwitch.input.checked : null, tires: type === "tires" ? tires : null,
+      litres: isFuel ? l : null, full: isFuel ? fullSwitch.input.checked : null, tires: TYRE_KINDS.includes(type) ? tires : null,
+      fitted: type === "tyre_buy" ? fittedSwitch.input.checked : null,
       photos: isFuel ? [] : photos,
       note: note.value.trim() };
     saved = true;

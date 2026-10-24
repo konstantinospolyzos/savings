@@ -11,7 +11,7 @@ const close = (actual, expected, tol = 0.01) =>
 const NBSP = " ";
 let n = 0;
 const log = (date, type, o = {}) => ({ id: `t${++n}`, date, type, km: null, cost: null, litres: null,
-  full: type === "fuel" ? true : null, tires: null, note: "", photos: [], ...o });
+  full: type === "fuel" ? true : null, tires: null, fitted: type === "tyre_buy" ? true : null, note: "", photos: [], ...o });
 
 // Jan 1 -> Jan 31 is 30 days, Jan 31 -> Mar 2 is 30 days (February 2026 has 28)
 const LOGS = [
@@ -370,7 +370,7 @@ test("CSV export", () => {
   const csv = car.carCsv([log("2026-04-01", "tires", { km: 12000, cost: 600, tires: "summer", note: "Changed, \"rims\"" }),
     log("2026-04-02", "fuel", { km: 12000, litres: 40, cost: 760 }), log("2026-04-20", "fuel", { km: 12600, litres: 39, cost: 741 })]);
   const lines = csv.replace("\uFEFF", "").split("\r\n");
-  assert.equal(lines[0], "Date,Type,Odometer (km),Cost (SEK),Litres,Price per litre (SEK),Full tank,l/100 km,Fuel cost per km (SEK),Tyres put on,Note");
+  assert.equal(lines[0], "Date,Type,Odometer (km),Cost (SEK),Litres,Price per litre (SEK),Full tank,l/100 km,Fuel cost per km (SEK),Tyre set,Note");
   assert.equal(lines[1], '2026-04-01,Tyre change,12000,600,,,,,,Summer,"Changed, ""rims"""');
   assert.equal(lines[3], "2026-04-20,Refuel,12600,741,39,19,yes,6.5,1.24,,");
 });
@@ -415,4 +415,42 @@ test("vehicle tax is its own kind of cost", () => {
   const s = car.carSummary(c, day(2026, 10, 24));
   assert.equal(s.by_type.tax, 1406);
   assert.match(car.carCsv(c.logs), /2026-03-10,Vehicle tax,,1406,/);
+});
+
+test("new tyres: their own cost, and a tyre change too when they're fitted right away", () => {
+  const logs = [log("2025-11-01", "tires", { km: 10000, cost: 500, tires: "studded" }),
+    log("2026-04-10", "tires", { km: 12000, cost: 700, tires: "summer" }),
+    log("2026-10-20", "tyre_buy", { km: 15000, cost: 8000, tires: "studded" })];
+  const t = car.tyreStatus(logs, day(2026, 10, 24), 15100);
+  assert.equal(t.on, "studded");                                         // bought and fitted: they're on now
+  assert.equal(t.last.type, "tyre_buy");
+  assert.equal(t.changes.length, 3);
+  assert.equal(t.km_on, 100);
+  assert.equal(t.avg_cost, 600);                                          // a swap costs 600; the tyres aren't in it
+  assert.equal(t.priced_changes, 2);
+  // bought for later: the summer tyres are still on, and it isn't a change
+  const later = car.tyreStatus([...logs.slice(0, 2), { ...logs[2], fitted: false, km: null }], day(2026, 10, 24), 15100);
+  assert.equal(later.on, "summer");
+  assert.equal(later.changes.length, 2);
+  assert.equal(later.tone, "warn");                                       // still time for winter tyres
+  const by = car.costsByType(logs);
+  assert.equal(by.tyre_buy, 8000);
+  assert.equal(by.tires, 1200);
+  assert.equal(car.TYPE.tyre_buy.costName, "New tyres");
+  assert.equal(car.NEEDS_KM.has("tyre_buy"), false);                     // the odometer only when they're fitted
+});
+
+test("data file: new tyres keep which set and whether they were fitted", () => {
+  const c = car.normalizeCar({ logs: [
+    { id: "a", date: "2026-10-20", type: "tyre_buy", km: 15000, cost: 8000, tires: "winter" },
+    { id: "b", date: "2026-10-21", type: "tyre_buy", cost: 7000, tires: "studded", fitted: false },
+    { id: "c", date: "2026-10-22", type: "tyre_buy", tires: "slicks", fitted: "yes" },
+    { id: "d", date: "2026-10-23", type: "tires", km: 15100, tires: "summer", fitted: false },
+  ] });
+  assert.deepEqual(c.logs.map((l) => [l.type, l.tires, l.fitted]),
+    [["tyre_buy", "winter", true], ["tyre_buy", "studded", false], ["tyre_buy", null, true], ["tires", "summer", null]]);
+  assert.deepEqual(normalize(JSON.parse(JSON.stringify({ entries: [], cars: [c] }))).cars[0].logs, c.logs);
+  const lines = car.carCsv(c.logs).replace("\uFEFF", "").split("\r\n");
+  assert.equal(lines[1], '2026-10-20,New tyres,15000,8000,,,,,,"Winter, non-studded (fitted)",');
+  assert.equal(lines[2], '2026-10-21,New tyres,,7000,,,,,,"Winter, studded (not fitted)",');
 });
