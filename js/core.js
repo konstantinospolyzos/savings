@@ -397,7 +397,9 @@ export function incomeAnalysis(entries) {
     yoy = sum(recent.map((e) => e.income_sek)) / sum(earlier.map((e) => e.income_sek)) - 1;
   const top = last12.reduce((a, b) => (b.income_sek > a.income_sek ? b : a));
   const low = last12.reduce((a, b) => (b.income_sek < a.income_sek ? b : a));
-  return { avg: mean(last12.map((e) => e.income_sek)), n: last12.length, latest: entries.at(-1), top, low, yoy };
+  // In the second currency, each month at its own logged rate.
+  const avg_eur = mean(last12.map((e) => e.income_sek * e.sek_to_eur));
+  return { avg: mean(last12.map((e) => e.income_sek)), avg_eur, n: last12.length, latest: entries.at(-1), top, low, yoy };
 }
 
 export function rateForMonth(entries, month) {

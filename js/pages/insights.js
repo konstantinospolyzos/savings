@@ -192,15 +192,19 @@ function incomeCard(inc) {
   const last = inc.latest;
   const d = inc.avg ? last.income_sek / inc.avg - 1 : 0;
   const note = inc.top.comment;
+  // Second currency under each amount (each month at its own logged rate); nothing extra with a single currency.
+  const withEur = (text, e) => CUR.single ? text
+    : [text, h("div", { class: "kv-sub" }, `≈ ${fmtEur(e.income_sek * e.sek_to_eur)}`)];
   return card(head("Income"),
     h("div", { class: "block-value amt" }, fmtSek(inc.avg)),
+    CUR.single ? null : h("div", { class: "block-sub amt" }, `≈ ${fmtEur(inc.avg_eur)}`),
     h("div", { class: "muted" }, `average per month, last ${inc.n} months`),
     h("div", { class: "hairline" }),
     h("div", { class: "kv-list" },
-      kv("Latest month", `${fmtSek(last.income_sek)}  (${signedPct(d)} vs average)`),
+      kv("Latest month", withEur(`${fmtSek(last.income_sek)}  (${signedPct(d)} vs average)`, last)),
       kv("Last 3 months vs a year earlier", inc.yoy === null ? "needs 15 months of logs" : signedPct(inc.yoy, 1), { amt: inc.yoy !== null }),
-      kv("Highest month", `${mShort(inc.top.month)}  ·  ${fmtSek(inc.top.income_sek)}`),
-      kv("Lowest month", `${mShort(inc.low.month)}  ·  ${fmtSek(inc.low.income_sek)}`)),
+      kv("Highest month", withEur(`${mShort(inc.top.month)}  ·  ${fmtSek(inc.top.income_sek)}`, inc.top)),
+      kv("Lowest month", withEur(`${mShort(inc.low.month)}  ·  ${fmtSek(inc.low.income_sek)}`, inc.low))),
     note ? h("div", { class: "hint note-text" }, `${mShort(inc.top.month)}: “${shortNote(note, 110)}”`) : null);
 }
 
