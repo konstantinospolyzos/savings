@@ -9,7 +9,7 @@ import { renderInsights } from "./pages/insights.js";
 import { renderWelcome } from "./pages/welcome.js";
 import { openMonthSheet } from "./pages/month.js";
 import { openSettings } from "./pages/settings.js";
-import { renderCar, renderCarLog, openCarLogSheet } from "./pages/car.js";
+import { renderCar, renderCarLog, openNewCarLog, carHeading } from "./pages/car.js";
 
 const TABS = [
   { key: "overview", title: "Overview", icon: "overview", render: renderOverview },
@@ -19,7 +19,7 @@ const TABS = [
 ];
 // The car monitor: its own section, opened from Settings. "Savings" goes back to the tab you were on.
 const CAR_TABS = [
-  { key: "car", title: "Car", icon: "car", render: renderCar },
+  { key: "car", title: "Car", icon: "car", render: renderCar, heading: carHeading },
   { key: "car-log", title: "Log", icon: "history", render: renderCarLog },
   { key: "savings", title: "Savings", icon: "euro", exit: true },
 ];
@@ -70,8 +70,8 @@ async function confirmReplace(data, name = "") {
     buttons: [{ text: "Cancel", value: false, style: "cancel" }, { text: "Replace", value: true, style: "bold" }],
   });
   if (!ok) return false;
-  // a desktop file has no car logs: keep the ones already in the app
-  if (!data.car?.logs?.length && store.data.car?.logs?.length) data = { ...data, car: store.data.car };
+  // a desktop file has no cars: keep the ones already in the app
+  if (!data.cars?.length && store.data.cars?.length) data = { ...data, cars: store.data.cars };
   store.replaceAll(data);
   toast(`✓  Imported ${data.entries.length} month${data.entries.length !== 1 ? "s" : ""}`);
   if (store.mode === "drive" && !store.drive.tokenValid()) store.syncFromTap();
@@ -160,7 +160,7 @@ function render() {
   const tab = ALL_TABS.find((t) => t.key === current);
   const ctx = context();
   const [subtitle, ...content] = tab.render(ctx);
-  const title = tab.key === "car" && store.data.car?.name ? store.data.car.name : tab.title;
+  const title = tab.heading ? tab.heading(ctx) : tab.title;
   navTitle.textContent = title;
   addBtn.setAttribute("aria-label", inCar() ? "Add a car log" : "Add a month");
   statusPill = h("button", { type: "button", class: "status-pill" });
@@ -179,7 +179,7 @@ function render() {
 // Start
 // ---------------------------------------------------------------------------
 document.getElementById("settings-btn").addEventListener("click", () => store.ready && openSettings(context()));
-const addNew = () => (inCar() ? openCarLogSheet(context(), null) : openMonthSheet(context(), null));
+const addNew = () => (inCar() ? openNewCarLog(context()) : openMonthSheet(context(), null));
 addBtn.addEventListener("click", () => store.ready && addNew());
 privacyBtn.addEventListener("click", () => setPrivacy(!store.pref("privacy", false), true));
 syncBtn.addEventListener("click", () => {

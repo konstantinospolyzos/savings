@@ -1,14 +1,15 @@
-// Car monitor pages: Car (odometer, averages, tyres, service, charts, costs) and Log (every visit),
-// plus the sheets to add or edit a log and the car's details.
+// Car monitor pages: Car (odometer, averages, tyres, service, inspection, charts, fuel price, costs,
+// details) and Log (every visit), plus the sheets to add or edit a log and a car.
 import { h, chip, dot, segmented, splitBar, kv, icon, sheet, group, caption, footer, alertBox, toast, saveFile, selectRow } from "../ui.js";
 import { chart } from "../charts.js";
 import {
   COLORS, CUR, MONTHS, WEEKDAYS, localSym, fmtSek, fmtMoney, fmtAxisSek, mLong, mIndex, monthOf, addMonths, isoDay,
-  daysBetween, todayDate, weekday, parseNumber, plainNumber, pct, plural, shortNote,
+  daysBetween, todayDate, weekday, parseNumber, plainNumber, pct, plural, shortNote, mean, inSweden,
 } from "../core.js";
 import {
-  CAR_TYPES, TYPE, NEEDS_KM, TYRE_SETS, carSummary, monthlyKm, monthlyCosts, previousReading, fuelStats, byDateKm,
-  fmtKm, fmtKmSigned, fmtPerKm, fmtAxisKm, monthPos, parseDay, newLogId, carCsv,
+  CAR_TYPES, TYPE, NEEDS_KM, TYRE_SETS, FUELS, FUEL_NAME, carSummary, monthlyKm, monthlyCosts, previousReading, fuelStats,
+  byDateKm, fmtKm, fmtKmSigned, fmtPerKm, fmtAxisKm, monthPos, parseDay, newLogId, carCsv, emptyCar, carTitle, carLine,
+  energy, priceSummary, paidPrices,
 } from "../car.js";
 import { store } from "../store.js";
 import { statCard } from "./overview.js";
@@ -16,9 +17,12 @@ import { statCard } from "./overview.js";
 const DAY_MS = 86400000;
 const TYRE_ON = { summer: "Summer tyres on", studded: "Studded winter tyres on", winter: "Non-studded winter tyres on" };
 const OTHER_KINDS = [["inspection", "Inspection (besiktning)"], ["repair", "Repair"], ["other", "Other"]];
+const RULE_TEXT = { first: "36 months after first registration", second: "24 months after the first inspection", later: "14 months after the last one" };
 const card = (...children) => h("div", { class: "card" }, children);
 const head = (title, sub = null, right = null) => h("div", { class: "card-head" },
   h("div", { class: "card-head-text" }, h("div", { class: "card-title" }, title), sub ? h("div", { class: "card-sub" }, sub) : null), right);
+const actions = (...buttons) => h("div", { class: "card-actions" }, buttons);
+const btn = (text, onclick, kind = "tinted") => h("button", { type: "button", class: `btn ${kind} small`, onclick }, text);
 
 /** "24 Oct", or "24 Oct 2025" for another year */
 function dayText(iso, today = todayDate()) {
@@ -30,7 +34,36 @@ const dayLong = (iso) => { const d = parseDay(iso); return `${WEEKDAYS[weekday(d
 const round100 = (v) => Math.round(v / 100) * 100;
 const daysWord = (n) => `${n} day${n !== 1 ? "s" : ""}`;
 const monthsOrDays = (n) => (n > 60 ? `${Math.round(n / 30.4375)} months` : daysWord(n));
+const inDays = (n) => (n <= 0 ? "today" : n === 1 ? "tomorrow" : `in ${monthsOrDays(n)}`);
 const syncTap = () => { if (store.mode === "drive" && !store.drive.tokenValid()) store.syncFromTap(); };
+const typeName = (type, en) => (type === "fuel" ? en.refuel : TYPE[type].name);
+const costName = (type, en) => (type === "fuel" && en.unit === "kWh" ? "Charging" : TYPE[type].costName);
+const perUnit = (v, en) => `${fmtMoney(CUR.local, v, 2)}/${en.unit}`;
+
+// ---------------------------------------------------------------------------
+// Which car: remembered on this device
+// ---------------------------------------------------------------------------
+const PREF = "car_id";
+export function selectedCar(data) {
+  const cars = data.cars || [];
+  const id = store.pref(PREF, null);
+  return cars.find((c) => c.id === id) || cars[0] || null;
+}
+export const carHeading = (ctx) => { const c = selectedCar(ctx.data); return c ? carTitle(c) : "Car"; };
+
+function carPicker(ctx, current) {
+  const cars = ctx.data.cars;
+  if (cars.length < 2) return null;
+  const pick = (id) => { store.setPref(PREF, id); ctx.refresh(); };   // the picker sits at the top, so the scroll can stay
+  if (cars.length <= 3) return segmented(cars.map(carTitle), cars.indexOf(current), (i) => pick(cars[i].id), "full car-picker");
+  return group(selectRow("Car", cars.map((c) => [c.id, carTitle(c)]), current.id, pick));
+}
+
+/** + in the navigation bar */
+export function openNewCarLog(ctx) {
+  const car = selectedCar(ctx.data);
+  return car ? openCarLogSheet(ctx, car, null) : openCarSheet(ctx, null);
+}
 
 export function typeBadge(type, size = 32) {
   return h("span", { class: "car-badge", style: { background: TYPE[type].color, width: `${size}px`, height: `${size}px` } },
@@ -49,13 +82,22 @@ function suggestedTyres(t, today) {
 // ---------------------------------------------------------------------------
 // Car page
 // ---------------------------------------------------------------------------
-function emptyState(ctx) {
+function noCarState(ctx) {
+  return h("div", { class: "card empty-state" },
+    h("span", { class: "car-icon" }, icon("car", 40)),
+    h("div", { class: "empty-title" }, "Add your car"),
+    h("div", { class: "empty-text" }, "Start with the basics: make, model, registration number and when it was first registered. Then log the odometer every time you refuel or service it. You can add more cars later and switch between them."),
+    h("button", { class: "btn primary", type: "button", onclick: () => openCarSheet(ctx, null) }, "+  Add your car"));
+}
+
+function noLogsCard(ctx, car) {
+  const en = energy(car);
   return h("div", { class: "card empty-state" },
     h("span", { class: "car-icon" }, icon("car", 40)),
     h("div", { class: "empty-title" }, "No logs yet"),
-    h("div", { class: "empty-text" }, "Log the odometer every time you refuel or service the car, and what it cost. The app draws your mileage and costs, works out the averages and reminds you about tyre changes and services."),
-    h("button", { class: "btn primary", type: "button", onclick: () => openCarLogSheet(ctx, null, { type: "fuel" }) }, "+  Log a refuel"),
-    h("button", { class: "btn plain", type: "button", onclick: () => openCarLogSheet(ctx, null, { type: "service" }) }, "Log a service or tyre change"));
+    h("div", { class: "empty-text" }, `Log the odometer every time you ${en.unit === "kWh" ? "charge" : "refuel"} or service the car, and what it cost. The app draws your mileage and costs, works out the averages and reminds you about tyres, services and inspections.`),
+    h("button", { class: "btn primary", type: "button", onclick: () => openCarLogSheet(ctx, car, null, { type: "fuel" }) }, `+  Log ${en.unit === "kWh" ? "a charge" : "a refuel"}`),
+    h("button", { class: "btn plain", type: "button", onclick: () => openCarLogSheet(ctx, car, null, { type: "service" }) }, "Log a service or tyre change"));
 }
 
 function odoHero(sum, today) {
@@ -74,7 +116,7 @@ function odoHero(sum, today) {
 
 function stats(sum, today) {
   const since = (iso) => `since ${dayText(iso, today)}`;
-  const cards = [
+  return h("div", { class: "stats" },
     statCard(`DRIVEN IN ${today.getFullYear()}`, COLORS.blue, fmtKm(sum.this_year),
       sum.this_year_from ? since(sum.this_year_from) : "since 1 January",
       sum.per_year !== null ? `≈ ${fmtKm(round100(sum.per_year))} a year` : ""),
@@ -86,16 +128,27 @@ function stats(sum, today) {
       `${fmtSek(sum.costs)} in total`, "flat", "vc"),
     statCard("COST PER KM", COLORS.purple, sum.cost_per_km !== null ? fmtPerKm(sum.cost_per_km) : "—",
       sum.cost_per_km !== null ? "fuel included" : "needs 100 km of readings",
-      sum.cost_per_km_ex_fuel !== null && sum.by_type.fuel > 0 ? `${fmtPerKm(sum.cost_per_km_ex_fuel)} ex. fuel` : "", "flat", "vc"),
-  ];
-  return h("div", { class: "stats" }, cards);
+      sum.cost_per_km_ex_fuel !== null && sum.by_type.fuel > 0 ? `${fmtPerKm(sum.cost_per_km_ex_fuel)} ex. fuel` : "", "flat", "vc"));
 }
 
 const TONE_CHIP = { up: "All good", warn: "Soon", down: "Change now" };
 
-function tyreCard(sum, today, ctx) {
-  const t = sum.tyres;
+function tyreCard(car, sum, today, ctx) {
+  const t = sum.tyres, d = sum.tyre_dates;
   const label = t.tone === "warn" && t.days_left !== null ? `${daysWord(t.days_left)} left` : TONE_CHIP[t.tone];
+  // the three dates of the Swedish tyre year; the one for your next change is highlighted
+  const short = (iso) => { const x = parseDay(iso); return `${x.getDate()} ${MONTHS[x.getMonth()].slice(0, 3)}`; };
+  const cell = (cap, value, sub, next) => h("div", { class: `tdate ${next ? "next" : ""}` },
+    h("div", { class: "caption" }, cap), h("div", { class: "tdate-value" }, value), h("div", { class: "tdate-sub" }, sub));
+  const toWinter = t.on === "summer" || (!t.on && !d.summer_now);
+  const dates = h("div", { class: "tyre-dates" },
+    d.winter_now ? cell("Winter", "Needed now", `until ${short(d.winter_until)}`, toWinter)
+      : cell("Winter", `by ${short(d.winter_from)}`, inDays(d.winter_days), toWinter),
+    d.summer_now ? cell("Summer", "Fine now", "until 30 Nov", false)
+      : cell("Summer", `from ${short(d.summer_from)}`, inDays(d.summer_days), Boolean(t.on && t.on !== "summer")),
+    !d.studs_now ? cell("Studs", `from ${short(d.studs_from)}`, inDays(d.studs_days), false)
+      : d.summer_now ? cell("Studs", `off by ${short(d.studs_until)}`, `${daysWord(d.studs_days)} left`, t.on === "studded")
+        : cell("Studs", "Allowed now", `until ${short(d.studs_until)}`, false));
   const rows = [];
   if (t.last) {
     rows.push(kv("Changed", `${dayText(t.last.date, today)}${t.last.km !== null ? `  ·  ${fmtKm(t.last.km)}` : ""}`, { amt: false }));
@@ -103,25 +156,24 @@ function tyreCard(sum, today, ctx) {
     if (t.avg_cost !== null) rows.push(kv(`Average change (${plural(t.changes.filter((l) => l.cost > 0).length, "time")})`, fmtSek(t.avg_cost)));
   }
   return card(head("Tyres", t.on ? TYRE_ON[t.on] : null, label ? chip(label, t.tone) : null),
-    h("div", { class: `status-title tone-text-${t.tone === "flat" ? "flat" : t.tone}` }, t.title),
+    h("div", { class: `status-title tone-text-${t.tone}` }, t.title),
     h("div", { class: "muted" }, t.detail),
+    dates,
+    rows.length ? h("div", { class: "hairline" }) : null,
     rows.length ? h("div", { class: "kv-list" }, rows) : null,
-    h("div", { class: "card-actions" },
-      h("button", { type: "button", class: "btn tinted small", onclick: () => openCarLogSheet(ctx, null, { type: "tires", tires: suggestedTyres(t, today) }) },
-        "+  Log a tyre change")));
+    actions(btn("+  Log a tyre change", () => openCarLogSheet(ctx, car, null, { type: "tires", tires: suggestedTyres(t, today) }))));
 }
 
 function serviceCard(car, sum, today, ctx) {
   const s = sum.service;
-  const actions = h("div", { class: "card-actions" },
-    h("button", { type: "button", class: "btn tinted small", onclick: () => openCarLogSheet(ctx, null, { type: "service" }) }, "+  Log a service"),
-    h("button", { type: "button", class: "btn plain small", onclick: () => openCarDetails(ctx) }, s.set ? "Change interval" : "Set interval"));
+  const buttons = actions(btn("+  Log a service", () => openCarLogSheet(ctx, car, null, { type: "service" })),
+    btn(s.set ? "Change interval" : "Set interval", () => openCarSheet(ctx, car), "plain"));
   if (!s.last) {
     return card(head("Service"),
       h("div", { class: "muted" }, s.set
         ? "Log your last service and the app works out when the next one is due."
         : "Log your last service, and set how often the car should be serviced (your service book says, e.g. every 15 000 km or 12 months), to see when the next one is due."),
-      actions);
+      buttons);
   }
   // whichever limit comes first: the kilometres (at the pace you drive) or the months
   let title, when = null, tone = s.tone;
@@ -146,11 +198,39 @@ function serviceCard(car, sum, today, ctx) {
     when ? h("div", { class: "muted" }, when) : null,
     !s.set ? h("div", { class: "muted" }, "Set how often the car should be serviced to get a reminder.") : null,
     h("div", { class: "kv-list" }, rows),
-    actions);
+    buttons);
+}
+
+function inspectionCard(car, sum, today, ctx) {
+  const s = sum.inspection;
+  const buttons = actions(btn("+  Log an inspection", () => openCarLogSheet(ctx, car, null, { type: "inspection" })),
+    !car.first_registered ? btn("Add first registration", () => openCarSheet(ctx, car), "plain") : null);
+  if (!s.known) {
+    return card(head("Inspection"),
+      h("div", { class: "muted" }, s.needs === "last"
+        ? "Log the car's last inspection (besiktning) and the app works out when the next one is due."
+        : "Log the car's last inspection (besiktning), or add the month it was first registered if it's under 3 years old, to see when the next one is due."),
+      buttons);
+  }
+  const over = s.days_left < 0;
+  const rows = [];
+  if (s.last) rows.push(kv("Last inspection", `${dayText(s.last.date, today)}${s.last.km !== null ? `  ·  ${fmtKm(s.last.km)}` : ""}`, { amt: false }));
+  rows.push(kv("Rule", RULE_TEXT[s.rule], { amt: false }));
+  if (s.reg) rows.push(kv("First registered", mLong(s.reg), { amt: false }));
+  const chips = { down: "Overdue", warn: "Soon", up: "On track" };
+  return card(head("Inspection", "Kontrollbesiktning", chip(chips[s.tone], s.tone)),
+    h("div", { class: `status-title tone-text-${s.tone === "up" ? "flat" : s.tone}` },
+      over ? `Overdue since ${dayText(s.due, today)}` : `${s.rule === "first" ? "First inspection" : "Next inspection"} by ${dayText(s.due, today)}`),
+    h("div", { class: "muted" }, over
+      ? "The car isn't allowed on the road (körförbud) until it has been inspected, except to drive it to the inspection or a workshop."
+      : `${monthsOrDays(s.days_left)} left: the last day of ${mLong(s.due_month)}. You can go earlier; the next deadline then counts from that month.`),
+    h("div", { class: "kv-list" }, rows),
+    buttons);
 }
 
 // ---------------------------------------------------------------------------
-function chartCard(sum, today) {
+function chartCard(car, sum, today) {
+  const en = energy(car);
   const st = { view: 0, range: 1, ...(store.pref("car_chart", {}) || {}) };
   const save = () => store.setPref("car_chart", st);
   const body = h("div", { class: "chart-body" });
@@ -173,7 +253,7 @@ function chartCard(sum, today) {
           const p = pts[i], q = sum.points[sum.points.indexOf(p) - 1];
           const rows = [["Odometer", fmtKm(p.km), COLORS.blue]];
           if (q) rows.push(["Since the reading before", `${fmtKmSigned(p.km - q.km)} in ${daysWord(daysBetween(parseDay(q.date), parseDay(p.date)))}`, null]);
-          const that = sum.logs.filter((l) => l.date === p.date).map((l) => TYPE[l.type].name);
+          const that = sum.logs.filter((l) => l.date === p.date).map((l) => typeName(l.type, en));
           return { title: dayLong(p.date), rows, note: that.length ? [...new Set(that)].join(", ") : null };
         },
       }));
@@ -208,14 +288,14 @@ function chartCard(sum, today) {
       const used = CAR_TYPES.filter(([k]) => mc.some((m) => m.byType[k] > 0));
       const avg = sum.cost_per_month;
       const lines = avg ? [{ value: avg, color: COLORS.gray, dotted: true, label: `Average ${fmtSek(avg)}` }] : [];
-      legend.append(...used.map(([, , costName, color]) => h("span", { class: "legend-item" }, dot(color), costName)),
+      legend.append(...used.map(([k, , , color]) => h("span", { class: "legend-item" }, dot(color), costName(k, en))),
         ...lines.map((l) => h("span", { class: "legend-item" }, h("span", { class: "line-swatch dotted", style: { borderColor: l.color } }), h("span", { class: "amt" }, l.label))));
       body.replaceChildren(chart({
         months: mc.map((m) => m.month), kind: "bar", format: fmtAxisSek, zeroBased: true, lineLabels: false, label: "Costs per month",
         series: [{ color: COLORS.orange, colors, values: mc.map((m) => m.total) }], lines,
         tooltip: (i) => {
           const m = mc[i];
-          const rows = CAR_TYPES.filter(([k]) => m.byType[k] > 0).map(([k, , costName, color]) => [costName, fmtSek(m.byType[k]), color]);
+          const rows = CAR_TYPES.filter(([k]) => m.byType[k] > 0).map(([k, , , color]) => [costName(k, en), fmtSek(m.byType[k]), color]);
           if (rows.length > 1) rows.push(["Total", fmtSek(m.total), null]);
           if (!rows.length) rows.push(["No costs logged", "", null]);
           const notes = m.items.map((l) => l.note).filter(Boolean);
@@ -234,26 +314,126 @@ function chartCard(sum, today) {
 }
 
 // ---------------------------------------------------------------------------
-function costsCard(sum, today) {
+// Fuel price: weekly Swedish average from data/fuel-prices.json (updated by a GitHub Action)
+// ---------------------------------------------------------------------------
+const FUEL_KEY = "savingsTracker.fuelPrices";
+let fuelData;
+let fuelFetch = null;
+function cachedPrices() {
+  if (fuelData === undefined) {
+    fuelData = null;
+    try { const v = JSON.parse(localStorage.getItem(FUEL_KEY)); if (v?.prices?.["95"]?.length) fuelData = v; } catch { /* no copy */ }
+  }
+  return fuelData;
+}
+/** Resolves true when newer prices arrived. At most one request a minute. */
+function fetchPrices() {
+  if (!fuelFetch) {
+    fuelFetch = fetch("data/fuel-prices.json", { cache: "no-cache" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d) => {
+        if (!d?.prices?.["95"]?.length) throw new Error("No prices in the file");
+        const changed = !cachedPrices() || fuelData.updated !== d.updated;
+        fuelData = d;
+        try { localStorage.setItem(FUEL_KEY, JSON.stringify(d)); } catch { /* full or blocked */ }
+        return changed;
+      });
+    fuelFetch.finally(() => setTimeout(() => { fuelFetch = null; }, 60000)).catch(() => {});
+  }
+  return fuelFetch;
+}
+
+const fmtL = (v) => `${fmtMoney(CUR.local, v, 2)}/l`;
+const signedKr = (v) => `${v >= 0 ? "+" : "−"}${fmtMoney(CUR.local, Math.abs(v), 2)}`;
+const fmtAxisPrice = (v) => `${Number.isInteger(v) ? v : v.toFixed(1)} kr`;
+
+function fuelPriceContent(car, sum, today, key, data) {
+  const label = key === "diesel" ? "Diesel" : "Petrol 95";
+  const title = h("div", { class: "card-title" }, `${label} price`);
+  if (!data) return [title, h("div", { class: "muted" }, "Getting the latest prices…")];
+  const series = data.prices[key] || [];
+  const ps = priceSummary(series, today);
+  if (!ps) return [title, h("div", { class: "muted" }, "No prices in the file yet.")];
+  const paid = paidPrices(sum.logs, series);
+  const st = { range: 0, ...(store.pref("fuel_chart", {}) || {}) };
+  const RANGES = [365, 5 * 365 + 1, null];
+  const chips = [];
+  if (ps.change_week !== null) chips.push(chip(`${signedKr(ps.change_week)} vs the week before`, ps.change_week > 0.005 ? "down" : ps.change_week < -0.005 ? "up" : "flat"));
+  if (ps.change_year !== null) chips.push(chip(`${signedKr(ps.change_year)} vs a year ago`, "flat"));
+  const diffs = paid.filter((p) => p.week).map((p) => p.price - p.week[1]);
+  if (diffs.length) {
+    const d = mean(diffs);
+    chips.push(chip(Math.abs(d) < 0.05 ? "You pay about the average" : `You pay ${fmtMoney(CUR.local, Math.abs(d), 2)}/l ${d < 0 ? "less" : "more"} than average`,
+      d < -0.05 ? "up" : d > 0.05 ? "down" : "flat"));
+  }
+  const body = h("div", { class: "chart-body" });
+  const legend = h("div", { class: "legend" });
+  function draw() {
+    const days = RANGES[st.range];
+    const vis = days ? series.filter(([d]) => daysBetween(parseDay(d), today) <= days) : series;
+    const dots = paid.map((p) => ({ x: monthPos(p.log.date), y: p.price, color: COLORS.blue }));
+    legend.replaceChildren(h("span", { class: "legend-item" }, dot(COLORS.orange), "Sweden, average"),
+      paid.length ? h("span", { class: "legend-item" }, dot(COLORS.blue), "What you paid") : null);
+    if (vis.length < 2) { body.replaceChildren(h("div", { class: "chart-empty" }, "Not enough prices for this range")); return; }
+    body.replaceChildren(chart({
+      xs: vis.map(([d]) => monthPos(d)), kind: "line", format: fmtAxisPrice, zeroBased: false, label: `${label} price`,
+      series: [{ color: COLORS.orange, values: vis.map(([, v]) => v) }], dots,
+      tooltip: (i) => {
+        const [d, v] = vis[i];
+        const end = isoDay(new Date(parseDay(d).getTime() + 6 * DAY_MS));
+        const rows = [["Average in Sweden", fmtL(v), COLORS.orange]];
+        for (const p of paid) if (p.log.date >= d && p.log.date <= end) rows.push([`You paid, ${dayText(p.log.date, today)}`, fmtL(p.price), COLORS.blue]);
+        return { title: `Week of ${dayText(d, today)}`, rows };
+      },
+    }));
+  }
+  draw();
+  const source = h("a", { href: data.link, target: "_blank", rel: "noopener" }, data.source);
+  return [
+    head(`${label} price`, `Average at the pump in Sweden, week of ${dayText(ps.latest[0], today)}`),
+    h("div", { class: "block-value" }, fmtL(ps.latest[1])),
+    ps.low !== null ? h("div", { class: "muted" }, `Last 12 months: ${fmtMoney(CUR.local, ps.low, 2)} – ${fmtL(ps.high)}, average ${fmtL(ps.avg)}`) : null,
+    chips.length ? h("div", { class: "chips" }, chips) : null,
+    h("div", { class: "chart-controls" }, segmented(["1Y", "5Y", "All"], st.range, (i) => { st.range = i; store.setPref("fuel_chart", { range: i }); draw(); }, "small")),
+    legend, body,
+    h("div", { class: "hint" }, "Monday prices, taxes included, updated every week. Source: ", source, " (CC BY 4.0)."),
+    !paid.length ? h("div", { class: "hint" }, "Log the cost and litres when you refuel to see what you paid next to the average.") : null,
+  ];
+}
+
+function fuelPriceCard(car, sum, today) {
+  const key = energy(car).priceKey;
+  if (!key || !inSweden()) return null;
+  const wrap = h("div", { class: "card chart-card fuel-card" });
+  const build = () => wrap.replaceChildren(...fuelPriceContent(car, sum, today, key, cachedPrices()).filter(Boolean));
+  build();
+  fetchPrices().then((changed) => { if (changed && wrap.isConnected) build(); })
+    .catch(() => { if (!cachedPrices() && wrap.isConnected) wrap.replaceChildren(head(`${key === "diesel" ? "Diesel" : "Petrol 95"} price`), h("div", { class: "muted" }, "Couldn't load the fuel prices. Check your connection and open the page again.")); });
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+function costsCard(car, sum, today) {
+  const en = energy(car);
   const total = sum.costs;
   const period = sum.costs_full_year ? "Last 12 months" : `Since ${dayText(sum.costs_from, today)}`;
   const f = sum.fuel;
   const fuelRows = [];
   if (f.per100 !== null) {
-    fuelRows.push(kv("Fuel use", `${f.per100.toFixed(1)} l/100 km`, { amt: false }));
-    if (f.price !== null) fuelRows.push(kv("Fuel price", `${fmtMoney(CUR.local, f.price, 2)}/l`));
-    if (f.cost100 !== null) fuelRows.push(kv("Fuel per 100 km", fmtSek(f.cost100)));
+    fuelRows.push(kv(en.unit === "kWh" ? "Energy use" : "Fuel use", `${f.per100.toFixed(1)} ${en.per100}`, { amt: false }));
+    if (f.price !== null) fuelRows.push(kv(en.unit === "kWh" ? "Price you paid" : "Fuel price you paid", perUnit(f.price, en)));
+    if (f.cost100 !== null) fuelRows.push(kv(`${en.unit === "kWh" ? "Charging" : "Fuel"} per 100 km`, fmtSek(f.cost100)));
   }
-  const fuelHint = f.per100 !== null ? "Fuel use assumes you fill the tank each time, over all your logs."
-    : f.fills ? "Add the litres when you refuel to see how much fuel the car uses." : null;
+  const fuelHint = f.per100 !== null ? `${en.unit === "kWh" ? "Energy" : "Fuel"} use assumes you fill up each time, over all your logs.`
+    : f.fills ? `Add the ${en.amount.toLowerCase()} when you ${en.unit === "kWh" ? "charge" : "refuel"} to see how much the car uses.` : null;
   if (total <= 0) {
     return card(head("Where the money goes", "Add what each visit cost to see where the money goes."),
       fuelRows.length ? h("div", { class: "kv-list" }, fuelRows) : null, fuelHint ? h("div", { class: "hint" }, fuelHint) : null);
   }
   const types = CAR_TYPES.filter(([k]) => sum.by_type[k] > 0).sort((a, b) => sum.by_type[b[0]] - sum.by_type[a[0]]);
-  const rows = types.map(([k, , costName, color]) => {
+  const rows = types.map(([k, , , color]) => {
     const v = sum.by_type[k];
-    return h("div", { class: "cost-type" }, dot(color, 9), h("span", { class: "cost-type-name" }, costName),
+    return h("div", { class: "cost-type" }, dot(color, 9), h("span", { class: "cost-type-name" }, costName(k, en)),
       h("span", { class: "cost-type-month amt" }, `${fmtSek(v / sum.costs_months)}/mo`),
       h("span", { class: "cost-type-value amt" }, fmtSek(v)), h("span", { class: "cost-type-pct" }, pct(v / total)));
   });
@@ -280,13 +460,36 @@ function yearsCard(sum, today) {
       rows));
 }
 
+function detailsCard(car, ctx) {
+  const makeModel = [car.make, car.model].filter(Boolean).join(" ");
+  const rows = [
+    car.name ? kv("Name", car.name, { amt: false }) : null,
+    kv("Make and model", makeModel || "—", { amt: false }),
+    kv("Model year", car.year ? String(car.year) : "—", { amt: false }),
+    kv("Registration", car.plate || "—", { amt: false }),
+    kv("Runs on", FUEL_NAME[car.fuel], { amt: false }),
+    kv("First registered", car.first_registered ? mLong(car.first_registered) : "—", { amt: false }),
+  ];
+  const missing = !makeModel && !car.plate;
+  return card(head("Car details", missing ? "Add the make, model and registration number." : null),
+    h("div", { class: "kv-list" }, rows.filter(Boolean)),
+    actions(btn("Edit details", () => openCarSheet(ctx, car)), btn("+  Add another car", () => openCarSheet(ctx, null), "plain")));
+}
+
 export function renderCar(ctx) {
   const today = ctx.today;
-  const sum = carSummary(ctx.data.car, today);
-  if (!sum.n) return ["Mileage, fuel, services and tyres", emptyState(ctx)];
-  const subtitle = `${plural(sum.n, "log")}  ·  latest ${dayText(sum.logs.at(-1).date, today)}`;
-  return [subtitle, odoHero(sum, today), stats(sum, today), tyreCard(sum, today, ctx), serviceCard(ctx.data.car, sum, today, ctx),
-    chartCard(sum, today), costsCard(sum, today), yearsCard(sum, today)];
+  const car = selectedCar(ctx.data);
+  if (!car) return ["Mileage, fuel, services and tyres", noCarState(ctx)];
+  const sum = carSummary(car, today);
+  const subtitle = [carLine(car), sum.n ? `${plural(sum.n, "log")}, latest ${dayText(sum.logs.at(-1).date, today)}` : "no logs yet"].filter(Boolean).join("  ·  ");
+  const picker = carPicker(ctx, car);
+  if (!sum.n) {
+    return [subtitle, picker, noLogsCard(ctx, car), tyreCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx),
+      fuelPriceCard(car, sum, today), detailsCard(car, ctx)];
+  }
+  return [subtitle, picker, odoHero(sum, today), stats(sum, today), tyreCard(car, sum, today, ctx),
+    serviceCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), chartCard(car, sum, today),
+    fuelPriceCard(car, sum, today), costsCard(car, sum, today), yearsCard(sum, today), detailsCard(car, ctx)];
 }
 
 // ---------------------------------------------------------------------------
@@ -296,17 +499,17 @@ const FILTERS = [["All", () => true], ["Refuels", (l) => l.type === "fuel"],
   ["Service & tyres", (l) => l.type === "service" || l.type === "tires"],
   ["Other", (l) => !["fuel", "service", "tires"].includes(l.type)]];
 
-function logRow(l, ctx, perFill, prevKm, today) {
+function logRow(l, ctx, car, perFill, prevKm, today, en) {
   const sub = [dayText(l.date, today), l.km !== null ? fmtKm(l.km) : null].filter(Boolean).join("  ·  ");
   const extra = [];
   if (l.type === "tires" && l.tires) extra.push(TYRE_ON[l.tires]);
-  if (l.type === "fuel" && l.litres) extra.push(`${plainNumber(l.litres, l.litres % 1 ? 1 : 0)} l`);
-  if (perFill.has(l.id)) extra.push(`${perFill.get(l.id).toFixed(1)} l/100 km`);
+  if (l.type === "fuel" && l.litres) extra.push(`${plainNumber(l.litres, l.litres % 1 ? 1 : 0)} ${en.unit}`);
+  if (perFill.has(l.id)) extra.push(`${perFill.get(l.id).toFixed(1)} ${en.per100}`);
   if (l.km !== null && prevKm !== null && l.km >= prevKm) extra.push(`${fmtKmSigned(l.km - prevKm)}`);
-  return h("button", { type: "button", class: "crow", onclick: () => openCarLogSheet(ctx, l) },
+  return h("button", { type: "button", class: "crow", onclick: () => openCarLogSheet(ctx, car, l) },
     typeBadge(l.type),
     h("div", { class: "crow-main" },
-      h("div", { class: "crow-title" }, TYPE[l.type].name),
+      h("div", { class: "crow-title" }, typeName(l.type, en)),
       h("div", { class: "crow-sub" }, sub),
       extra.length ? h("div", { class: "crow-extra" }, extra.join("  ·  ")) : null,
       l.note ? h("div", { class: "crow-note" }, l.note) : null),
@@ -315,8 +518,11 @@ function logRow(l, ctx, perFill, prevKm, today) {
 }
 
 export function renderCarLog(ctx) {
-  const logs = ctx.data.car.logs;
+  const car = selectedCar(ctx.data);
+  if (!car) return ["Every refuel, service and tyre change", noCarState(ctx)];
+  const logs = car.logs;
   const today = ctx.today;
+  const en = energy(car);
   const view = { filter: 0, ...(store.pref("car_log_view", {}) || {}) };
   const { perFill } = fuelStats(logs);
   const prevKm = new Map();
@@ -324,11 +530,13 @@ export function renderCarLog(ctx) {
   for (const l of [...logs].sort(byDateKm)) { prevKm.set(l.id, last); if (l.km !== null) last = l.km; }
   const subtitle = h("span");
   const list = h("div", { class: "history-list" });
+  const multi = ctx.data.cars.length > 1;
 
   function fill() {
     const shown = logs.filter(FILTERS[view.filter][1]).slice().sort(byDateKm).reverse();
-    subtitle.textContent = !logs.length ? "Nothing logged yet"
-      : view.filter ? `${shown.length} of ${plural(logs.length, "log")}  ·  tap one to edit it` : `${plural(logs.length, "log")}  ·  tap one to edit or delete it`;
+    const whose = multi ? `${carTitle(car)}: ` : "";
+    subtitle.textContent = !logs.length ? `${whose}nothing logged yet`
+      : view.filter ? `${whose}${shown.length} of ${plural(logs.length, "log")}  ·  tap one to edit it` : `${whose}${plural(logs.length, "log")}  ·  tap one to edit or delete it`;
     list.replaceChildren();
     if (!shown.length) {
       list.append(h("div", { class: "card empty-small" }, logs.length ? "No logs of this kind yet." : "No logs yet. Tap + to log the odometer."));
@@ -344,20 +552,23 @@ export function renderCarLog(ctx) {
       const costs = items.reduce((a, l) => a + (l.cost || 0), 0);
       list.append(h("div", { class: "year-head" }, h("div", { class: "year-title" }, year),
         h("div", { class: "year-sum" }, `${plural(items.length, "log")}${costs ? `  ·  ${fmtSek(costs)}` : ""}`)));
-      list.append(h("div", { class: "hgroup" }, items.map((l) => logRow(l, ctx, perFill, prevKm.get(l.id), today))));
+      list.append(h("div", { class: "hgroup" }, items.map((l) => logRow(l, ctx, car, perFill, prevKm.get(l.id), today, en))));
     }
   }
 
   const exportBtn = h("button", { type: "button", class: "pill-btn" }, icon("table", 15), "Export CSV");
   exportBtn.addEventListener("click", async () => {
     if (!logs.length) { toast("Nothing to export yet"); return; }
-    await saveFile(`car-${isoDay(today)}.csv`, "text/csv", carCsv(logs));
+    const slug = carTitle(car).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "car";
+    await saveFile(`${slug}-${isoDay(today)}.csv`, "text/csv", carCsv(logs));
   });
   fill();
   return [subtitle,
-    segmented(FILTERS.map(([t]) => t), view.filter, (i) => { view.filter = i; store.setPref("car_log_view", view); fill(); }, "full"),
+    carPicker(ctx, car),
+    segmented(FILTERS.map(([t]) => (t === "Refuels" ? `${en.refuel}s` : t)), view.filter, (i) => { view.filter = i; store.setPref("car_log_view", view); fill(); }, "full"),
     h("div", { class: "pill-row" },
-      h("button", { type: "button", class: "pill-btn", onclick: () => openCarDetails(ctx) }, icon("car", 15), "Car details"),
+      h("button", { type: "button", class: "pill-btn", onclick: () => openCarSheet(ctx, car) }, icon("car", 15), "Car details"),
+      h("button", { type: "button", class: "pill-btn", onclick: () => openCarSheet(ctx, null) }, icon("plus", 15), "Add a car"),
       exportBtn),
     list];
 }
@@ -369,11 +580,15 @@ function numField(placeholder, mode = "decimal") {
   return h("input", { class: "form-input", type: "text", inputmode: mode, autocomplete: "off", autocorrect: "off",
     spellcheck: "false", placeholder });
 }
+function textField(placeholder, value = "", extra = {}) {
+  return h("input", { class: "form-input", type: "text", autocomplete: "off", spellcheck: "false", placeholder, value, ...extra });
+}
 function row(labelText, input, unit = null) {
   return h("label", { class: "form-row" }, h("span", { class: "form-label" }, labelText), input,
     unit ? h("span", { class: "form-unit" }, unit) : null);
 }
 const DATE_RX = /^\d{4}-\d{2}-\d{2}$/;
+const MONTH_RX = /^\d{4}-\d{2}$/;
 const NOTE_HINTS = {
   fuel: "Optional, e.g. the station, or a trip.",
   service: "What was done: oil, filters, brakes…",
@@ -383,9 +598,10 @@ const NOTE_HINTS = {
   other: "What it was: washing, parking, a toll, a part…",
 };
 
-export function openCarLogSheet(ctx, original = null, preset = {}) {
-  const logs = ctx.data.car.logs;
+export function openCarLogSheet(ctx, car, original = null, preset = {}) {
+  const logs = car.logs;
   const today = ctx.today;
+  const en = energy(car);
   const MAIN = ["fuel", "service", "tires"];
   let type = original ? original.type : preset.type || "fuel";
   let otherKind = MAIN.includes(type) ? "other" : type;
@@ -396,12 +612,12 @@ export function openCarLogSheet(ctx, original = null, preset = {}) {
   const km = numField(latestKm >= 0 ? `Last: ${plainNumber(latestKm)}` : "e.g. 45 210", "numeric");
   const cost = numField("optional");
   const litres = numField("optional");
-  const note = h("textarea", { class: "note-input", rows: "2" });
+  const note = h("textarea", { class: "note-input", rows: "2", placeholder: "Note" });
 
   const kindRow = selectRow("What", OTHER_KINDS, otherKind, (v) => { otherKind = v; type = v; update(); });
   const kindGroup = group(kindRow);
   const kmRow = row("Odometer", km, "km");
-  const litresRow = row("Litres", litres, "l");
+  const litresRow = row(en.amount, litres, en.unit);
   const kmFooter = footer("");
   const costFooter = footer("");
   const tyreCaption = caption("TYRES PUT ON");
@@ -409,7 +625,7 @@ export function openCarLogSheet(ctx, original = null, preset = {}) {
     (i) => { tires = TYRE_SETS[i][0]; update(); }, "full");
   const tyreFooter = footer("Studded and non-studded are both winter tyres. In Sweden winter tyres are required 1 December – 31 March when the roads are wintry, and studs are allowed 1 October – 15 April.");
   const noteFooter = footer("");
-  const typeSeg = segmented(["Refuel", "Service", "Tyres", "Other"], MAIN.includes(type) ? MAIN.indexOf(type) : 3,
+  const typeSeg = segmented([en.refuel, "Service", "Tyres", "Other"], MAIN.includes(type) ? MAIN.indexOf(type) : 3,
     (i) => { type = i === 3 ? otherKind : MAIN[i]; update(); }, "full");
 
   let api = null;
@@ -420,7 +636,6 @@ export function openCarLogSheet(ctx, original = null, preset = {}) {
     kindGroup.style.display = isOther ? "" : "none";
     litresRow.style.display = isFuel ? "" : "none";
     for (const el of [tyreCaption, tyreSeg, tyreFooter]) el.style.display = isTyres ? "" : "none";
-    note.placeholder = "Note";
     noteFooter.textContent = NOTE_HINTS[type];
     validate();
   }
@@ -453,20 +668,20 @@ export function openCarLogSheet(ctx, original = null, preset = {}) {
     } else if (prev) kmFooter.textContent = `Last reading: ${fmtKm(prev.km)} on ${dayText(prev.date, today)}.${needKm ? "" : " Optional for this one."}`;
     else kmFooter.textContent = needKm ? "What the odometer shows, in kilometres." : "Optional for this one.";
 
-    // cost: price per litre and fuel use for refuels
+    // cost: price per litre (or kWh) and what the car used since the last fill-up
     if (type === "fuel") {
       const parts = [];
-      if (c > 0 && l > 0) parts.push(`${fmtMoney(CUR.local, c / l, 2)} a litre`);
+      if (c > 0 && l > 0) parts.push(`${fmtMoney(CUR.local, c / l, 2)} a ${en.unit === "kWh" ? "kWh" : "litre"}`);
       const prevFuel = dateOk ? [...logs].sort(byDateKm).reverse()
         .find((x) => x.type === "fuel" && x.km !== null && x.id !== original?.id && x.date <= d && (k === null || x.km < k)) : null;
       let odd = false;
       if (l > 0 && k !== null && prevFuel && k > prevFuel.km) {
         const use = (l / (k - prevFuel.km)) * 100;
-        odd = use > 25;
-        parts.push(odd ? `${use.toFixed(1)} l/100 km since the last refuel looks high. Check the odometer and the litres.`
-          : `${use.toFixed(1)} l/100 km since the last refuel (if you filled the tank)`);
+        odd = use > (en.unit === "kWh" ? 40 : 25);
+        parts.push(odd ? `${use.toFixed(1)} ${en.per100} since the last ${en.refuel.toLowerCase()} looks high. Check the odometer and the ${en.amount.toLowerCase()}.`
+          : `${use.toFixed(1)} ${en.per100} since the last ${en.refuel.toLowerCase()} (if you filled up)`);
       }
-      costFooter.textContent = parts.length ? parts.join("  ·  ") : "Add the litres to see the price per litre and how much fuel the car uses.";
+      costFooter.textContent = parts.length ? parts.join("  ·  ") : `Add the ${en.amount.toLowerCase()} to see the price per ${en.unit === "kWh" ? "kWh" : "litre"} and how much the car uses.`;
       costFooter.className = `section-footer ${odd ? "tone-text-warn" : ""}`;
     } else {
       costFooter.textContent = `What it cost, in ${CUR.local}. Leave it empty if you don't know.`;
@@ -486,6 +701,7 @@ export function openCarLogSheet(ctx, original = null, preset = {}) {
   }
 
   const body = h("div", { class: "form" },
+    ctx.data.cars.length > 1 ? footer(`For ${carTitle(car)}`) : null,
     caption("WHAT"), typeSeg, kindGroup,
     caption("WHEN AND HOW FAR"),
     group(h("label", { class: "form-row" }, h("span", { class: "form-label" }, "Date"), date), kmRow),
@@ -504,18 +720,18 @@ export function openCarLogSheet(ctx, original = null, preset = {}) {
     if (!DATE_RX.test(d) || (NEEDS_KM.has(type) && k === null)) return;
     const log = { id: original ? original.id : newLogId(), date: d, type, km: k, cost: c,
       litres: type === "fuel" ? l : null, tires: type === "tires" ? tires : null, note: note.value.trim() };
-    store.saveCarLog(log);
+    store.saveCarLog(car.id, log);
     sh.close();
-    toast(`✓  Saved ${TYPE[type].name.toLowerCase()}${k !== null ? `  ·  ${fmtKm(k)}` : ""}`);
+    toast(`✓  Saved ${typeName(type, en).toLowerCase()}${k !== null ? `  ·  ${fmtKm(k)}` : ""}`);
     syncTap();
   }
 
   async function remove() {
     const ok = await alertBox({ title: "Delete this log?",
-      message: `${TYPE[original.type].name} on ${dayText(original.date, today)}${original.km !== null ? `, ${fmtKm(original.km)}` : ""}. This can't be undone.`,
+      message: `${typeName(original.type, en)} on ${dayText(original.date, today)}${original.km !== null ? `, ${fmtKm(original.km)}` : ""}. This can't be undone.`,
       buttons: [{ text: "Cancel", value: false, style: "cancel" }, { text: "Delete", value: true, style: "destructive" }] });
     if (!ok) return;
-    store.deleteCarLog(original.id);
+    store.deleteCarLog(car.id, original.id);
     api.close();
     toast("Deleted the log");
     syncTap();
@@ -528,35 +744,85 @@ export function openCarLogSheet(ctx, original = null, preset = {}) {
   return api;
 }
 
-export function openCarDetails(ctx) {
-  const c = ctx.data.car;
-  const name = h("input", { class: "form-input", type: "text", autocomplete: "off", placeholder: "e.g. Volvo V60", value: c.name || "", "aria-label": "Car" });
+/** Add a car (car = null) or change its details. */
+export function openCarSheet(ctx, car = null) {
+  const isNew = !car;
+  const c = car || emptyCar();
+  const name = textField("optional, e.g. The Volvo", c.name, { "aria-label": "Name" });
+  const make = textField("e.g. Volvo", c.make, { "aria-label": "Make", autocapitalize: "words" });
+  const model = textField("e.g. V60", c.model, { "aria-label": "Model", autocapitalize: "words" });
+  const year = numField("e.g. 2019", "numeric");
+  if (c.year) year.value = String(c.year);
+  const plate = textField("e.g. ABC 123", c.plate, { "aria-label": "Registration number", autocapitalize: "characters", class: "form-input plate-input" });
+  let fuel = c.fuel;
+  const fuelRow = selectRow("Runs on", FUELS, fuel, (v) => { fuel = v; });
+  const reg = h("input", { class: "form-input date-input", type: "month", value: c.first_registered || "", placeholder: "YYYY-MM", "aria-label": "First registered" });
   const kmI = numField("e.g. 15 000", "numeric");
   const monthsI = numField("e.g. 12", "numeric");
   if (c.service_km) kmI.value = plainNumber(c.service_km);
   if (c.service_months) monthsI.value = String(c.service_months);
   let api = null;
+
+  const read = () => ({ y: parseNumber(year.value), k: parseNumber(kmI.value), m: parseNumber(monthsI.value), r: reg.value.trim() });
   const validate = () => {
-    const k = parseNumber(kmI.value), m = parseNumber(monthsI.value);
-    const kBad = Boolean(kmI.value.trim()) && !(k > 0), mBad = Boolean(monthsI.value.trim()) && !(m > 0 && m <= 120);
-    kmI.classList.toggle("invalid", kBad);
-    monthsI.classList.toggle("invalid", mBad);
-    api?.setRight({ disabled: kBad || mBad });
+    const { y, k, m, r } = read();
+    const bad = {
+      year: Boolean(year.value.trim()) && !(Number.isInteger(y) && y >= 1900 && y <= 2100),
+      km: Boolean(kmI.value.trim()) && !(k > 0),
+      months: Boolean(monthsI.value.trim()) && !(m > 0 && m <= 120),
+      reg: Boolean(r) && !MONTH_RX.test(r),
+    };
+    year.classList.toggle("invalid", bad.year);
+    kmI.classList.toggle("invalid", bad.km);
+    monthsI.classList.toggle("invalid", bad.months);
+    reg.classList.toggle("invalid", bad.reg);
+    api?.setRight({ disabled: Object.values(bad).some(Boolean) });
   };
-  for (const f of [kmI, monthsI]) f.addEventListener("input", validate);
+  for (const f of [year, kmI, monthsI, reg]) f.addEventListener("input", validate);
+  reg.addEventListener("change", validate);
+
+  const others = ctx.data.cars.length - (isNew ? 0 : 1);
   const body = h("div", { class: "form" },
-    caption("CAR"), group(row("Name", name)),
-    footer("Shown as the title of the Car page. Optional."),
-    caption("SERVICE EVERY"), group(row("Kilometres", kmI, "km"), row("or months", monthsI, "months")),
-    footer("From your service book, e.g. every 15 000 km or 12 months, whichever comes first. Fill in one or both to get a reminder on the Car page."));
-  api = sheet({ title: "Car Details", left: { text: "Cancel" }, body,
+    caption("CAR"),
+    group(row("Make", make), row("Model", model), row("Model year", year), row("Registration", plate), fuelRow),
+    footer("Runs on decides which fuel price the Car page shows, and whether you log litres or kWh."),
+    group(row("Name", name)),
+    footer("A nickname for the title of the Car page. Leave it empty to use the make and model."),
+    caption("FIRST REGISTERED"),
+    group(row("In traffic since", reg)),
+    footer("The month the car was registered for the first time (i trafik första gång), from the registration certificate. The first inspection is due 36 months after it and the second 24 months after the first."),
+    caption("SERVICE EVERY"),
+    group(row("Kilometres", kmI, "km"), row("or months", monthsI, "months")),
+    footer("From your service book, e.g. every 15 000 km or 12 months, whichever comes first. Fill in one or both to get a reminder on the Car page."),
+    !isNew ? h("button", { type: "button", class: "btn destructive-row", onclick: () => remove() }, "Delete Car") : null);
+
+  async function remove() {
+    const n = c.logs.length;
+    const ok = await alertBox({ title: `Delete ${carTitle(c)}?`,
+      message: `${n ? `Its ${plural(n, "log")} will be deleted too. ` : ""}This can't be undone.${others ? "" : " You can add a car again any time."}`,
+      buttons: [{ text: "Cancel", value: false, style: "cancel" }, { text: "Delete", value: true, style: "destructive" }] });
+    if (!ok) return;
+    if (store.pref(PREF, null) === c.id) store.setPref(PREF, null);
+    store.deleteCar(c.id);
+    api.close();
+    toast(`Deleted ${carTitle(c)}`);
+    syncTap();
+  }
+
+  api = sheet({ title: isNew ? "New Car" : "Car Details", left: { text: "Cancel" }, body,
     right: { text: "Save", bold: true, onClick: (sh) => {
-      const k = parseNumber(kmI.value), m = parseNumber(monthsI.value);
-      store.setCar({ name: name.value.trim(), service_km: k > 0 ? k : null, service_months: m > 0 ? Math.round(m) : null });
+      const { y, k, m, r } = read();
+      const next = { ...c, name: name.value.trim(), make: make.value.trim(), model: model.value.trim(),
+        year: Number.isInteger(y) ? y : null, plate: plate.value.trim(), fuel, first_registered: MONTH_RX.test(r) ? r : null,
+        service_km: k > 0 ? k : null, service_months: m > 0 ? Math.round(m) : null };
+      if (isNew) store.setPref(PREF, c.id);
+      store.saveCar(next);
       sh.close();
-      toast("✓  Saved the car details");
+      if (isNew) setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 50);   // show the new car from the top
+      toast(isNew ? `✓  Added ${carTitle(next)}` : "✓  Saved the car details");
       syncTap();
     } } });
   validate();
+  if (isNew && matchMedia("(pointer: fine)").matches) setTimeout(() => make.focus(), 350);
   return api;
 }

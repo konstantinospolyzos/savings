@@ -6,7 +6,7 @@
 
 import { CONFIG } from "./config.js";
 import { APP_NAME, DATA_VERSION, DEFAULT_EXPENSES, DEFAULT_GOALS, byPosition, mLong } from "./core.js";
-import { emptyCar, normalizeCar, describeCar, byDateKm } from "./car.js";
+import { emptyCar, normalizeCar, normalizeCars, describeCars, byDateKm, LEGACY_CAR_ID } from "./car.js";
 
 const KEY_DATA = "savingsTracker.data";
 const KEY_META = "savingsTracker.meta";
@@ -36,7 +36,7 @@ export function emptyData() {
     goals: DEFAULT_GOALS.map(([name, category], i) => ({ id: i + 1, name, category, kind: "year", amount: 0, saved: 0,
       start_month: null, target_month: null, active: true, position: i })),
     settings: { expenses_seeded: true, goals_seeded: true, brokers: "" },
-    car: emptyCar(),
+    cars: [],
   };
 }
 
@@ -78,11 +78,11 @@ export function normalize(raw) {
   const settings = raw.settings && typeof raw.settings === "object" ? { ...raw.settings } : {};
   delete settings.window;
   return { app: APP_NAME, version: DATA_VERSION, updated: raw.updated || null, entries, expenses, goals, settings,
-    car: normalizeCar(raw.car) };
+    cars: normalizeCars(raw.cars, raw.car) };
 }
 
 export function describeData(d) {
-  const car = describeCar(d?.car);
+  const car = describeCars(d?.cars);
   if (!d || !d.entries.length) return car ? `no months yet, ${car}` : "no months yet";
   const n = d.entries.length;
   const span = n === 1 ? mLong(d.entries[0].month) : `${mLong(d.entries[0].month)} – ${mLong(d.entries.at(-1).month)}`;
@@ -92,9 +92,21 @@ export function describeData(d) {
 // unique across devices, so two phones adding a cost offline never clash
 const newId = (list) => Math.max(list.reduce((m, x) => Math.max(m, x.id), 0) + 1, Date.now());
 
+/** The car a change is for. Changes from the first version name no car: they go to the first one. */
+function carFor(d, id) {
+  d.cars = d.cars || [];
+  let car = id ? d.cars.find((c) => c.id === id) : d.cars[0];
+  if (!car) {
+    car = emptyCar(id || LEGACY_CAR_ID);
+    d.cars.push(car);
+  }
+  return car;
+}
+
 /** Apply one change to a copy of the data. */
 export function applyOp(data, op) {
   const d = structuredClone(data);
+  d.cars = d.cars || [];
   switch (op.type) {
     case "putEntry":
       d.entries = d.entries.filter((e) => e.month !== op.entry.month && e.month !== op.replace);
@@ -119,16 +131,25 @@ export function applyOp(data, op) {
     case "deleteGoal":
       d.goals = d.goals.filter((g) => g.id !== op.id);
       break;
-    case "putCarLog":
-      d.car = d.car || normalizeCar(null);
-      d.car.logs = d.car.logs.filter((l) => l.id !== op.log.id).concat([op.log]).sort(byDateKm);
+    case "putCar": {            // add a car, or change its details (its logs stay)
+      const old = d.cars.find((c) => c.id === op.car.id);
+      const car = normalizeCar({ ...op.car, logs: old ? old.logs : [] }, op.car.id);
+      d.cars = old ? d.cars.map((c) => (c.id === car.id ? car : c)) : d.cars.concat([car]);
       break;
+    }
+    case "deleteCar":
+      d.cars = d.cars.filter((c) => c.id !== op.id);
+      break;
+    case "putCarLog": {
+      const car = carFor(d, op.carId);
+      car.logs = car.logs.filter((l) => l.id !== op.log.id).concat([op.log]).sort(byDateKm);
+      break;
+    }
     case "deleteCarLog":
-      d.car = d.car || normalizeCar(null);
-      d.car.logs = d.car.logs.filter((l) => l.id !== op.id);
+      for (const car of d.cars) if (!op.carId || car.id === op.carId) car.logs = car.logs.filter((l) => l.id !== op.id);
       break;
-    case "setCar":
-      d.car = { ...(d.car || normalizeCar(null)), ...op.fields };
+    case "setCar":                // from the first version of the car monitor (one car)
+      Object.assign(carFor(d, null), op.fields);
       break;
     case "replaceAll":
       return normalize(op.data);
@@ -395,9 +416,10 @@ class Store {
     this.commit({ type: "putGoal", goal });
   }
   deleteGoal(id) { this.commit({ type: "deleteGoal", id }); }
-  saveCarLog(log) { this.commit({ type: "putCarLog", log }); }
-  deleteCarLog(id) { this.commit({ type: "deleteCarLog", id }); }
-  setCar(fields) { this.commit({ type: "setCar", fields }); }
+  saveCar(car) { this.commit({ type: "putCar", car: { ...car, logs: undefined } }); }
+  deleteCar(id) { this.commit({ type: "deleteCar", id }); }
+  saveCarLog(carId, log) { this.commit({ type: "putCarLog", carId, log }); }
+  deleteCarLog(carId, id) { this.commit({ type: "deleteCarLog", carId, id }); }
   replaceAll(data) { this.commit({ type: "replaceAll", data: normalize(data) }); }
 
   // -- syncing with Drive -------------------------------------------------------

@@ -46,10 +46,22 @@ export function addMonthsToDay(iso, n) {
 }
 
 // ---------------------------------------------------------------------------
-// The car part of the data file
+// Cars in the data file: data.cars = [{id, name, make, model, year, plate, fuel, first_registered,
+// service_km, service_months, logs: [...]}]. The first version kept one car in data.car; it moves
+// into the list with the id "car-1" (the same on every device, so queued changes still find it).
 // ---------------------------------------------------------------------------
-export const emptyCar = () => ({ name: "", service_km: null, service_months: null, logs: [] });
+export const FUELS = [
+  ["95", "Petrol 95"], ["98", "Petrol 98"], ["diesel", "Diesel"], ["e85", "E85"],
+  ["hybrid", "Hybrid (petrol)"], ["electric", "Electric"],
+];
+export const FUEL_NAME = Object.fromEntries(FUELS);
+export const LEGACY_CAR_ID = "car-1";
+const MONTH_RX = /^\d{4}-\d{2}$/;
+
 export const newLogId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+export const newCarId = () => `car-${newLogId()}`;
+export const emptyCar = (id = newCarId()) => ({ id, name: "", make: "", model: "", year: null, plate: "", fuel: "95",
+  first_registered: null, service_km: null, service_months: null, logs: [] });
 export const byDateKm = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.km ?? -1) - (b.km ?? -1));
 
 const optPos = (v) => {
@@ -57,13 +69,12 @@ const optPos = (v) => {
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? n : null;
 };
+const str = (v, max = 60) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
-/** Check and tidy the car section of a data file (missing in files from before the car monitor). */
-export function normalizeCar(raw) {
-  const c = raw && typeof raw === "object" ? raw : {};
+function normalizeLogs(raw) {
   const seen = new Set();
   const logs = [];
-  for (const l of Array.isArray(c.logs) ? c.logs : []) {
+  for (const l of Array.isArray(raw) ? raw : []) {
     if (!l || typeof l !== "object" || typeof l.date !== "string" || !isRealDay(l.date)) continue;
     let id = typeof l.id === "string" && l.id ? l.id : newLogId();
     while (seen.has(id)) id = newLogId();
@@ -76,19 +87,62 @@ export function normalizeCar(raw) {
       note: typeof l.note === "string" ? l.note : "",
     });
   }
-  logs.sort(byDateKm);
+  return logs.sort(byDateKm);
+}
+
+/** One car: its details and its logs, checked and tidied. */
+export function normalizeCar(raw, id = null) {
+  const c = raw && typeof raw === "object" ? raw : {};
   const months = optPos(c.service_months);
+  const year = Number(c.year);
+  const reg = typeof c.first_registered === "string" ? c.first_registered.slice(0, 7) : "";
   return {
-    name: typeof c.name === "string" ? c.name : "",
+    id: id || (typeof c.id === "string" && c.id ? c.id : newCarId()),
+    name: str(c.name), make: str(c.make), model: str(c.model),
+    year: Number.isInteger(year) && year >= 1900 && year <= 2100 ? year : null,
+    plate: str(c.plate, 12).toUpperCase().replace(/\s+/g, " "),
+    fuel: FUEL_NAME[c.fuel] ? c.fuel : "95",
+    first_registered: MONTH_RX.test(reg) ? reg : null,
     service_km: optPos(c.service_km) || null,
     service_months: months ? Math.round(months) : null,
-    logs,
+    logs: normalizeLogs(c.logs),
   };
 }
 
-export function describeCar(car) {
-  const n = car?.logs?.length || 0;
+/** All cars of a data file, from data.cars, or from data.car of the first version. */
+export function normalizeCars(rawCars, legacy = null) {
+  let list = Array.isArray(rawCars) ? rawCars.filter((c) => c && typeof c === "object") : [];
+  if (!list.length && legacy && typeof legacy === "object"
+    && ((Array.isArray(legacy.logs) && legacy.logs.length) || legacy.name || legacy.service_km || legacy.service_months)) {
+    list = [{ ...legacy, id: LEGACY_CAR_ID }];
+  }
+  const ids = new Set();
+  return list.map((c) => {
+    let id = typeof c.id === "string" && c.id ? c.id : newCarId();
+    while (ids.has(id)) id = newCarId();
+    ids.add(id);
+    return normalizeCar(c, id);
+  });
+}
+
+export function describeCars(cars) {
+  const n = (cars || []).reduce((a, c) => a + c.logs.length, 0);
   return n ? `${n} car log${n !== 1 ? "s" : ""}` : "";
+}
+
+/** "Volvo V60", the nickname if there is one, or just "Car" */
+export const carTitle = (c) => (c && (c.name || [c.make, c.model].filter(Boolean).join(" "))) || "Car";
+/** "Volvo V60 · 2019 · ABC 123" (without what the title already says) */
+export function carLine(c) {
+  if (!c) return "";
+  const makeModel = [c.make, c.model].filter(Boolean).join(" ");
+  return [c.name ? makeModel : "", c.year ? String(c.year) : "", c.plate].filter(Boolean).join("  ·  ");
+}
+
+/** Words that depend on what the car runs on */
+export function energy(c) {
+  if (c?.fuel === "electric") return { refuel: "Charging", amount: "kWh", unit: "kWh", per100: "kWh/100 km", priceKey: null };
+  return { refuel: "Refuel", amount: "Litres", unit: "l", per100: "l/100 km", priceKey: c?.fuel === "diesel" ? "diesel" : "95" };
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +327,96 @@ export function serviceStatus(car, today, latestKm = null, perDay = null) {
 }
 
 // ---------------------------------------------------------------------------
+// Inspection (kontrollbesiktning), Transportstyrelsen's rules for cars: the first one at the latest
+// 36 months after the month the car was first registered, the second 24 months after the month of
+// the first, then 14 months after the month of the one before. Doing it early is fine: the time
+// always counts from the month of the latest inspection.
+// ---------------------------------------------------------------------------
+export const INSPECTION_MONTHS = { first: 36, second: 24, later: 14 };
+const lastDayOf = (month) => { const [y, m] = month.split("-").map(Number); return isoDay(day(y, m, new Date(y, m, 0).getDate())); };
+
+export function inspectionStatus(car, today) {
+  const done = car.logs.filter((l) => l.type === "inspection").sort(byDateKm);
+  const last = done.at(-1) || null;
+  const reg = car.first_registered;
+  let from = null, rule = null;
+  if (last) {
+    from = last.date.slice(0, 7);
+    // its first inspection, if the car was under 3 years old then and it's the only one logged
+    rule = reg && done.length === 1 && mIndex(from) - mIndex(reg) <= INSPECTION_MONTHS.first ? "second" : "later";
+  } else if (reg && mIndex(monthOf(today)) - mIndex(reg) <= INSPECTION_MONTHS.first) {
+    from = reg;
+    rule = "first";
+  }
+  if (!rule) return { known: false, last: null, needs: reg ? "last" : "either", reg };
+  const months = INSPECTION_MONTHS[rule];
+  const dueMonth = addMonths(from, months);
+  const due = lastDayOf(dueMonth);
+  const daysLeft = daysBetween(today, parseDay(due));
+  return { known: true, last, rule, from, months, due_month: dueMonth, due, days_left: daysLeft, reg,
+    tone: daysLeft < 0 ? "down" : daysLeft <= 60 ? "warn" : "up" };
+}
+
+// ---------------------------------------------------------------------------
+// Tyre dates for the season around today (Swedish rules, see tyreStatus)
+// ---------------------------------------------------------------------------
+export function tyreDates(today) {
+  const y = today.getFullYear();
+  const md = (today.getMonth() + 1) * 100 + today.getDate();
+  const iso = (yy, m, d) => isoDay(day(yy, m, d));
+  const left = (d) => daysBetween(today, parseDay(d));
+  const winterNow = md >= 1201 || md <= 331;
+  const winterFrom = md <= 331 ? iso(y - 1, 12, 1) : iso(y, 12, 1);
+  const winterUntil = md <= 331 ? iso(y, 3, 31) : iso(y + 1, 3, 31);
+  const summerSeason = md >= 401 && md <= 930;       // summer tyres on, no change coming up
+  const summerFrom = md >= 1001 ? iso(y + 1, 4, 1) : iso(y, 4, 1);
+  const studsNow = md >= 1001 || md <= 415;
+  const studsFrom = md <= 415 ? iso(y - 1, 10, 1) : iso(y, 10, 1);
+  const studsUntil = md <= 415 ? iso(y, 4, 15) : iso(y + 1, 4, 15);
+  return {
+    winter_now: winterNow, winter_from: winterFrom, winter_until: winterUntil, winter_days: winterNow ? 0 : left(winterFrom),
+    summer_now: summerSeason, summer_from: summerFrom, summer_days: summerSeason ? 0 : left(summerFrom),
+    studs_now: studsNow, studs_from: studsFrom, studs_until: studsUntil,
+    studs_days: studsNow ? left(studsUntil) : left(studsFrom),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Fuel prices (data/fuel-prices.json, from the EU Weekly Oil Bulletin: Monday prices)
+// ---------------------------------------------------------------------------
+/** The price of the week a day falls in: the latest Monday price on or before it, at most 13 days old. */
+export function weekPrice(series, iso) {
+  let lo = 0, hi = series.length - 1, best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (series[mid][0] <= iso) { best = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  if (best < 0 || daysBetween(parseDay(series[best][0]), parseDay(iso)) > 13) return null;
+  return series[best];
+}
+
+export function priceSummary(series, today) {
+  if (!series?.length) return null;
+  const latest = series.at(-1);
+  const prev = series.length > 1 ? series.at(-2) : null;
+  const yearAgo = weekPrice(series, isoDay(addDays(parseDay(latest[0]), -364)));
+  const lastYear = series.filter(([d]) => daysBetween(parseDay(d), today) <= 365).map(([, v]) => v);
+  return {
+    latest, prev, year_ago: yearAgo,
+    change_week: prev ? latest[1] - prev[1] : null,
+    change_year: yearAgo ? latest[1] - yearAgo[1] : null,
+    low: lastYear.length ? Math.min(...lastYear) : null, high: lastYear.length ? Math.max(...lastYear) : null,
+    avg: lastYear.length ? mean(lastYear) : null,
+  };
+}
+
+/** What you paid per litre on each refuel with both cost and litres: [{log, price, week}] */
+export function paidPrices(logs, series = null) {
+  return logs.filter((l) => l.type === "fuel" && l.cost > 0 && l.litres > 0).sort(byDateKm)
+    .map((l) => ({ log: l, price: l.cost / l.litres, week: series ? weekPrice(series, l.date) : null }));
+}
+
+// ---------------------------------------------------------------------------
 // Everything the car pages show
 // ---------------------------------------------------------------------------
 export function carSummary(car, today) {
@@ -330,6 +474,8 @@ export function carSummary(car, today) {
     fuel: fuelStats(logs),
     tyres: tyreStatus(logs, today, latest ? latest.km : null),
     service: serviceStatus({ ...car, logs }, today, latest ? latest.km : null, perDay),
+    inspection: inspectionStatus({ ...car, logs }, today),
+    tyre_dates: tyreDates(today),
     years,
   };
 }

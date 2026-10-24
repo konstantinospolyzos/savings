@@ -179,20 +179,137 @@ test("data file: car logs are checked and tidied", () => {
   assert.equal(c.logs[0].tires, "studded");
 });
 
-test("data file: older files without a car get an empty one, and it survives a round trip", () => {
-  const old = normalize({ entries: [] });
-  assert.deepEqual(old.car, car.emptyCar());
+test("data file: the one car of the first version moves into the list of cars", () => {
+  const old = normalize({ entries: [], car: { name: "V60", service_km: 15000, logs: [LOGS[0], LOGS[1]] } });
+  assert.equal(old.cars.length, 1);
+  assert.equal(old.cars[0].id, car.LEGACY_CAR_ID);                       // the same id on every device
+  assert.equal(old.cars[0].name, "V60");
+  assert.equal(old.cars[0].logs.length, 2);
+  assert.equal(old.car, undefined);
+  assert.deepEqual(normalize({ entries: [], car: { name: "", logs: [] } }).cars, []);   // nothing to keep
+  assert.deepEqual(normalize({ entries: [] }).cars, []);
+});
+
+test("data file: cars and their logs survive a round trip", () => {
   let d = emptyData();
-  d = applyOp(d, { type: "putCarLog", log: LOGS[1] });
-  d = applyOp(d, { type: "putCarLog", log: LOGS[0] });
-  d = applyOp(d, { type: "putCarLog", log: { ...LOGS[1], km: 11111 } });     // edit: same id
-  d = applyOp(d, { type: "setCar", fields: { name: "Volvo", service_km: 20000 } });
-  assert.deepEqual(d.car.logs.map((l) => l.km), [10000, 11111]);
-  assert.equal(d.car.name, "Volvo");
-  d = applyOp(d, { type: "deleteCarLog", id: LOGS[0].id });
-  assert.equal(d.car.logs.length, 1);
+  const a = { ...car.emptyCar("car-a"), make: "Volvo", model: "V60", plate: "abc  123", year: 2019, first_registered: "2019-05-14" };
+  d = applyOp(d, { type: "putCar", car: a });
+  d = applyOp(d, { type: "putCar", car: car.emptyCar("car-b") });
+  d = applyOp(d, { type: "putCarLog", carId: "car-a", log: LOGS[1] });
+  d = applyOp(d, { type: "putCarLog", carId: "car-a", log: LOGS[0] });
+  d = applyOp(d, { type: "putCarLog", carId: "car-a", log: { ...LOGS[1], km: 11111 } });   // edit: same id
+  d = applyOp(d, { type: "putCarLog", carId: "car-b", log: LOGS[2] });
+  d = applyOp(d, { type: "putCar", car: { ...a, name: "The Volvo", logs: undefined } });   // details change, logs stay
+  const va = d.cars.find((c) => c.id === "car-a");
+  assert.deepEqual(va.logs.map((l) => l.km), [10000, 11111]);
+  assert.equal(va.name, "The Volvo");
+  assert.equal(va.plate, "ABC 123");
+  assert.equal(va.first_registered, "2019-05");
+  assert.equal(d.cars.find((c) => c.id === "car-b").logs.length, 1);
+  d = applyOp(d, { type: "deleteCarLog", carId: "car-a", id: LOGS[0].id });
+  assert.equal(va.logs.length, 2);                                          // applyOp works on a copy
+  assert.equal(d.cars.find((c) => c.id === "car-a").logs.length, 1);
   const again = normalize(JSON.parse(JSON.stringify(d)));
-  assert.deepEqual(again.car, d.car);
+  assert.deepEqual(again.cars, d.cars);
+  d = applyOp(d, { type: "deleteCar", id: "car-b" });
+  assert.deepEqual(d.cars.map((c) => c.id), ["car-a"]);
+});
+
+test("data file: changes queued by the first version still land", () => {
+  let d = emptyData();
+  d = applyOp(d, { type: "putCarLog", log: LOGS[0] });                   // no car named: the first car
+  d = applyOp(d, { type: "setCar", fields: { service_km: 20000 } });
+  assert.equal(d.cars.length, 1);
+  assert.equal(d.cars[0].id, car.LEGACY_CAR_ID);
+  assert.equal(d.cars[0].service_km, 20000);
+  d = applyOp(d, { type: "deleteCarLog", id: LOGS[0].id });
+  assert.equal(d.cars[0].logs.length, 0);
+});
+
+test("car names and words", () => {
+  assert.equal(car.carTitle({ name: "", make: "Volvo", model: "V60" }), "Volvo V60");
+  assert.equal(car.carTitle({ name: "The Volvo", make: "Volvo", model: "V60" }), "The Volvo");
+  assert.equal(car.carTitle({ name: "", make: "", model: "" }), "Car");
+  assert.equal(car.carLine({ name: "The Volvo", make: "Volvo", model: "V60", year: 2019, plate: "ABC 123" }),
+    "Volvo V60  ·  2019  ·  ABC 123");
+  assert.equal(car.energy({ fuel: "diesel" }).priceKey, "diesel");
+  assert.equal(car.energy({ fuel: "hybrid" }).priceKey, "95");
+  assert.equal(car.energy({ fuel: "electric" }).unit, "kWh");
+  assert.equal(car.energy({ fuel: "electric" }).priceKey, null);
+});
+
+// ---------------------------------------------------------------------------
+const insp = (o, logs = []) => car.inspectionStatus({ ...car.emptyCar(), ...o, logs }, day(2026, 10, 24));
+
+test("inspection: 36 months after first registration, then 24, then 14", () => {
+  const first = insp({ first_registered: "2024-02" });
+  assert.equal(first.rule, "first");
+  assert.equal(first.due, "2027-02-28");                                  // last day of Feb 2027
+  const second = insp({ first_registered: "2023-03" }, [log("2026-03-10", "inspection")]);
+  assert.equal(second.rule, "second");
+  assert.equal(second.due, "2028-03-31");
+  const later = insp({ first_registered: "2018-06" }, [log("2025-05-02", "inspection"), log("2026-04-20", "inspection")]);
+  assert.equal(later.rule, "later");
+  assert.equal(later.due_month, "2027-06");                               // April 2026 + 14 months
+  assert.equal(later.due, "2027-06-30");
+  assert.equal(later.tone, "up");
+});
+
+test("inspection: without the registration month, the 14-month rule; overdue and soon", () => {
+  const s = insp({}, [log("2025-08-15", "inspection")]);
+  assert.equal(s.rule, "later");
+  assert.equal(s.due, "2026-10-31");
+  assert.equal(s.days_left, 7);
+  assert.equal(s.tone, "warn");
+  assert.equal(insp({}, [log("2025-07-15", "inspection")]).tone, "down");   // due 30 Sep 2026
+  assert.equal(insp({}).known, false);
+  assert.equal(insp({ first_registered: "2019-01" }).needs, "last");      // older than 3 years, no inspection logged
+});
+
+test("tyre dates around the year", () => {
+  const at = (m, d) => car.tyreDates(day(2026, m, d));
+  const oct = at(10, 24);
+  assert.equal(oct.winter_from, "2026-12-01");
+  assert.equal(oct.winter_days, 38);
+  assert.equal(oct.summer_from, "2027-04-01");
+  assert.equal(oct.studs_now, true);
+  assert.equal(oct.studs_until, "2027-04-15");
+  const jan = at(1, 10);
+  assert.equal(jan.winter_now, true);
+  assert.equal(jan.winter_until, "2026-03-31");
+  assert.equal(jan.summer_from, "2026-04-01");
+  assert.equal(jan.studs_until, "2026-04-15");
+  const apr = at(4, 10);
+  assert.equal(apr.summer_now, true);
+  assert.equal(apr.studs_now, true);
+  assert.equal(apr.studs_days, 5);
+  const jun = at(6, 1);
+  assert.equal(jun.studs_now, false);
+  assert.equal(jun.studs_from, "2026-10-01");
+  assert.equal(jun.winter_from, "2026-12-01");
+});
+
+// ---------------------------------------------------------------------------
+const SERIES = [["2025-10-20", 17.5], ["2026-10-05", 17.88], ["2026-10-12", 18.95], ["2026-10-19", 18.21]];
+
+test("fuel price of the week a day falls in", () => {
+  assert.deepEqual(car.weekPrice(SERIES, "2026-10-14"), ["2026-10-12", 18.95]);
+  assert.deepEqual(car.weekPrice(SERIES, "2026-10-19"), ["2026-10-19", 18.21]);
+  assert.deepEqual(car.weekPrice(SERIES, "2026-11-01"), ["2026-10-19", 18.21]);   // 13 days old: still fine
+  assert.equal(car.weekPrice(SERIES, "2026-11-02"), null);                         // too old
+  assert.equal(car.weekPrice(SERIES, "2025-01-01"), null);
+});
+
+test("fuel price summary and what you paid", () => {
+  const s = car.priceSummary(SERIES, day(2026, 10, 24));
+  close(s.change_week, 18.21 - 18.95);
+  close(s.change_year, 18.21 - 17.5);
+  assert.equal(s.low, 17.88);                                            // 20 Oct 2025 is 369 days back: outside the last 12 months
+  assert.equal(s.high, 18.95);
+  const paid = car.paidPrices([log("2026-10-14", "fuel", { km: 1, litres: 40, cost: 760 }), log("2026-10-15", "fuel", { km: 2, litres: 40 })], SERIES);
+  assert.equal(paid.length, 1);
+  close(paid[0].price, 19);
+  assert.deepEqual(paid[0].week, ["2026-10-12", 18.95]);
 });
 
 test("CSV export", () => {

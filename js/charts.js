@@ -36,6 +36,7 @@ export function linearFit(xs, ys) {
  *   months: ["2026-01", ...],
  *   xs: [24300.5, ...]        optional: exact positions in months (dated points, e.g. odometer readings);
  *                             the axis then shows month starts instead of one label per point
+ *   dots: [{ x, y, color }]   optional: extra marks on the same axes (e.g. what you paid per litre)
  *   kind: "line" | "bar",
  *   series: [{ color, values, fill?, trend? }],
  *   format: (v) => axis label,
@@ -69,8 +70,9 @@ export function chart(opts) {
     const XV = (v) => (n === 1 ? (innerL + innerR) / 2 : innerL + ((v - x0) / span) * (innerR - innerL));
     const X = (i) => XV(xi[i]);
 
+    const dots = (opts.dots || []).filter((d) => d.x >= xi[0] - 0.05 && d.x <= xi.at(-1) + 0.5);
     const all = opts.series.flatMap((ser) => ser.values.filter((v) => v !== null))
-      .concat((opts.lines || []).map((l) => l.value));
+      .concat((opts.lines || []).map((l) => l.value), dots.map((d) => d.y));
     let lo = Math.min(0, ...all), hi = Math.max(0, ...all);
     if (!opts.zeroBased) lo = Math.min(...all);
     if (hi === lo) hi = lo + 1;
@@ -143,6 +145,7 @@ export function chart(opts) {
         marks.push(dots);
       });
     }
+    for (const d of dots) svgEl.appendChild(s("circle", { cx: XV(d.x), cy: Y(d.y), r: d.r || 3.6, fill: d.color, class: "dot-mark" }));
     (opts.lines || []).forEach((l, k) => {
       const y = Y(l.value);
       svgEl.appendChild(s("line", { x1: pad.l, x2: W - pad.r + 4, y1: y, y2: y, stroke: l.color, class: `ref-line ${l.dotted ? "dotted" : ""}` }));

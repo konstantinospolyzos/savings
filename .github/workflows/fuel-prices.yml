@@ -1,0 +1,32 @@
+name: Fuel prices
+# Every morning: get the latest Swedish pump prices (EU Weekly Oil Bulletin, new figures once a week)
+# and save them in data/fuel-prices.json, which the app reads from the website.
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install openpyxl
+      - run: python tools/fetch_fuel_prices.py data/fuel-prices.json
+      - name: Save the new prices
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- data/fuel-prices.json; then echo "No new prices"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/fuel-prices.json
+          git commit -m "Fuel prices: week of $(python -c 'import json;print(json.load(open("data/fuel-prices.json"))["latest"])')"
+          git push
+          # make sure the website picks it up
+          gh api -X POST "repos/${{ github.repository }}/pages/builds" >/dev/null || echo "Pages build request skipped"

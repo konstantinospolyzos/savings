@@ -616,3 +616,17 @@ body.privacy .crow-note { filter: blur(7px); -webkit-filter: blur(7px); }
 .date-input::-webkit-calendar-picker-indicator { opacity: 0.55; }
 .form > .segmented.full { margin-top: 2px; }
 .form > .segmented.full + .group { margin-top: 10px; }
+.chart .dot-mark { stroke: var(--card); stroke-width: 1.5; }
+.segmented.car-picker button { overflow: hidden; text-overflow: ellipsis; }
+.fuel-card .block-value { margin-top: 2px; }
+.fuel-card .chips { margin-top: 8px; }
+.card .hint a { color: var(--blue); text-decoration: none; }
+.tyre-dates { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+.tdate { background: var(--card2); border-radius: 10px; padding: 9px 10px; min-width: 0; }
+.tdate.next { background: var(--info-bg); }
+.tdate.next .caption { color: var(--blue); }
+.tdate .caption { font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tdate-value { font-size: 15px; font-weight: 700; margin-top: 3px; white-space: nowrap; }
+.tdate-sub { font-size: 12px; color: var(--gray); margin-top: 1px; }
+.fuel-card .card-sub { margin-top: 3px; }
+.plate-input { text-transform: uppercase; }
