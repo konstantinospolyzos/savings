@@ -1,6 +1,6 @@
 // Car monitor pages: Car (odometer, averages, tyres, service, inspection, charts, fuel price, costs,
 // details) and Log (every visit), plus the sheets to add or edit a log and a car.
-import { h, chip, dot, segmented, splitBar, kv, icon, sheet, group, caption, footer, alertBox, toast, saveFile, selectRow, toggle } from "../ui.js";
+import { h, chip, dot, segmented, splitBar, kv, icon, sheet, group, caption, footer, alertBox, toast, saveFile, selectRow, toggle, pickFile } from "../ui.js";
 import { chart } from "../charts.js";
 import {
   COLORS, CUR, MONTHS, WEEKDAYS, localSym, fmtSek, fmtMoney, fmtAxisSek, mLong, mIndex, monthOf, addMonths, isoDay,
@@ -13,6 +13,8 @@ import {
 } from "../car.js";
 import { store } from "../store.js";
 import { statCard } from "./overview.js";
+import { getKey, readPump, shrinkPhoto, exifDate } from "../pump.js";
+import { openPhotoSetup } from "./pump-sheet.js";
 
 const DAY_MS = 86400000;
 const TYRE_ON = { summer: "Summer tyres on", studded: "Studded winter tyres on", winter: "Non-studded winter tyres on" };
@@ -699,6 +701,11 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
   const costLabel = h("span", { class: "form-label" }, "Cost");
   const costRow = h("label", { class: "form-row" }, costLabel, cost, h("span", { class: "form-unit" }, localSym()));
   const moneyCaption = caption("COST");
+  // read the litres, price and amount off a photo of the pump (petrol and diesel cars)
+  const photoBtn = h("button", { type: "button", class: "photo-btn" }, icon("camera", 20), h("span", { class: "photo-btn-text" }, "Read a photo of the pump"));
+  const photoNote = h("div", { class: "photo-note" });
+  const photoBox = h("div", { class: "photo-box" }, photoBtn, photoNote);
+  let dateTouched = Boolean(original);
   const fullGroup = group(h("label", { class: "form-row switch-row" }, h("span", { class: "form-label" }, kwh ? "Charged to full" : "Full tank"), fullSwitch));
   const fullFooter = footer(`Turn it off if you only ${kwh ? "topped up the battery" : "topped up"}. The consumption is then worked out at your next full ${kwh ? "charge" : "tank"}, with these ${en.amount.toLowerCase()} included.`);
   const kmFooter = footer("");
@@ -738,6 +745,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
     const isFuel = type === "fuel", isTyres = type === "tires", isOther = !MAIN.includes(type);
     kindGroup.style.display = isOther ? "" : "none";
     for (const el of [litresRow, priceRow, fullGroup, fullFooter]) el.style.display = isFuel ? "" : "none";
+    photoBox.style.display = isFuel && !kwh ? "" : "none";
     for (const el of [tyreCaption, tyreSeg, tyreFooter]) el.style.display = isTyres ? "" : "none";
     costLabel.textContent = isFuel ? "Total" : "Cost";
     moneyCaption.textContent = isFuel ? (kwh ? "CHARGING" : "FUEL") : "COST";
@@ -802,6 +810,53 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
 
   for (const [k, f] of Object.entries(money)) f.addEventListener("input", () => { recalc(k); validate(); });
   for (const f of [date, km]) f.addEventListener("input", validate);
+  date.addEventListener("input", () => { dateTouched = true; });
+
+  const looksLike = (fuel) => (/diesel|^d\b/i.test(fuel) ? "diesel" : /95|98|bensin|petrol|e10|v-power|miles/i.test(fuel) ? "petrol" : null);
+  const carRuns = car.fuel === "diesel" ? "diesel" : ["95", "98", "hybrid"].includes(car.fuel) ? "petrol" : null;
+  function photoMessage(cls, ...parts) {
+    photoNote.querySelector(".photo-msg")?.remove();
+    photoNote.prepend(h("div", { class: `photo-msg ${cls}` }, parts));
+  }
+  photoBtn.addEventListener("click", async () => {
+    if (!getKey()) { openPhotoSetup(ctx); return; }       // the file picker needs a fresh tap, so the next tap reads
+    const file = await pickFile("image/*");
+    if (!file) return;
+    photoBtn.disabled = true;
+    photoBtn.classList.add("busy");
+    const label = photoBtn.querySelector(".photo-btn-text");
+    label.textContent = "Reading the photo…";
+    photoNote.replaceChildren();
+    try {
+      const [img, head] = await Promise.all([shrinkPhoto(file), file.slice(0, 256 * 1024).arrayBuffer()]);
+      const thumb = h("img", { class: "photo-thumb", src: img.dataUrl, alt: "The photo", onclick: () => thumb.classList.toggle("big") });
+      photoNote.append(thumb);
+      const r = await readPump(img.b64, getKey(), { onStage: (text) => { label.textContent = text; } });
+      for (const [k, v] of [["litres", r.litres], ["price", r.price], ["cost", r.total]]) {
+        money[k].value = v ? plainNumber(v, 2) : "";
+        auto[k] = false;
+        money[k].classList.remove("auto");
+      }
+      const taken = exifDate(head);
+      let when = null;
+      if (taken && !dateTouched && taken !== date.value && taken <= isoDay(today)) { date.value = taken; when = `Date from the photo: ${dayText(taken, today)}.`; }
+      const sum = `${plainNumber(r.litres || 0, 2)} l × ${plainNumber(r.price || 0, 2)} kr/l = ${plainNumber((r.litres || 0) * (r.price || 0), 2)} kr`;
+      const fixed = { decimal: " (a decimal point was put back)", "other-price": " (the price of the fuel you used)" }[r.how] || "";
+      const wrongFuel = r.fuel && carRuns && looksLike(r.fuel) && looksLike(r.fuel) !== carRuns
+        ? ` The pump says ${r.fuel}, but this car runs on ${carRuns}.` : "";
+      if (r.ok && r.verified) photoMessage(wrongFuel ? "warn" : "good", `✓  ${plainNumber(r.litres, 2)} l × ${plainNumber(r.price, 2)} kr/l = ${plainNumber(r.total, 2)} kr${fixed}${r.fuel ? `  ·  ${r.fuel}` : ""}.`, wrongFuel, when ? ` ${when}` : "");
+      else if (r.ok) photoMessage("warn", `Read two of the numbers; the ${r.fixed === "total" ? "amount" : r.fixed === "price" ? "price" : "litres"} was worked out. Check it against the photo.${wrongFuel}`, when ? ` ${when}` : "");
+      else photoMessage("warn", `These don't add up: ${sum}, not ${plainNumber(r.total || 0, 2)} kr. Check them against the photo and fix the one that's wrong.`, when ? ` ${when}` : "");
+      validate();
+    } catch (err) {
+      photoMessage("bad", err.message, err.kind === "key" || err.kind === "credit" ? " " : null, err.kind === "key" || err.kind === "credit"
+        ? h("button", { type: "button", class: "link-btn", onclick: () => openPhotoSetup(ctx) }, "Check the key") : null);
+    } finally {
+      photoBtn.disabled = false;
+      photoBtn.classList.remove("busy");
+      label.textContent = "Read another photo";
+    }
+  });
   date.addEventListener("change", validate);
   note.addEventListener("input", () => { note.style.height = "auto"; note.style.height = `${Math.max(note.scrollHeight, 56)}px`; });
 
@@ -819,6 +874,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
     group(h("label", { class: "form-row" }, h("span", { class: "form-label" }, "Date"), date), kmRow),
     kmFooter,
     moneyCaption,
+    photoBox,
     group(litresRow, priceRow, costRow),
     costFooter,
     fullGroup, fullFooter,

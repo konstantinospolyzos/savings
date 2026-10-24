@@ -640,3 +640,20 @@ body.privacy .crow-note { filter: blur(7px); -webkit-filter: blur(7px); }
 .form-input.auto { color: var(--gray); }
 .section-footer .use-now { color: var(--label); font-weight: 700; }
 .fmetric-unit { font-size: 14px; font-weight: 600; color: var(--label2); }
+.photo-box { margin: 2px 0 10px; display: flex; flex-direction: column; gap: 8px; }
+.photo-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 46px; border-radius: 12px;
+  background: var(--info-bg); color: var(--blue); font-size: 16px; font-weight: 600; }
+.photo-btn:active:not(:disabled) { opacity: 0.6; }
+.photo-btn.busy { opacity: 0.75; }
+.photo-btn.busy .icon { animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.3; } }
+.photo-note { display: flex; flex-direction: column; gap: 8px; }
+.photo-note:empty { display: none; }
+.photo-msg { font-size: 13.5px; line-height: 1.4; padding: 0 4px; }
+.photo-msg.good { color: var(--up-fg); font-weight: 600; }
+.photo-msg.warn { color: var(--warn-fg); }
+.photo-msg.bad { color: var(--down-fg); }
+.photo-thumb { max-height: 110px; max-width: 100%; align-self: flex-start; border-radius: 10px; object-fit: contain; cursor: zoom-in; background: var(--card); }
+.photo-thumb.big { max-height: 70vh; cursor: zoom-out; }
+.link-btn { color: var(--blue); font: inherit; font-weight: 600; }
+.section-footer.steps a { color: var(--blue); }

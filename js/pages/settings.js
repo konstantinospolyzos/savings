@@ -4,6 +4,8 @@ import {
   getSetting, DEFAULT_BROKERS, symOf,
 } from "../core.js";
 import { store, FILE_NAME, FOLDER_NAME, describeData, readBackupFile } from "../store.js";
+import { getKey } from "../pump.js";
+import { openPhotoSetup } from "./pump-sheet.js";
 
 function actionRow(iconName, text, onClick, { tone = "", detail = "" } = {}) {
   return h("button", { type: "button", class: `action-row ${tone}`, onclick: onClick },
@@ -129,7 +131,9 @@ export function openSettings(ctx) {
     const parts = [];
     parts.push(group(ctx.inCar
       ? actionRow("euro", "Back to Savings", () => { sh?.close(); ctx.go("savings"); })
-      : actionRow("car", "Car monitor", () => { sh?.close(); ctx.go("car"); }, { detail: "Mileage, fuel, services and tyres" })));
+      : actionRow("car", "Car monitor", () => { sh?.close(); ctx.go("car"); }, { detail: "Mileage, fuel, services and tyres" }),
+    ctx.inCar ? actionRow("camera", "Reading pump photos", () => { sh?.close(); openPhotoSetup(ctx); },
+      { detail: getKey() ? "Claude API key saved on this device" : "Add a Claude API key" }) : null));
     parts.push(caption("WHERE YOUR DATA IS SAVED"));
     if (store.mode === "drive") {
       parts.push(group(
