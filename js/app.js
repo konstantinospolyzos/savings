@@ -37,6 +37,7 @@ const navTitle = document.getElementById("nav-title");
 const syncBtn = document.getElementById("sync-btn");
 const tabbar = document.getElementById("tabbar");
 const addBtn = document.getElementById("add-btn");
+const carBtn = document.getElementById("car-btn");
 let statusPill = null;
 
 // ---------------------------------------------------------------------------
@@ -115,7 +116,7 @@ function go(key) {
   scrolls[current] = window.scrollY;
   current = key;
   store.setPref("tab", key);
-  if (!inCar()) store.setPref("savings_tab", key);
+  store.setPref(inCar() ? "car_tab" : "savings_tab", key);
   history.replaceState(null, "", `#${key}`);
   render();
   window.scrollTo(0, scrolls[key] || 0);
@@ -163,6 +164,9 @@ function render() {
   const title = tab.heading ? tab.heading(ctx) : tab.title;
   navTitle.textContent = title;
   addBtn.setAttribute("aria-label", inCar() ? "Add a car log" : "Add a month");
+  // the car button opens the car monitor; in there it's a € button back to your savings
+  carBtn.replaceChildren(icon(inCar() ? "euro" : "car", 25));
+  carBtn.setAttribute("aria-label", inCar() ? "Back to Savings" : "Car monitor");
   statusPill = h("button", { type: "button", class: "status-pill" });
   statusPill.addEventListener("click", () => (store.mode === "drive" ? store.syncFromTap() : ctx.openSettings()));
   const showPill = current === "overview" || ["signin", "error"].includes(store.status.state);
@@ -179,6 +183,7 @@ function render() {
 // Start
 // ---------------------------------------------------------------------------
 document.getElementById("settings-btn").addEventListener("click", () => store.ready && openSettings(context()));
+carBtn.addEventListener("click", () => store.ready && go(inCar() ? "savings" : store.pref("car_tab", "car")));
 const addNew = () => (inCar() ? openNewCarLog(context()) : openMonthSheet(context(), null));
 addBtn.addEventListener("click", () => store.ready && addNew());
 privacyBtn.addEventListener("click", () => setPrivacy(!store.pref("privacy", false), true));

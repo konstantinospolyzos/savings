@@ -57,9 +57,13 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1
   transition: background 0.2s, border-color 0.2s;
 }
 #navbar.scrolled { background: var(--bar-bg); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); border-bottom-color: var(--sep); }
-#nav-title { flex: 1; text-align: center; font-weight: 600; font-size: 17px; opacity: 0; transition: opacity 0.2s; }
+#nav-title { flex: 0 1 auto; min-width: 0; text-align: center; font-weight: 600; font-size: 17px; opacity: 0; transition: opacity 0.2s;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#car-btn .icon svg { stroke-width: 1.75; }
 #navbar.scrolled #nav-title { opacity: 1; }
-.nav-right, .nav-left { display: flex; gap: 2px; }
+/* both sides share the room equally, so the title stays centred; on a narrow phone the title gets what's left */
+.nav-right, .nav-left { display: flex; gap: 2px; flex: 1 1 0; min-width: max-content; }
+.nav-right { justify-content: flex-end; }
 #privacy-btn.on { color: var(--orange); }
 body.welcome-mode #privacy-btn { display: none; }
 .nav-btn { width: 44px; height: 44px; border-radius: 22px; display: inline-flex; align-items: center; justify-content: center; color: var(--blue); }
@@ -657,3 +661,4 @@ body.privacy .crow-note { filter: blur(7px); -webkit-filter: blur(7px); }
 .photo-thumb.big { max-height: 70vh; cursor: zoom-out; }
 .link-btn { color: var(--blue); font: inherit; font-weight: 600; }
 .section-footer.steps a { color: var(--blue); }
+@media (max-width: 340px) { .nav-btn { width: 40px; } }   /* the smallest phones: room for the title */
