@@ -127,6 +127,9 @@ export function openSettings(ctx) {
   function build() {
     const m = store.meta;
     const parts = [];
+    parts.push(group(ctx.inCar
+      ? actionRow("euro", "Back to Savings", () => { sh?.close(); ctx.go("savings"); })
+      : actionRow("car", "Car monitor", () => { sh?.close(); ctx.go("car"); }, { detail: "Mileage, fuel, services and tyres" })));
     parts.push(caption("WHERE YOUR DATA IS SAVED"));
     if (store.mode === "drive") {
       parts.push(group(
@@ -192,8 +195,9 @@ export function openSettings(ctx) {
     body.replaceChildren(...parts.filter(Boolean));
   }
 
+  let sh = null;
   build();
   const off = store.on(build);
-  sheet({ title: "Settings", right: { text: "Done", bold: true, onClick: (api) => api.close() }, left: null, body,
+  sh = sheet({ title: "Settings", right: { text: "Done", bold: true, onClick: (api) => api.close() }, left: null, body,
     onClose: off });
 }

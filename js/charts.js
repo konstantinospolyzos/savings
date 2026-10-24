@@ -2,7 +2,7 @@
 // Drag a finger (or move the mouse) across a chart to read each month.
 
 import { h, s } from "./ui.js";
-import { mIndex, mAbbr, mYear } from "./core.js";
+import { mIndex, mAbbr, mYear, mFromIndex } from "./core.js";
 
 function niceStep(range, count) {
   const raw = range / Math.max(count, 1);
@@ -34,6 +34,8 @@ export function linearFit(xs, ys) {
 /**
  * opts: {
  *   months: ["2026-01", ...],
+ *   xs: [24300.5, ...]        optional: exact positions in months (dated points, e.g. odometer readings);
+ *                             the axis then shows month starts instead of one label per point
  *   kind: "line" | "bar",
  *   series: [{ color, values, fill?, trend? }],
  *   format: (v) => axis label,
@@ -53,18 +55,19 @@ export function chart(opts) {
     const H = opts.height || 230;
     const pad = { l: 4, r: 52, t: 14, b: 34 };
     const months = opts.months;
-    const n = months.length;
+    const n = (opts.xs || months).length;
     if (svgEl) svgEl.remove();
     svgEl = s("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img",
       "aria-label": opts.label || "Chart" });
     if (!n) { wrap.prepend(svgEl); return; }
 
-    const xi = months.map(mIndex);
+    const xi = opts.xs || months.map(mIndex);
     const x0 = xi[0], x1 = xi.at(-1);
     const bar = opts.kind === "bar";
     const span = Math.max(x1 - x0, 1);
     const innerL = pad.l + (bar ? 14 : 10), innerR = W - pad.r - (bar ? 14 : 10);
-    const X = (i) => (n === 1 ? (innerL + innerR) / 2 : innerL + ((xi[i] - x0) / span) * (innerR - innerL));
+    const XV = (v) => (n === 1 ? (innerL + innerR) / 2 : innerL + ((v - x0) / span) * (innerR - innerL));
+    const X = (i) => XV(xi[i]);
 
     const all = opts.series.flatMap((ser) => ser.values.filter((v) => v !== null))
       .concat((opts.lines || []).map((l) => l.value));
@@ -81,13 +84,30 @@ export function chart(opts) {
       svgEl.appendChild(s("line", { x1: pad.l, x2: W - pad.r + 4, y1: Y(t), y2: Y(t), class: t === 0 && lo < 0 ? "axis-zero" : "grid" }));
       svgEl.appendChild(s("text", { x: W - pad.r + 8, y: Y(t) + 4, class: "axis-label" }, opts.format(t)));
     }
-    const every = Math.max(1, Math.ceil(n / Math.max(1, Math.floor((innerR - innerL) / 44))));
-    months.forEach((m, i) => {
-      if ((n - 1 - i) % every) return;
-      const showYear = i === 0 || mAbbr(m) === "Jan" || (i >= every && mYear(months[i - every]) !== mYear(m));
-      svgEl.appendChild(s("text", { x: X(i), y: H - pad.b + 16, class: "axis-label mid" }, mAbbr(m)));
-      if (showYear) svgEl.appendChild(s("text", { x: X(i), y: H - pad.b + 29, class: "axis-label mid year" }, String(mYear(m))));
-    });
+    const fit = Math.max(1, Math.floor((innerR - innerL) / 44));
+    const label = (x, m, showYear) => {
+      svgEl.appendChild(s("text", { x, y: H - pad.b + 16, class: "axis-label mid" }, mAbbr(m)));
+      if (showYear) svgEl.appendChild(s("text", { x, y: H - pad.b + 29, class: "axis-label mid year" }, String(mYear(m))));
+    };
+    if (opts.xs) {
+      // dated points: a label at the start of every month (or every few months)
+      const a = Math.ceil(x0), b = Math.floor(x1);
+      const every = Math.max(1, Math.ceil((b - a + 1) / fit));
+      let shown = 0;
+      for (let t = a; t <= b; t++) {
+        if ((b - t) % every) continue;
+        const m = mFromIndex(t);
+        label(XV(t), m, !shown || mAbbr(m) === "Jan" || mYear(mFromIndex(t - every)) !== mYear(m));
+        shown++;
+      }
+      if (!shown) label(X(0), mFromIndex(Math.floor(x0)), true);
+    } else {
+      const every = Math.max(1, Math.ceil(n / fit));
+      months.forEach((m, i) => {
+        if ((n - 1 - i) % every) return;
+        label(X(i), m, i === 0 || mAbbr(m) === "Jan" || (i >= every && mYear(months[i - every]) !== mYear(m)));
+      });
+    }
 
     const marks = [];
     if (bar) {
@@ -158,11 +178,12 @@ export function chart(opts) {
     guide.setAttribute("x1", X(i)); guide.setAttribute("x2", X(i)); guide.setAttribute("visibility", "visible");
     marks.forEach((dots) => dots.forEach((c, k) => c.classList.toggle("on", k === i)));
     const t = opts.tooltip(i);
-    tip.replaceChildren(h("div", { class: "tip-title" }, t.title),
+    // (replaceChildren would print a null as the text "null", so only real elements go in)
+    tip.replaceChildren(...[h("div", { class: "tip-title" }, t.title),
       ...t.rows.map(([label, value, color]) => h("div", { class: "tip-row" },
         color ? h("span", { class: "dot", style: { background: color } }) : null,
         h("span", { class: "tip-label" }, label), h("span", { class: "tip-value" }, value))),
-      t.note ? h("div", { class: "tip-note" }, t.note) : null);
+      t.note ? h("div", { class: "tip-note" }, t.note) : null].filter(Boolean));
     tip.classList.add("show");
     const tw = tip.offsetWidth;
     let left = X(i) - tw / 2;

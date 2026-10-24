@@ -9,6 +9,7 @@ import { renderInsights } from "./pages/insights.js";
 import { renderWelcome } from "./pages/welcome.js";
 import { openMonthSheet } from "./pages/month.js";
 import { openSettings } from "./pages/settings.js";
+import { renderCar, renderCarLog, openCarLogSheet } from "./pages/car.js";
 
 const TABS = [
   { key: "overview", title: "Overview", icon: "overview", render: renderOverview },
@@ -16,8 +17,18 @@ const TABS = [
   { key: "budget", title: "Budget", icon: "budget", render: renderBudget },
   { key: "insights", title: "Insights", icon: "insights", render: renderInsights },
 ];
-const tabKeys = TABS.map((t) => t.key);
+// The car monitor: its own section, opened from Settings. "Savings" goes back to the tab you were on.
+const CAR_TABS = [
+  { key: "car", title: "Car", icon: "car", render: renderCar },
+  { key: "car-log", title: "Log", icon: "history", render: renderCarLog },
+  { key: "savings", title: "Savings", icon: "euro", exit: true },
+];
+const ALL_TABS = [...TABS, ...CAR_TABS.filter((t) => !t.exit)];
+const tabKeys = ALL_TABS.map((t) => t.key);
 let current = tabKeys.includes(location.hash.slice(1)) ? location.hash.slice(1) : store.pref("tab", "overview");
+if (!tabKeys.includes(current)) current = "overview";
+const inCar = () => current.startsWith("car");
+if (!inCar()) store.setPref("savings_tab", current);
 const scrolls = {};
 
 const main = document.getElementById("main");
@@ -25,6 +36,7 @@ const navbar = document.getElementById("navbar");
 const navTitle = document.getElementById("nav-title");
 const syncBtn = document.getElementById("sync-btn");
 const tabbar = document.getElementById("tabbar");
+const addBtn = document.getElementById("add-btn");
 let statusPill = null;
 
 // ---------------------------------------------------------------------------
@@ -40,6 +52,7 @@ function context() {
     inv: investmentStatus(data, data.entries),
     openMonth: (entry) => openMonthSheet(context(), entry),
     openSettings: () => openSettings(context()),
+    inCar: inCar(),
     importDesktop, confirmReplace,
     privacy: () => Boolean(store.pref("privacy", false)),
     setPrivacy,
@@ -57,6 +70,8 @@ async function confirmReplace(data, name = "") {
     buttons: [{ text: "Cancel", value: false, style: "cancel" }, { text: "Replace", value: true, style: "bold" }],
   });
   if (!ok) return false;
+  // a desktop file has no car logs: keep the ones already in the app
+  if (!data.car?.logs?.length && store.data.car?.logs?.length) data = { ...data, car: store.data.car };
   store.replaceAll(data);
   toast(`✓  Imported ${data.entries.length} month${data.entries.length !== 1 ? "s" : ""}`);
   if (store.mode === "drive" && !store.drive.tokenValid()) store.syncFromTap();
@@ -95,10 +110,12 @@ function setPrivacy(on, announce = false) {
 }
 
 function go(key) {
+  if (key === "savings") key = store.pref("savings_tab", "overview");
   if (!tabKeys.includes(key)) return;
   scrolls[current] = window.scrollY;
   current = key;
   store.setPref("tab", key);
+  if (!inCar()) store.setPref("savings_tab", key);
   history.replaceState(null, "", `#${key}`);
   render();
   window.scrollTo(0, scrolls[key] || 0);
@@ -124,7 +141,7 @@ function updateChrome() {
 }
 
 function buildTabbar() {
-  tabbar.replaceChildren(...TABS.map((t) => {
+  tabbar.replaceChildren(...(inCar() ? CAR_TABS : TABS).map((t) => {
     const b = h("button", { type: "button", class: `tab ${t.key === current ? "on" : ""}`, "aria-label": t.title,
       "aria-current": t.key === current ? "page" : null }, icon(t.icon, 26), h("span", null, t.title));
     b.addEventListener("click", () => (t.key === current ? window.scrollTo({ top: 0, behavior: "smooth" }) : go(t.key)));
@@ -140,15 +157,17 @@ function render() {
     main.replaceChildren(renderWelcome());
     return;
   }
-  const tab = TABS.find((t) => t.key === current);
+  const tab = ALL_TABS.find((t) => t.key === current);
   const ctx = context();
   const [subtitle, ...content] = tab.render(ctx);
-  navTitle.textContent = tab.title;
+  const title = tab.key === "car" && store.data.car?.name ? store.data.car.name : tab.title;
+  navTitle.textContent = title;
+  addBtn.setAttribute("aria-label", inCar() ? "Add a car log" : "Add a month");
   statusPill = h("button", { type: "button", class: "status-pill" });
   statusPill.addEventListener("click", () => (store.mode === "drive" ? store.syncFromTap() : ctx.openSettings()));
   const showPill = current === "overview" || ["signin", "error"].includes(store.status.state);
   main.replaceChildren(h("div", { class: "page", dataset: { page: current } },
-    h("h1", { class: "large-title" }, tab.title),
+    h("h1", { class: "large-title" }, title),
     h("div", { class: "subtitle" }, subtitle),
     showPill ? statusPill : null,
     ...content.filter(Boolean)));
@@ -160,7 +179,8 @@ function render() {
 // Start
 // ---------------------------------------------------------------------------
 document.getElementById("settings-btn").addEventListener("click", () => store.ready && openSettings(context()));
-document.getElementById("add-btn").addEventListener("click", () => store.ready && openMonthSheet(context(), null));
+const addNew = () => (inCar() ? openCarLogSheet(context(), null) : openMonthSheet(context(), null));
+addBtn.addEventListener("click", () => store.ready && addNew());
 privacyBtn.addEventListener("click", () => setPrivacy(!store.pref("privacy", false), true));
 syncBtn.addEventListener("click", () => {
   if (!store.ready) return;
@@ -170,7 +190,7 @@ syncBtn.addEventListener("click", () => {
 window.addEventListener("scroll", () => navbar.classList.toggle("scrolled", window.scrollY > 38), { passive: true });
 window.addEventListener("hashchange", () => { const k = location.hash.slice(1); if (k !== current && tabKeys.includes(k)) go(k); });
 document.addEventListener("keydown", (ev) => {
-  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "n" && store.ready) { ev.preventDefault(); openMonthSheet(context(), null); }
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "n" && store.ready) { ev.preventDefault(); addNew(); }
 });
 
 store.on((kind) => (kind === "status" ? updateChrome() : render()));

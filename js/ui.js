@@ -61,6 +61,13 @@ const ICONS = {
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><circle cx="12" cy="7.8" r=".9" fill="currentColor"/>',
   share: '<path d="M12 3.5v11M8 7.5l4-4 4 4"/><path d="M7.5 11H6v9.5h12V11h-1.5"/>',
+  // car monitor
+  car: '<path d="M3.8 16.6v-3.3c0-.8.4-1.5 1.1-1.9l1.1-.6 1.6-3.7A2 2 0 0 1 9.4 6h5.2a2 2 0 0 1 1.8 1.1l1.6 3.7 1.1.6c.7.4 1.1 1.1 1.1 1.9v3.3z"/><path d="M7.4 10.8h9.2"/><path d="M6.2 16.6v1.9M17.8 16.6v1.9"/><circle cx="7.6" cy="13.8" r=".9" fill="currentColor"/><circle cx="16.4" cy="13.8" r=".9" fill="currentColor"/>',
+  fuel: '<path d="M5 20.2V5.6A1.6 1.6 0 0 1 6.6 4h5.8A1.6 1.6 0 0 1 14 5.6v14.6"/><path d="M3.6 20.2h11.8"/><path d="M5 10h9"/><path d="M14 8.6l2.5 2.1c.3.3.5.7.5 1.1V17a1.4 1.4 0 0 0 2.8 0V9.2l-2.6-2.6"/>',
+  wrench: '<path d="M14.8 6.2a4.1 4.1 0 0 0-5.4 5.4l-5.3 5.3a1.6 1.6 0 0 0 2.3 2.3l5.3-5.3a4.1 4.1 0 0 0 5.4-5.4l-2.6 2.6-2.2-.4-.4-2.2z"/>',
+  tyre: '<circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="3.3"/><path d="M12 3.6v5.1M12 15.3v5.1M3.6 12h5.1M15.3 12h5.1"/>',
+  check: '<path d="M5 12.6l4.3 4.3L19 7.2"/>',
+  euro: '<path d="M17.6 6.6a6.6 6.6 0 1 0 0 10.8"/><path d="M4.6 10.3h8.6M4.6 13.7h8.6"/>',
 };
 
 export function icon(name, size = 22, extra = "") {

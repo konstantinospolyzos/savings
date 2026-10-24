@@ -6,6 +6,7 @@
 
 import { CONFIG } from "./config.js";
 import { APP_NAME, DATA_VERSION, DEFAULT_EXPENSES, DEFAULT_GOALS, byPosition, mLong } from "./core.js";
+import { emptyCar, normalizeCar, describeCar, byDateKm } from "./car.js";
 
 const KEY_DATA = "savingsTracker.data";
 const KEY_META = "savingsTracker.meta";
@@ -35,6 +36,7 @@ export function emptyData() {
     goals: DEFAULT_GOALS.map(([name, category], i) => ({ id: i + 1, name, category, kind: "year", amount: 0, saved: 0,
       start_month: null, target_month: null, active: true, position: i })),
     settings: { expenses_seeded: true, goals_seeded: true, brokers: "" },
+    car: emptyCar(),
   };
 }
 
@@ -75,14 +77,16 @@ export function normalize(raw) {
   })).filter((g) => g.kind === "year" || (g.start_month && g.target_month)).sort(byPosition);
   const settings = raw.settings && typeof raw.settings === "object" ? { ...raw.settings } : {};
   delete settings.window;
-  return { app: APP_NAME, version: DATA_VERSION, updated: raw.updated || null, entries, expenses, goals, settings };
+  return { app: APP_NAME, version: DATA_VERSION, updated: raw.updated || null, entries, expenses, goals, settings,
+    car: normalizeCar(raw.car) };
 }
 
 export function describeData(d) {
-  if (!d || !d.entries.length) return "no months yet";
+  const car = describeCar(d?.car);
+  if (!d || !d.entries.length) return car ? `no months yet, ${car}` : "no months yet";
   const n = d.entries.length;
   const span = n === 1 ? mLong(d.entries[0].month) : `${mLong(d.entries[0].month)} – ${mLong(d.entries.at(-1).month)}`;
-  return `${n} month${n !== 1 ? "s" : ""}, ${span}`;
+  return `${n} month${n !== 1 ? "s" : ""}, ${span}${car ? `, ${car}` : ""}`;
 }
 
 // unique across devices, so two phones adding a cost offline never clash
@@ -114,6 +118,17 @@ export function applyOp(data, op) {
       break;
     case "deleteGoal":
       d.goals = d.goals.filter((g) => g.id !== op.id);
+      break;
+    case "putCarLog":
+      d.car = d.car || normalizeCar(null);
+      d.car.logs = d.car.logs.filter((l) => l.id !== op.log.id).concat([op.log]).sort(byDateKm);
+      break;
+    case "deleteCarLog":
+      d.car = d.car || normalizeCar(null);
+      d.car.logs = d.car.logs.filter((l) => l.id !== op.id);
+      break;
+    case "setCar":
+      d.car = { ...(d.car || normalizeCar(null)), ...op.fields };
       break;
     case "replaceAll":
       return normalize(op.data);
@@ -380,6 +395,9 @@ class Store {
     this.commit({ type: "putGoal", goal });
   }
   deleteGoal(id) { this.commit({ type: "deleteGoal", id }); }
+  saveCarLog(log) { this.commit({ type: "putCarLog", log }); }
+  deleteCarLog(id) { this.commit({ type: "deleteCarLog", id }); }
+  setCar(fields) { this.commit({ type: "setCar", fields }); }
   replaceAll(data) { this.commit({ type: "replaceAll", data: normalize(data) }); }
 
   // -- syncing with Drive -------------------------------------------------------

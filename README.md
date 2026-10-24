@@ -7,6 +7,7 @@ Data is a JSON file in the user's own Google Drive (or on the device only), sync
 - `js/config.js`: your Google sign-in client ID (see SETUP.md)
 - `js/core.js`: all calculations, ported line by line from `savings_tracker.py`
 - `js/store.js`: Google Drive sync, offline queue, import of the desktop `savings.db`
+- `js/car.js` + `js/pages/car.js`: the car monitor (Settings › Car monitor): odometer, fuel, services, tyres and costs, saved in the same data file
 - `vendor/`: sql.js (MIT licence), used only to read `savings.db` files
 - `tests/`: checks for the calculations in `core.js`, with hand-worked answers. Run `npm test` (Node 22+); GitHub runs them on every push
 
