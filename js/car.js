@@ -101,7 +101,7 @@ function normalizeLogs(raw) {
 
 // ---------------------------------------------------------------------------
 // Fixed monthly costs (insurance, a parking space): set once in the car details, counted on the
-// 1st of every month from "from" to "to" (null: still paying). A new price is a new period.
+// last day of every month from "from" to "to" (null: still paying). A new price is a new period.
 // ---------------------------------------------------------------------------
 export const MONTHLY_TYPES = ["insurance", "parking"];
 const newMonthlyId = () => `mo-${newLogId()}`;
@@ -116,6 +116,16 @@ function normalizeMonthly(raw) {
     out.push({ id: typeof e.id === "string" && e.id ? e.id : newMonthlyId(), type: e.type, amount, from: e.from, to });
   }
   return out.sort((a, b) => (a.type === b.type ? (a.from < b.from ? -1 : 1) : MONTHLY_TYPES.indexOf(a.type) - MONTHLY_TYPES.indexOf(b.type))).slice(0, 100);
+}
+
+// The fixed costs of the car you had when monthly costs came in (787 kr insurance and 863 kr parking a
+// month), from the month of its first log. Only for a car saved before then (it has no "monthly" yet);
+// fixed ids, so two phones filling them in agree.
+export const DEFAULT_MONTHLY = [["insurance", 787], ["parking", 863]];
+function defaultMonthly(c) {
+  const days = (Array.isArray(c.logs) ? c.logs : []).map((l) => l && l.date).filter((d) => typeof d === "string" && isRealDay(d)).sort();
+  if (!days.length) return [];
+  return normalizeMonthly(DEFAULT_MONTHLY.map(([type, amount]) => ({ id: `mo-${type}-first`, type, amount, from: days[0].slice(0, 7), to: null })));
 }
 
 /** What you pay every month now for this type (null if nothing), and since when you've been paying. */
@@ -149,14 +159,18 @@ export function setMonthly(list, type, amount, since, now) {
   return normalizeMonthly([...rest, ...periods]);
 }
 
-/** The monthly costs as cost entries, one per month on the 1st, up to this month. */
+/** The monthly costs as cost entries, one per month on its last day, up to the last month that has ended. */
 export function monthlyEntries(car, today) {
   const now = monthOf(today);
+  const todayIso = isoDay(today);
   const out = [];
   for (const e of car.monthly || []) {
     const end = e.to && e.to < now ? e.to : now;
     for (let m = e.from; mIndex(m) <= mIndex(end); m = addMonths(m, 1)) {
-      out.push({ id: `${e.id}:${m}`, date: `${m}-01`, type: e.type, km: null, cost: e.amount, litres: null, full: null,
+      const [y, mo] = m.split("-").map(Number);
+      const date = isoDay(day(y, mo + 1, 0));                   // the last day of the month
+      if (date > todayIso) break;
+      out.push({ id: `${e.id}:${m}`, date, type: e.type, km: null, cost: e.amount, litres: null, full: null,
         tires: null, fitted: null, note: "", photos: [], monthly: true });
     }
   }
@@ -178,7 +192,7 @@ export function normalizeCar(raw, id = null) {
     first_registered: MONTH_RX.test(reg) ? reg : null,
     service_km: optPos(c.service_km) || null,
     service_months: months ? Math.round(months) : null,
-    monthly: normalizeMonthly(c.monthly),
+    monthly: c.monthly === undefined ? defaultMonthly(c) : normalizeMonthly(c.monthly),
     logs: normalizeLogs(c.logs),
   };
 }

@@ -461,20 +461,27 @@ test("monthly costs: set once, counted on the 1st of every month", () => {
   assert.deepEqual(m.map((e) => [e.type, e.amount, e.from, e.to]), [["insurance", 787, "2025-03", null], ["parking", 863, "2025-03", null]]);
   const c = { ...car.emptyCar(), monthly: m, logs: [log("2026-10-05", "fuel", { km: 1000, litres: 40, cost: 700 })] };
   const entries = car.monthlyEntries(c, day(2026, 10, 24));
-  assert.equal(entries.length, 2 * 20);                                  // March 2025 to October 2026
-  assert.equal(entries[0].date, "2025-03-01");
+  assert.equal(entries.length, 2 * 19);                                  // March 2025 to September 2026: October isn't over
+  assert.equal(entries[0].date, "2025-03-31");
+  assert.equal(car.monthlyEntries(c, day(2026, 10, 31)).length, 2 * 20);  // added on the last day
   const s = car.carSummary(c, day(2026, 10, 24));
   assert.equal(s.n, 1);                                                  // still one log
   assert.equal(s.by_type.insurance, 787 * 12);                           // the last 12 months
   assert.equal(s.by_type.parking, 863 * 12);
   assert.equal(s.costs, 700 + (787 + 863) * 12);
   assert.equal(s.costs_full_year, true);                                 // paying since March 2025
-  assert.equal(s.costs_all, 700 + (787 + 863) * 20);
-  assert.deepEqual(s.years.map((y) => [y.year, y.costs, y.logs]), [[2025, (787 + 863) * 10, 0], [2026, (787 + 863) * 10 + 700, 1]]);
+  assert.equal(s.costs_all, 700 + (787 + 863) * 19);
+  assert.deepEqual(s.years.map((y) => [y.year, y.costs, y.logs]), [[2025, (787 + 863) * 10, 0], [2026, (787 + 863) * 9 + 700, 1]]);
   close(s.cost_per_month, s.costs / s.costs_months);
   // stored with the car, and survives the data file
   const again = car.normalizeCar(JSON.parse(JSON.stringify(c)));
   assert.deepEqual(again.monthly, m);
+  // a car saved before monthly costs came in gets 787 kr insurance and 863 kr parking from its first log
+  const old = car.normalizeCar({ logs: [{ date: "2025-06-14", type: "fuel", km: 1 }, { date: "2025-05-02", type: "service", km: 0 }] });
+  assert.deepEqual(old.monthly.map((e) => [e.type, e.amount, e.from, e.to, e.id]),
+    [["insurance", 787, "2025-05", null, "mo-insurance-first"], ["parking", 863, "2025-05", null, "mo-parking-first"]]);
+  assert.deepEqual(car.normalizeCar({ monthly: [], logs: [{ date: "2025-06-14", type: "fuel", km: 1 }] }).monthly, []);   // emptied: stays empty
+  assert.deepEqual(car.normalizeCar({ logs: [] }).monthly, []);
   assert.deepEqual(car.normalizeCar({ monthly: [{ type: "fuel", amount: 1, from: "2025-01" }, { type: "parking", amount: -3, from: "2025-01" },
     { type: "parking", amount: 500, from: "Jan" }] }).monthly, []);
 });

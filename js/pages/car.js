@@ -1174,7 +1174,7 @@ export function openCarSheet(ctx, car = null) {
     caption("EVERY MONTH"),
     ...MONTHLY_TYPES.flatMap((t, i) => [i ? h("div", { class: "group-gap" }) : null,
       group(row(TYPE[t].name, monthly[t].amount, `${localSym()}/month`), row("Paying since", monthly[t].since))]),
-    footer("Fixed costs like insurance and a parking space you rent. They're counted on the 1st of every month since the month you started, so you don't log them. If the price changes, type the new one: it counts from this month, and the months before keep the old price. Empty it when you stop paying."),
+    footer("Fixed costs like insurance and a parking space you rent. They're added on the last day of every month since the month you started, so you don't log them. If the price changes, type the new one: it counts from this month, and the months before keep the old price. Empty it when you stop paying."),
     !isNew ? h("button", { type: "button", class: "btn destructive-row", onclick: () => remove() }, "Delete Car") : null);
 
   async function remove() {
