@@ -478,12 +478,19 @@ class Store {
     if (this._backingUp || !data?.entries?.length || Date.now() - (this.meta.lastBackup || 0) < BACKUP_EVERY) return;
     this._backingUp = true;
     try {
+      // The phone or the computer may already have made this week's copy: one copy a week in total.
+      const existing = await this.drive.backups();
+      const newest = existing.length ? Date.parse(existing[0].createdTime) : 0;
+      if (Date.now() - newest < BACKUP_EVERY) {
+        this.meta.lastBackup = newest;
+        lsSet(KEY_META, this.meta);
+        return;
+      }
       const name = `savings-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`;
       await this.drive.create({ ...data, exported: new Date().toISOString() }, { name, kind: "backup" });
       this.meta.lastBackup = Date.now();
       lsSet(KEY_META, this.meta);
-      const old = (await this.drive.backups()).slice(BACKUPS_KEPT);
-      for (const f of old) await this.drive.remove(f.id);
+      for (const f of existing.slice(BACKUPS_KEPT - 1)) await this.drive.remove(f.id);   // the new one + 7 newest
     } catch { /* try again on the next sync */ }
     finally { this._backingUp = false; }
   }
