@@ -374,3 +374,33 @@ test("CSV export", () => {
   assert.equal(lines[1], '2026-04-01,Tyre change,12000,600,,,,,,Summer,"Changed, ""rims"""');
   assert.equal(lines[3], "2026-04-20,Refuel,12600,741,39,19,yes,6.5,1.24,,");
 });
+
+// ---------------------------------------------------------------------------
+test("consumption by calendar month, all years together", () => {
+  const segs = [{ to: "2025-01-20", km: 500, litres: 37.5 }, { to: "2026-01-10", km: 500, litres: 32.5 }, { to: "2026-07-01", km: 800, litres: 44 }];
+  const m = car.consumptionByMonth(segs);
+  assert.equal(m.length, 12);
+  close(m[0].per100, 70 / 1000 * 100);                    // January: both years, 7.0
+  assert.equal(m[0].n, 2);
+  close(m[6].per100, 5.5);
+  assert.equal(m[3].per100, null);
+});
+
+test("this year so far, and where it lands on 31 December", () => {
+  const logs = [log("2025-10-01", "fuel", { km: 10000, litres: 40, cost: 800 }),
+    log("2026-01-01", "fuel", { km: 13000, litres: 60, cost: 1200 }),     // 3 000 km in 92 days
+    log("2026-03-01", "service", { km: 15000, cost: 3000 }),
+    log("2026-04-01", "fuel", { km: 16000, litres: 60, cost: 1200 })];    // 60 l on 3 000 km: 0.40 kr/km
+  const s = car.carSummary({ ...car.emptyCar(), logs }, day(2026, 4, 1));
+  const f = car.yearForecast(s, day(2026, 4, 1));
+  assert.equal(f.year, 2026);
+  assert.equal(f.days_left, 274);
+  close(f.km, 3000);
+  close(f.km_end, 3000 + s.per_day * 274);
+  close(f.fuel, 2400);
+  close(f.fuel_end, 2400 + s.per_day * 274 * 0.4);
+  close(f.costs, 5400);
+  const other = 3000 / s.costs_months;                     // the service, spread per month
+  close(f.costs_end, 5400 + s.per_day * 274 * 0.4 + other * 274 / 30.4375);
+  assert.equal(f.last, null);                              // 2025 was only logged from October
+});

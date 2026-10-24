@@ -9,7 +9,7 @@ import { renderInsights } from "./pages/insights.js";
 import { renderWelcome } from "./pages/welcome.js";
 import { openMonthSheet } from "./pages/month.js";
 import { openSettings } from "./pages/settings.js";
-import { renderCar, renderCarLog, openNewCarLog, carHeading } from "./pages/car.js";
+import { renderCar, renderCarLog, renderCarInsights, openNewCarLog, carHeading } from "./pages/car.js";
 import { uploadPending } from "./photos.js";
 
 const TABS = [
@@ -18,11 +18,12 @@ const TABS = [
   { key: "budget", title: "Budget", icon: "budget", render: renderBudget },
   { key: "insights", title: "Insights", icon: "insights", render: renderInsights },
 ];
-// The car monitor: its own section, opened from Settings. "Savings" goes back to the tab you were on.
+// The car monitor: its own section, opened with the car button; the € button goes back to the
+// savings tab you were on.
 const CAR_TABS = [
   { key: "car", title: "Car", icon: "car", render: renderCar, heading: carHeading },
   { key: "car-log", title: "Log", icon: "history", render: renderCarLog },
-  { key: "savings", title: "Savings", icon: "euro", exit: true },
+  { key: "car-insights", title: "Insights", icon: "charts", render: renderCarInsights },
 ];
 const ALL_TABS = [...TABS, ...CAR_TABS.filter((t) => !t.exit)];
 const tabKeys = ALL_TABS.map((t) => t.key);

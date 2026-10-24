@@ -68,6 +68,7 @@ const ICONS = {
   tyre: '<circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="3.3"/><path d="M12 3.6v5.1M12 15.3v5.1M3.6 12h5.1M15.3 12h5.1"/>',
   check: '<path d="M5 12.6l4.3 4.3L19 7.2"/>',
   euro: '<path d="M17.6 6.6a6.6 6.6 0 1 0 0 10.8"/><path d="M4.6 10.3h8.6M4.6 13.7h8.6"/>',
+  charts: '<path d="M4.5 19.5h15"/><rect x="6" y="11.5" width="3" height="5" rx="1"/><rect x="10.5" y="6" width="3" height="10.5" rx="1"/><rect x="15" y="8.5" width="3" height="8" rx="1"/>',
   camera: '<path d="M4 8.6A1.6 1.6 0 0 1 5.6 7h2.2l1.5-2.1h5.4L16.2 7h2.2A1.6 1.6 0 0 1 20 8.6v9a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 17.6z"/><circle cx="12" cy="12.9" r="3.4"/>',
 };
 

@@ -9,7 +9,7 @@ import {
 import {
   CAR_TYPES, TYPE, NEEDS_KM, TYRE_SETS, FUELS, FUEL_NAME, carSummary, monthlyKm, monthlyCosts, previousReading, fuelStats,
   byDateKm, fmtKm, fmtKmSigned, fmtPerKm, fmtAxisKm, monthPos, parseDay, newLogId, carCsv, emptyCar, carTitle, carLine,
-  energy, priceSummary, paidPrices, fillPreview,
+  energy, priceSummary, paidPrices, fillPreview, consumptionByMonth, yearForecast,
 } from "../car.js";
 import { store } from "../store.js";
 import { statCard } from "./overview.js";
@@ -307,20 +307,16 @@ function chartCard(car, sum, today) {
       const firstMonth = sum.logs.length ? sum.logs[0].date.slice(0, 7) : thisMonth;
       const from = st.range === 0 && mIndex(firstMonth) < mIndex(thisMonth) - 11 ? addMonths(thisMonth, -11) : firstMonth;
       const mc = monthlyCosts(sum.logs, from, mIndex(thisMonth) >= mIndex(firstMonth) ? thisMonth : firstMonth);
-      sub.textContent = "Coloured by the biggest cost that month.";
+      sub.textContent = "Each colour is a kind of cost, so a service or tyre change stands out from the fuel.";
       if (!mc.some((m) => m.total > 0)) { empty("Add what each visit cost to see this"); return; }
-      const colors = mc.map((m) => {
-        const top = Object.entries(m.byType).sort((a, b) => b[1] - a[1])[0];
-        return top ? TYPE[top[0]].color : COLORS.gray;
-      });
       const used = CAR_TYPES.filter(([k]) => mc.some((m) => m.byType[k] > 0));
       const avg = sum.cost_per_month;
       const lines = avg ? [{ value: avg, color: COLORS.gray, dotted: true, label: `Average ${fmtSek(avg)}` }] : [];
       legend.append(...used.map(([k, , , color]) => h("span", { class: "legend-item" }, dot(color), costName(k, en))),
         ...lines.map((l) => h("span", { class: "legend-item" }, h("span", { class: "line-swatch dotted", style: { borderColor: l.color } }), h("span", { class: "amt" }, l.label))));
       body.replaceChildren(chart({
-        months: mc.map((m) => m.month), kind: "bar", format: fmtAxisSek, zeroBased: true, lineLabels: false, label: "Costs per month",
-        series: [{ color: COLORS.orange, colors, values: mc.map((m) => m.total) }], lines,
+        months: mc.map((m) => m.month), kind: "bar", stacked: true, format: fmtAxisSek, zeroBased: true, lineLabels: false, label: "Costs per month",
+        series: used.map(([k, , , color]) => ({ color, values: mc.map((m) => m.byType[k] || 0) })), lines,
         tooltip: (i) => {
           const m = mc[i];
           const rows = CAR_TYPES.filter(([k]) => m.byType[k] > 0).map(([k, , , color]) => [costName(k, en), fmtSek(m.byType[k]), color]);
@@ -383,6 +379,8 @@ function fuelPriceContent(car, sum, today, key, data) {
   const ps = priceSummary(series, today);
   if (!ps) return [title, h("div", { class: "muted" }, "No prices in the file yet.")];
   const paid = paidPrices(sum.logs, series);
+  const use = sum.fuel.recent.per100 ?? sum.fuel.all.per100;
+  const litresYear = use !== null && sum.per_year !== null ? Math.round((use / 100) * sum.per_year) : null;   // at your pace
   const st = { range: 0, ...(store.pref("fuel_chart", {}) || {}) };
   const RANGES = [365, 5 * 365 + 1, null];
   const chips = [];
@@ -422,6 +420,9 @@ function fuelPriceContent(car, sum, today, key, data) {
     h("div", { class: "block-value" }, fmtL(ps.latest[1])),
     ps.low !== null ? h("div", { class: "muted" }, `Last 12 months: ${fmtMoney(CUR.local, ps.low, 2)} – ${fmtL(ps.high)}, average ${fmtL(ps.avg)}`) : null,
     chips.length ? h("div", { class: "chips" }, chips) : null,
+    litresYear ? h("div", { class: "kv-list" },
+      kv("A year of fuel at this price", `≈ ${fmtSek(litresYear * ps.latest[1])}`),
+      kv("Every krona more per litre", `≈ ${fmtSek(litresYear)} a year`)) : null,
     h("div", { class: "chart-controls" }, segmented(["1Y", "5Y", "All"], st.range, (i) => { st.range = i; store.setPref("fuel_chart", { range: i }); draw(); }, "small")),
     legend, body,
     h("div", { class: "hint" }, "Monday prices, taxes included, updated every week. Source: ", source, " (CC BY 4.0)."),
@@ -470,11 +471,35 @@ function consumptionCard(car, sum, today, ctx) {
     chips.push(chip(`Winter ${f.winter.per100.toFixed(1)}  ·  summer ${f.summer.per100.toFixed(1)}`, "flat"));
   if (f.price !== null) chips.push(chip(`You paid ${perUnit(f.price, en)} on average`, "flat", "amt"));
 
+  return card(head(title, `${useRecent ? "Last 12 months" : "All your logs"}: ${plural(v.n, tank)}, ${fmtKm(v.km)}`),
+    h("div", { class: "fmetrics" },
+      metric(kwh ? "ENERGY USE" : "CONSUMPTION", COLORS.orange, [v.per100.toFixed(1), en.per100],
+        kwh ? `${(v.per100 / 100).toFixed(2)} kWh per km` : `${(v.per100 / 10).toFixed(2)} l/mil`),
+      metric(kwh ? "CHARGING COST" : "FUEL COST", COLORS.green, v.per_km !== null ? [plainNumber(v.per_km, 2), `${localSym()}/km`] : ["—", ""],
+        v.per_km !== null ? `${fmtSek(v.per_km * 100)} per 100 km` : `add the price when you ${kwh ? "charge" : "refuel"}`, true)),
+    chips.length ? h("div", { class: "chips" }, chips) : null,
+    h("div", { class: "hint" }, `From ${tank} to ${tank}: what the car really used. The charts are under Insights.`),
+    actions(logBtn));
+}
+
+/** Insights: consumption per full tank, and through the year */
+function consumptionChartCard(car, sum, today) {
+  const en = energy(car), f = sum.fuel;
+  const kwh = en.unit === "kWh";
+  const title = kwh ? "Energy use" : "Fuel consumption";
+  const tank = kwh ? "full charge" : "full tank";
+  const v = f.recent.n >= 2 && f.recent.per100 !== null ? f.recent : f.all;
+  if (v.per100 === null) return null;
   const st = { view: 0, range: 1, ...(store.pref("fuel_use_chart", {}) || {}) };
   const save = () => store.setPref("fuel_use_chart", st);
   const body = h("div", { class: "chart-body" });
   const legend = h("div", { class: "legend" });
+  const sub = h("div", { class: "card-sub" });
+  const rangeRow = h("div", { class: "chart-controls" }, segmented(["1Y", "All"], st.range, (i) => { st.range = i; save(); draw(); }, "small"));
   function draw() {
+    rangeRow.style.display = st.view === 2 ? "none" : "";
+    if (st.view === 2) return drawYear();
+    sub.textContent = st.view === 0 ? `Each dot is one ${tank}: what the car used since the one before.` : `What each ${tank} cost per kilometre.`;
     const all = st.range === 0 ? f.segments.filter((x) => daysBetween(parseDay(x.to), today) <= 365) : f.segments;
     const segs = st.view === 0 ? all : all.filter((x) => x.per_km !== null);
     const color = st.view === 0 ? COLORS.orange : COLORS.green;
@@ -503,20 +528,39 @@ function consumptionCard(car, sum, today, ctx) {
       },
     }));
   }
+  // the same car through the year: what winter does to the consumption
+  function drawYear() {
+    const byMonth = consumptionByMonth(f.segments);
+    const known = byMonth.filter((m) => m.per100 !== null);
+    sub.textContent = "Average per calendar month, all your years together. Winter months in blue.";
+    const isWinter = (m) => [11, 12, 1, 2, 3].includes(m);
+    legend.replaceChildren(h("span", { class: "legend-item" }, dot(COLORS.indigo), "Winter (Nov–Mar)"),
+      h("span", { class: "legend-item" }, dot(COLORS.orange), "Rest of the year"));
+    if (known.length < 3) { body.replaceChildren(h("div", { class: "chart-empty" }, "Needs full tanks in at least 3 different months")); return; }
+    const colors = byMonth.map((m) => (isWinter(m.month) ? COLORS.indigo : COLORS.orange));
+    body.replaceChildren(chart({
+      months: byMonth.map((m) => `2000-${String(m.month).padStart(2, "0")}`), kind: "bar", noYears: true, zeroBased: true, lineLabels: false,
+      format: (x) => x.toFixed(1), label: "Consumption by month",
+      series: [{ color: COLORS.orange, colors, values: byMonth.map((m) => m.per100) }],
+      lines: [{ value: v.per100, color: COLORS.gray, dotted: true, label: "" }],
+      tooltip: (i) => {
+        const m = byMonth[i];
+        return { title: MONTHS[i], rows: m.per100 === null ? [["No full tanks logged", "", null]]
+          : [["Consumption", `${m.per100.toFixed(1)} ${en.per100}`, colors[i]], ["Driven", fmtKm(m.km), null], [`${kwh ? "Charges" : "Full tanks"}`, String(m.n), null]] };
+      },
+    }));
+  }
+  const w = f.winter, su = f.summer;
+  const winterExtra = w.n >= 2 && su.n >= 2 && w.per100 !== null && su.per100 !== null ? w.per100 - su.per100 : null;
   draw();
   return h("div", { class: "card chart-card fuel-use-card" },
-    head(title, `${useRecent ? "Last 12 months" : "All your logs"}: ${plural(v.n, tank)}, ${fmtKm(v.km)}`),
-    h("div", { class: "fmetrics" },
-      metric(kwh ? "ENERGY USE" : "CONSUMPTION", COLORS.orange, [v.per100.toFixed(1), en.per100],
-        kwh ? `${(v.per100 / 100).toFixed(2)} kWh per km` : `${(v.per100 / 10).toFixed(2)} l/mil`),
-      metric(kwh ? "CHARGING COST" : "FUEL COST", COLORS.green, v.per_km !== null ? [plainNumber(v.per_km, 2), `${localSym()}/km`] : ["—", ""],
-        v.per_km !== null ? `${fmtSek(v.per_km * 100)} per 100 km` : `add the price when you ${kwh ? "charge" : "refuel"}`, true)),
-    chips.length ? h("div", { class: "chips" }, chips) : null,
-    segmented([en.per100, "kr/km"], st.view, (i) => { st.view = i; save(); draw(); }, "full"),
-    h("div", { class: "chart-controls" }, segmented(["1Y", "All"], st.range, (i) => { st.range = i; save(); draw(); }, "small")),
-    legend, body,
-    h("div", { class: "hint" }, `Worked out from ${tank} to ${tank}: the ${en.amount.toLowerCase()} you put in, over the kilometres since the ${tank} before, so it's what the car really used. If you only top up, turn off “${kwh ? "Charged to full" : "Full tank"}” in the log: it then counts at the next ${tank}.`),
-    actions(logBtn));
+    head(title, `${plural(f.segments.length, tank)} logged  ·  average ${v.per100.toFixed(1)} ${en.per100}`), sub,
+    segmented(["Per tank", "kr/km", "Through the year"], st.view, (i) => { st.view = i; save(); draw(); }, "full"),
+    rangeRow, legend, body,
+    winterExtra !== null && Math.abs(winterExtra) >= 0.2 && sum.per_year !== null
+      ? h("div", { class: "muted amt-soft" }, `In winter the car uses ${Math.abs(winterExtra).toFixed(1)} ${en.per100} ${winterExtra > 0 ? "more" : "less"} than the rest of the year${f.price !== null ? `: about ${fmtSek(Math.abs(winterExtra) / 100 * (sum.per_year / 12) * f.price)} a month ${winterExtra > 0 ? "extra" : "less"} at your pace and price` : ""}.`)
+      : null,
+    h("div", { class: "hint center" }, "Touch the chart to see the details."));
 }
 
 // ---------------------------------------------------------------------------
@@ -536,6 +580,26 @@ function costsCard(car, sum, today) {
     splitBar(types.map(([k, , , color]) => [sum.by_type[k], color]), 10),
     h("div", { class: "cost-types" }, rows),
     sum.costs_all > total + 0.5 ? h("div", { class: "hint amt-soft" }, `All your logs together: ${fmtSek(sum.costs_all)}.`) : null);
+}
+
+function forecastCard(car, sum, today) {
+  const f = yearForecast(sum, today);
+  if (f.km_end === null) return null;
+  const en = energy(car);
+  const row = (label, now, end, money = true) => h("div", { class: "fc-row" },
+    h("div", { class: "fc-label" }, label),
+    h("div", { class: `fc-num ${money ? "amt" : ""}` }, now),
+    h("div", { class: `fc-num strong ${money ? "amt" : ""}` }, end));
+  const rows = [row("Driven", fmtKm(f.km), `≈ ${fmtKm(round100(f.km_end))}`, false)];
+  if (f.fuel_end !== null) rows.push(row(en.unit === "kWh" ? "Charging" : "Fuel", fmtSek(f.fuel), `≈ ${fmtSek(Math.round(f.fuel_end / 100) * 100)}`));
+  if (f.costs_end !== null) rows.push(row("All costs", fmtSek(f.costs), `≈ ${fmtSek(Math.round(f.costs_end / 100) * 100)}`));
+  const last = f.last;
+  return card(head(`${f.year} so far, and by 31 December`, `At the pace of your last 12 months, with ${daysWord(f.days_left)} to go.`),
+    h("div", { class: "fc-table" },
+      h("div", { class: "fc-row head" }, h("div", null, ""), h("div", null, "So far"), h("div", null, "By 31 Dec")),
+      rows),
+    last ? h("div", { class: "hint amt-soft" }, `${last.year}: ${fmtKm(last.km)} and ${fmtSek(last.costs)} in all.`) : null,
+    h("div", { class: "hint" }, "Fuel goes on at your cost per km; services and other costs at their monthly average. A rough guide, not a promise."));
 }
 
 function yearsCard(sum, today) {
@@ -575,13 +639,32 @@ export function renderCar(ctx) {
   const sum = carSummary(car, today);
   const subtitle = [carLine(car), sum.n ? `${plural(sum.n, "log")}, latest ${dayText(sum.logs.at(-1).date, today)}` : "no logs yet"].filter(Boolean).join("  ·  ");
   const picker = carPicker(ctx, car);
-  if (!sum.n) {
-    return [subtitle, picker, noLogsCard(ctx, car), tyreCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx),
-      fuelPriceCard(car, sum, today), detailsCard(car, ctx)];
-  }
+  if (!sum.n) return [subtitle, picker, noLogsCard(ctx, car), tyreCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), detailsCard(car, ctx)];
   return [subtitle, picker, odoHero(sum, today), stats(sum, today), consumptionCard(car, sum, today, ctx), tyreCard(car, sum, today, ctx),
-    serviceCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), chartCard(car, sum, today),
-    fuelPriceCard(car, sum, today), costsCard(car, sum, today), yearsCard(sum, today), detailsCard(car, ctx)];
+    serviceCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), detailsCard(car, ctx)];
+}
+
+// ---------------------------------------------------------------------------
+// Insights page: the charts and trends
+// ---------------------------------------------------------------------------
+export function renderCarInsights(ctx) {
+  const today = ctx.today;
+  const car = selectedCar(ctx.data);
+  if (!car) return ["Charts and trends for your car", noCarState(ctx)];
+  const sum = carSummary(car, today);
+  const picker = carPicker(ctx, car);
+  if (sum.points.length < 2) {
+    return [ctx.data.cars.length > 1 ? carTitle(car) : "Charts and trends for your car", picker,
+      h("div", { class: "card empty-state" },
+        h("span", { class: "car-icon" }, icon("charts", 40)),
+        h("div", { class: "empty-title" }, "Insights need a few logs"),
+        h("div", { class: "empty-text" }, "Log your refuels and services with the odometer for a few weeks, and this page fills with charts: your mileage, what the car costs and where the money goes, the real fuel consumption through the year, and where this year is heading."),
+        h("button", { class: "btn primary", type: "button", onclick: () => openCarLogSheet(ctx, car, null, { type: "fuel" }) }, `+  Log ${energy(car).unit === "kWh" ? "a charge" : "a refuel"}`)),
+      fuelPriceCard(car, sum, today)];
+  }
+  const subtitle = `${ctx.data.cars.length > 1 ? `${carTitle(car)}  ·  ` : ""}from ${plural(sum.n, "log")} since ${dayText(sum.logs[0].date, today)}`;
+  return [subtitle, picker, chartCard(car, sum, today), consumptionChartCard(car, sum, today), costsCard(car, sum, today),
+    forecastCard(car, sum, today), fuelPriceCard(car, sum, today), yearsCard(sum, today)];
 }
 
 // ---------------------------------------------------------------------------

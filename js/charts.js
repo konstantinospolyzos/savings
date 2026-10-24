@@ -37,6 +37,8 @@ export function linearFit(xs, ys) {
  *   xs: [24300.5, ...]        optional: exact positions in months (dated points, e.g. odometer readings);
  *                             the axis then shows month starts instead of one label per point
  *   dots: [{ x, y, color }]   optional: extra marks on the same axes (e.g. what you paid per litre)
+ *   stacked: true             bars: the series sit on top of each other (one bar per month)
+ *   noYears: true             month labels without the year under them (e.g. Jan–Dec of any year)
  *   kind: "line" | "bar",
  *   series: [{ color, values, fill?, trend? }],
  *   format: (v) => axis label,
@@ -71,7 +73,8 @@ export function chart(opts) {
     const X = (i) => XV(xi[i]);
 
     const dots = (opts.dots || []).filter((d) => d.x >= xi[0] - 0.05 && d.x <= xi.at(-1) + 0.5);
-    const all = opts.series.flatMap((ser) => ser.values.filter((v) => v !== null))
+    const stack = opts.stacked && bar ? xi.map((_, i) => opts.series.reduce((a, ser) => a + Math.max(ser.values[i] || 0, 0), 0)) : null;
+    const all = (stack || opts.series.flatMap((ser) => ser.values.filter((v) => v !== null)))
       .concat((opts.lines || []).map((l) => l.value), dots.map((d) => d.y));
     let lo = Math.min(0, ...all), hi = Math.max(0, ...all);
     if (!opts.zeroBased) lo = Math.min(...all);
@@ -89,7 +92,7 @@ export function chart(opts) {
     const fit = Math.max(1, Math.floor((innerR - innerL) / 44));
     const label = (x, m, showYear) => {
       svgEl.appendChild(s("text", { x, y: H - pad.b + 16, class: "axis-label mid" }, mAbbr(m)));
-      if (showYear) svgEl.appendChild(s("text", { x, y: H - pad.b + 29, class: "axis-label mid year" }, String(mYear(m))));
+      if (showYear && !opts.noYears) svgEl.appendChild(s("text", { x, y: H - pad.b + 29, class: "axis-label mid year" }, String(mYear(m))));
     };
     if (opts.xs) {
       // dated points: a label at the start of every month (or every few months)
@@ -112,7 +115,20 @@ export function chart(opts) {
     }
 
     const marks = [];
-    if (bar) {
+    if (bar && stack) {
+      const slot = n > 1 ? Math.min((innerR - innerL) / span, 60) : 60;
+      const bw = Math.max(3, Math.min(22, slot * 0.7));
+      for (let i = 0; i < n; i++) {
+        let base = 0;
+        for (const ser of opts.series) {
+          const v = ser.values[i];
+          if (!(v > 0)) continue;
+          const top = Y(base + v), bottom = Y(base);
+          svgEl.appendChild(s("rect", { x: X(i) - bw / 2, y: top, width: bw - 1, height: Math.max(bottom - top, 0.75), rx: 1.5, fill: ser.color, class: "bar" }));
+          base += v;
+        }
+      }
+    } else if (bar) {
       const k = opts.series.length;
       const slot = n > 1 ? Math.min((innerR - innerL) / span, 60) : 60;
       const bw = Math.max(3, Math.min(k === 1 ? 22 : 14, (slot * 0.7) / k));

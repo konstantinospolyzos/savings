@@ -241,6 +241,42 @@ export function fuelStats(logs, today = null) {
   };
 }
 
+/** Consumption by calendar month, all years together (a stretch counts in the month it ended). */
+export function consumptionByMonth(segments) {
+  const by = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, km: 0, litres: 0, n: 0 }));
+  for (const x of segments) {
+    const b = by[Number(x.to.slice(5, 7)) - 1];
+    b.km += x.km; b.litres += x.litres; b.n += 1;
+  }
+  return by.map((b) => ({ ...b, per100: b.km >= 50 ? (b.litres / b.km) * 100 : null }));
+}
+
+/**
+ * This calendar year: so far, and about where it ends on 31 December at the pace of the last 12
+ * months (kilometres a day; fuel at your cost per km; other costs at their monthly average).
+ */
+export function yearForecast(sum, today) {
+  const y = today.getFullYear();
+  const todayIso = isoDay(today);
+  const daysLeft = Math.max(0, daysBetween(today, day(y, 12, 31)));
+  const logs = sum.logs.filter((l) => l.date.startsWith(`${y}-`) && l.date <= todayIso);
+  const costs = sum_(logs.map((l) => l.cost || 0));
+  const fuel = sum_(logs.filter((l) => l.type === "fuel").map((l) => l.cost || 0));
+  const kmLeft = sum.per_day !== null ? sum.per_day * daysLeft : null;
+  const perKm = sum.fuel.recent.per_km ?? sum.fuel.all.per_km;
+  const fuelEnd = kmLeft !== null && perKm !== null ? fuel + kmLeft * perKm : null;
+  const otherPerMonth = sum.cost_per_month !== null ? (sum.costs - sum.costs_fuel) / sum.costs_months : null;
+  const last = sum.years.find((x) => x.year === y - 1) || null;
+  return {
+    year: y, days_left: daysLeft,
+    km: sum.this_year, km_end: kmLeft !== null ? sum.this_year + kmLeft : null,
+    fuel, fuel_end: fuelEnd,
+    costs, costs_end: fuelEnd !== null && otherPerMonth !== null ? costs + (fuelEnd - fuel) + otherPerMonth * (daysLeft / MONTH_DAYS) : null,
+    last: last && !last.from ? last : null,         // only a year logged from its start compares fairly
+  };
+}
+const sum_ = (values) => values.reduce((a, b) => a + b, 0);
+
 /** What a refuel being typed in would show: its full-tank-to-full-tank stretch, or null. */
 export function fillPreview(logs, draft, exceptId = null) {
   const others = logs.filter((l) => l.id !== exceptId);
@@ -501,7 +537,7 @@ export function carSummary(car, today) {
     km_window_from: kmWindowFrom, km_window_full: kmWindowFrom !== null && first.t <= yearAgo,
     this_year: thisYear, this_year_from: first && first.t > jan1 ? first.date : null,
     costs_from: fromIso, costs_full_year: Boolean(firstLog) && dayT(firstLog.date) <= yearAgo, costs_months: months,
-    costs, cost_per_month: firstLog ? costs / months : null,
+    costs, costs_fuel: fuelCosts, cost_per_month: firstLog ? costs / months : null,
     km_window: kmWindow, cost_per_km: kmWindow >= 100 ? costs / kmWindow : null,
     cost_per_km_ex_fuel: kmWindow >= 100 ? (costs - fuelCosts) / kmWindow : null,
     by_type: costsByType(inWindow), costs_all: sum(logs.map((l) => l.cost || 0)),
