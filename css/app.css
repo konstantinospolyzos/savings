@@ -353,6 +353,14 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
 .card-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
 .card-head-text { flex: 1; min-width: 0; }
 .card-sub { font-size: 13.5px; color: var(--gray); margin-top: 3px; line-height: 1.4; }
+/* Insights cards fold down to their title */
+.card.foldable > :first-child { cursor: pointer; -webkit-tap-highlight-color: transparent; user-select: none; }
+.card.foldable > .card-title { display: flex; align-items: center; gap: 10px; }
+.card.foldable > :first-child:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 6px; }
+.fold-chev { flex: none; margin-left: auto; align-self: center; color: var(--gray); transform: rotate(90deg); transition: transform 0.2s ease; }
+.card.folded .fold-chev { transform: rotate(0deg); }
+.card.folded > :not(:first-child), .card.folded .card-sub { display: none; }
+.card.folded > .card-head { margin-bottom: 0; }
 .card .hint { line-height: 1.4; }
 .card > .hint, .card > .muted { margin-top: 10px; }
 .card > .muted { font-size: 14px; line-height: 1.4; }

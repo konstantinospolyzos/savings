@@ -112,6 +112,15 @@ function currencySection(rebuild) {
   ];
 }
 
+const dayText = (ms) => new Date(ms).toLocaleDateString([], { day: "numeric", month: "short" });
+function backupNote() {
+  const m = store.meta;
+  const base = "A backup is one file with all your months, fixed costs, goals and settings.";
+  if (store.mode === "drive")
+    return `${base} Google Drive also keeps a copy each week in the “${FOLDER_NAME}” folder (the last 8)${m.lastBackup ? `, latest ${dayText(m.lastBackup)}` : ""}. To go back to one, download it from Drive and use Restore a backup.`;
+  return `${base} Your data is only on this device, so save one now and then. Last saved: ${m.lastManualBackup ? dayText(m.lastManualBackup) : "never"}.`;
+}
+
 export function openSettings(ctx) {
   const body = h("div", { class: "form" });
 
@@ -163,14 +172,17 @@ export function openSettings(ctx) {
         try { await ctx.confirmReplace(await readBackupFile(file), file.name); }
         catch (err) { alertBox({ title: "Can't use that file", message: err.message }); }
       }),
-      actionRow("download", "Save a backup", () => saveFile(`savings-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`,
-        "application/json", JSON.stringify({ ...store.data, exported: new Date().toISOString() }, null, 1))),
+      actionRow("download", "Save a backup", () => {
+        saveFile(`savings-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`,
+          "application/json", JSON.stringify({ ...store.data, exported: new Date().toISOString() }, null, 1));
+        store.noteManualBackup();
+      }),
       actionRow("table", "Export for Excel (CSV)", () => {
         if (!store.data.entries.length) { toast("Nothing to export yet"); return; }
         saveFile(`savings-${new Date().toISOString().slice(0, 10)}.csv`, "text/csv", toCsv(store.data.entries));
       }),
     ));
-    parts.push(footer("A backup is one file with all your months, fixed costs, goals and settings."));
+    parts.push(footer(backupNote()));
 
     parts.push(caption("ON YOUR PHONE"));
     parts.push(group(h("div", { class: "info-text" },

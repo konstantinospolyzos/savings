@@ -17,6 +17,8 @@ export const FOLDER_NAME = "Savings Tracker";
 const SCOPE = "https://www.googleapis.com/auth/drive.file";
 const API = "https://www.googleapis.com/drive/v3";
 const UPLOAD = "https://www.googleapis.com/upload/drive/v3";
+const BACKUP_EVERY = 7 * 86400000;     // a copy of the data file in Drive once a week...
+const BACKUPS_KEPT = 8;                // ...keeping the last 8 (about two months)
 
 const lsGet = (k, fallback = null) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; } catch { return fallback; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* full or blocked */ } };
@@ -211,7 +213,7 @@ class Drive {
     if (!this.tokenValid()) throw new AuthError("Sign in again");
     const resp = await fetch(url, { method, body, headers: { Authorization: `Bearer ${this.token}`, ...headers } });
     if (resp.status === 401) { this.token = null; lsDel(KEY_TOKEN); throw new AuthError("Sign in again"); }
-    if (resp.status === 404) return null;
+    if (resp.status === 404 || resp.status === 204) return null;
     if (!resp.ok) {
       let msg = `Google Drive answered ${resp.status}`;
       try { const j = await resp.json(); msg = j.error?.message || msg; } catch { /* keep msg */ }
@@ -248,16 +250,25 @@ class Drive {
     return made.id;
   }
 
-  async create(data) {
+  async create(data, { name = FILE_NAME, kind = "data" } = {}) {
     const parent = await this.folder();
     const boundary = `st${Math.random().toString(36).slice(2)}`;
-    const meta = { name: FILE_NAME, mimeType: "application/json", parents: [parent], appProperties: { savingsTracker: "data" } };
+    const meta = { name, mimeType: "application/json", parents: [parent], appProperties: { savingsTracker: kind } };
     const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n` +
       `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(data, null, 1)}\r\n--${boundary}--`;
     return this.call("POST", `${UPLOAD}/files?uploadType=multipart&fields=id,name,version,modifiedTime,webViewLink`, {
       headers: { "Content-Type": `multipart/related; boundary=${boundary}` }, body,
     });
   }
+
+  /** Weekly copies, newest first */
+  async backups() {
+    const q = encodeURIComponent("appProperties has { key='savingsTracker' and value='backup' } and trashed=false");
+    const res = await this.call("GET", `${API}/files?q=${q}&spaces=drive&orderBy=createdTime desc&pageSize=100&fields=files(id,name,createdTime)`);
+    return res?.files || [];
+  }
+
+  remove(id) { return this.call("DELETE", `${API}/files/${id}`); }
 
   upload(id, data) {
     return this.call("PATCH", `${UPLOAD}/files/${id}?uploadType=media&fields=id,name,version,modifiedTime,webViewLink`, {
@@ -339,7 +350,7 @@ class Store {
 
   disconnectDrive() {
     this.drive.signOut();
-    this.meta = { ...this.meta, mode: "local", fileId: null, version: null, link: null, pending: [], email: null, adopting: false };
+    this.meta = { ...this.meta, mode: "local", fileId: null, version: null, link: null, pending: [], email: null, adopting: false, lastBackup: null };
     this.base = null;
     this.persist();
     this._status();
@@ -451,6 +462,7 @@ class Store {
       this.persist();
       this._status();
       if (later.length) this._again = true;
+      this._backupIfDue(result.data);
     } catch (err) {
       if (err instanceof AuthError) this._status();
       else this._status("error", err.message || "Couldn't reach Google Drive.");
@@ -459,6 +471,27 @@ class Store {
       this.emit(JSON.stringify(this.data) === before ? "status" : "data");
       if (this._again) { this._again = false; this.syncSoon(300); }
     }
+  }
+
+  /** Once a week, keep a copy of the Drive file next to it. Best effort: never blocks or breaks a sync. */
+  async _backupIfDue(data) {
+    if (this._backingUp || !data?.entries?.length || Date.now() - (this.meta.lastBackup || 0) < BACKUP_EVERY) return;
+    this._backingUp = true;
+    try {
+      const name = `savings-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      await this.drive.create({ ...data, exported: new Date().toISOString() }, { name, kind: "backup" });
+      this.meta.lastBackup = Date.now();
+      lsSet(KEY_META, this.meta);
+      const old = (await this.drive.backups()).slice(BACKUPS_KEPT);
+      for (const f of old) await this.drive.remove(f.id);
+    } catch { /* try again on the next sync */ }
+    finally { this._backingUp = false; }
+  }
+
+  /** The user saved a backup file themselves */
+  noteManualBackup() {
+    this.meta.lastManualBackup = Date.now();
+    lsSet(KEY_META, this.meta);
   }
 
   _status(state = null, text = "") {

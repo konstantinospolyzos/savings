@@ -1,5 +1,5 @@
 // Insights: what your logs and your budget say, with a personal action plan.
-import { h, chip, dot, segmented, splitBar, kv, appIcon, toast } from "../ui.js";
+import { h, chip, dot, segmented, splitBar, kv, appIcon, toast, icon } from "../ui.js";
 import { chart } from "../charts.js";
 import {
   COLORS, MONTHS, NOTE_TAGS, CUR, CURRENCIES, inSweden, localSym, secondSym, brokersText, hasMoney, CAPITAL_GAINS_TAX, ISK_TAX_FREE, CATEGORY_COLORS,
@@ -17,6 +17,29 @@ const head = (title, sub = null, right = null) => h("div", { class: "card-head" 
   right);
 const signedPct = (x, d = 0) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(d)}%`;
 const syncNow = () => { if (store.mode === "drive" && !store.drive.tokenValid()) store.syncFromTap(); };
+
+/** Tap a card's title to fold it down to just the title. Remembered per card on this device. */
+const FOLDED_BY_DEFAULT = new Set(["notes", "costs", "growth", "months"]);
+function foldable(key, el) {
+  if (!el) return el;
+  const top = el.firstElementChild;
+  const saved = store.pref("insights_folded", {}) || {};
+  let folded = key in saved ? Boolean(saved[key]) : FOLDED_BY_DEFAULT.has(key);
+  const set = () => { el.classList.toggle("folded", folded); top.setAttribute("aria-expanded", String(!folded)); };
+  const flip = () => {
+    folded = !folded;
+    set();
+    store.setPref("insights_folded", { ...(store.pref("insights_folded", {}) || {}), [key]: folded });
+  };
+  el.classList.add("foldable");
+  top.append(icon("chevron", 16, "fold-chev"));
+  top.setAttribute("role", "button");
+  top.setAttribute("tabindex", "0");
+  top.addEventListener("click", (ev) => { if (!ev.target.closest("button, input, a")) flip(); });
+  top.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); flip(); } });
+  set();
+  return el;
+}
 
 // ---------------------------------------------------------------------------
 function kpis(snap, summ, inv) {
@@ -413,14 +436,14 @@ export function renderInsights(ctx) {
   else { monthly = roundTo10(Math.max(mean(recent.map((f) => f.to_inv)) || 0, 0)); source = "your recent average"; }
   return [`Based on ${mShort(recent[0].month)} – ${mShort(recent.at(-1).month)} and your budget`,
     kpis(snap, summ, inv),
-    actionsCard(buildActions(snap, summ, tags, fund, inv, recent)),
-    monthChartCard(recent, snap),
-    tripCard(tripComparison(recent), recent),
-    notesCard(tags, quietMonths(recent), fund),
-    incomeCard(incomeAnalysis(es)),
-    investmentsCard(inv, ctx),
-    yearCostsCard(snap),
-    growthCard(investedSek(es.at(-1)), monthly, snap.fx, source),
-    monthsCard(recent),
+    foldable("actions", actionsCard(buildActions(snap, summ, tags, fund, inv, recent))),
+    foldable("chart", monthChartCard(recent, snap)),
+    foldable("trips", tripCard(tripComparison(recent), recent)),
+    foldable("notes", notesCard(tags, quietMonths(recent), fund)),
+    foldable("income", incomeCard(incomeAnalysis(es))),
+    foldable("investments", investmentsCard(inv, ctx)),
+    foldable("costs", yearCostsCard(snap)),
+    foldable("growth", growthCard(investedSek(es.at(-1)), monthly, snap.fx, source)),
+    foldable("months", monthsCard(recent)),
     h("div", { class: "hint page-foot" }, "How this is worked out: “saved” = change in your bank savings + money put into investments (when you log “Added this month”; otherwise the change in invested value, which also includes market moves). “Spending” = income − saved. Notes are read for words like trip, gift, bought and bonus. Rules of thumb, not financial advice.")];
 }

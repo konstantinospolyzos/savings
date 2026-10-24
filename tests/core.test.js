@@ -1,0 +1,204 @@
+// Tests for the calculations in js/core.js. Every expected number is worked out by hand,
+// so a change that moves a figure on the phone shows up here first.
+// Run: npm test   (or: node --test)
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as c from "../js/core.js";
+
+const close = (actual, expected, tol = 0.01) =>
+  assert.ok(Math.abs(actual - expected) <= tol, `expected ≈ ${expected}, got ${actual}`);
+const NBSP = "\u00a0";
+
+// A month as the app stores it. Rate 0.09 = 1 kr is 0.09 € (1 € ≈ 11.11 kr).
+const entry = (month, o = {}) => ({ month, income_sek: 40000, bank_sek: 100000, invested_eur: 10000,
+  sek_to_eur: 0.09, added_eur: null, comment: "", trip: null, ...o });
+
+test.beforeEach(() => c.configure({ settings: {} }));   // Sweden, SEK + EUR
+
+// ---------------------------------------------------------------------------
+test("parseNumber reads the ways people type amounts", () => {
+  assert.equal(c.parseNumber("42 086"), 42086);
+  assert.equal(c.parseNumber("42,086"), 42086);           // comma as thousands
+  assert.equal(c.parseNumber("4092.50"), 4092.5);
+  assert.equal(c.parseNumber("4 092,50"), 4092.5);        // comma as decimal
+  assert.equal(c.parseNumber("0,0885"), 0.0885);
+  assert.equal(c.parseNumber("−500 kr"), -500);
+  assert.equal(c.parseNumber("€1,234.56"), 1234.56);
+  assert.equal(c.parseNumber(""), null);
+  assert.equal(c.parseNumber("abc"), null);
+});
+
+test("money formatting: kronor after, euros before, halves to even", () => {
+  assert.equal(c.fmtSek(1234.5), `1${NBSP}234${NBSP}kr`);  // like Python: 1234.5 -> 1234
+  assert.equal(c.fmtSek(1235.5), `1${NBSP}236${NBSP}kr`);
+  assert.equal(c.fmtEur(1234), "€1,234");
+  assert.equal(c.fmtEur(-50, 0, true), "−€50");
+  assert.equal(c.fmtSek(0.4, true), `+0${NBSP}kr`);          // no "−0"
+});
+
+test("exchange rate typed either way round", () => {
+  close(c.rateFromInput(11.07), 1 / 11.07, 1e-9);          // "1 € = 11.07 kr"
+  assert.equal(c.rateFromInput(0.09, 0.09), 0.09);         // typed as kr -> € by mistake
+  assert.equal(c.rateFromInput(0), null);
+});
+
+// ---------------------------------------------------------------------------
+test("saved and spending with “Added this month” logged", () => {
+  const [f] = c.monthFlows([
+    entry("2026-01"),
+    entry("2026-02", { bank_sek: 105000, invested_eur: 11000, added_eur: 450 }),
+  ]);
+  assert.equal(f.bank_d, 5000);
+  close(f.to_inv, 450 / 0.09);                  // 5 000 kr put into investments
+  close(f.saved, 10000);                        // 5 000 bank + 5 000 invested
+  close(f.spending, 30000);                     // 40 000 income − 10 000 saved
+  close(f.rate, 0.25);
+  assert.equal(f.market, 550);                  // 1 000 € up, 450 € of it was yours
+  assert.equal(f.exact, true);
+});
+
+test("without “Added”, market moves count as saving", () => {
+  const [f] = c.monthFlows([entry("2026-01"), entry("2026-02", { invested_eur: 9100 })]);
+  close(f.to_inv, -900 / 0.09);                 // a 900 € market drop...
+  close(f.spending, 50000);                     // ...shows up as 10 000 kr extra "spending"
+  assert.equal(f.market, null);
+  assert.equal(f.exact, false);
+});
+
+test("summarize averages over the months", () => {
+  const flows = c.monthFlows([
+    entry("2026-01"),
+    entry("2026-02", { bank_sek: 110000 }),     // saved 10 000
+    entry("2026-03", { bank_sek: 108000 }),     // saved −2 000
+  ]);
+  const s = c.summarize(flows);
+  assert.equal(s.n, 2);
+  assert.equal(s.saved, 4000);
+  assert.equal(s.spending, 36000);
+  close(s.rate, 0.1);
+});
+
+// ---------------------------------------------------------------------------
+test("trip months: flagged beats the note, notes are a guess", () => {
+  assert.deepEqual(c.tripStatus(entry("2026-01", { comment: "Flight to UK" })), [true, false]);
+  assert.deepEqual(c.tripStatus(entry("2026-01", { comment: "Flight to UK", trip: false })), [false, true]);
+  assert.deepEqual(c.tripStatus(entry("2026-01", { comment: "Bought skis" })), [false, false]);
+});
+
+test("what trips cost: gap and yearly extra", () => {
+  const flows = c.monthFlows([
+    entry("2026-01"),
+    entry("2026-02", { bank_sek: 110000 }),               // normal, spent 30 000
+    entry("2026-03", { bank_sek: 100000, trip: true }),   // trip, spent 50 000
+    entry("2026-04", { bank_sek: 110000 }),               // normal, spent 30 000
+    entry("2026-05", { bank_sek: 100000, trip: true }),   // trip, spent 50 000
+  ]);
+  const t = c.tripComparison(flows);
+  assert.equal(t.trip.spending, 50000);
+  assert.equal(t.other.spending, 30000);
+  assert.equal(t.gap, 20000);
+  assert.equal(t.per_year, 120000);             // 20 000 × (2 of 4 months) × 12
+  assert.equal(t.guessed, 2);
+  assert.equal(c.travelFund(flows).per_month, 10000);
+});
+
+// ---------------------------------------------------------------------------
+test("income: average, highest, lowest, euros and year-on-year", () => {
+  const es = [];
+  for (let i = 0; i < 15; i++) es.push(entry(c.addMonths("2025-08", i), { income_sek: 40000, sek_to_eur: 0.09 }));
+  es[14].income_sek = 46000;                    // 2026-10, latest
+  es[12].income_sek = 34000;                    // 2026-08
+  es[14].sek_to_eur = 0.1;
+  const a = c.incomeAnalysis(es);
+  assert.equal(a.n, 12);
+  assert.equal(a.avg, 40000);                   // +6 000 and −6 000 cancel out
+  assert.equal(a.top.month, "2026-10");
+  assert.equal(a.low.month, "2026-08");
+  close(a.avg_eur, (11 * 40000 * 0.09 - 6000 * 0.09 + 46000 * 0.1) / 12);  // each month at its own rate
+  close(a.yoy, 0);                              // same total as a year earlier
+});
+
+// ---------------------------------------------------------------------------
+test("investments: 30% tax on the gain, worked out in kronor", () => {
+  const es = [entry("2026-09"), entry("2026-10", { invested_eur: 11000, sek_to_eur: 0.1 })];
+  const data = { settings: { inv_basis: { amount: 100000, currency: "SEK", as_of: "2026-10" } } };
+  const inv = c.investmentStatus(data, es);
+  close(inv.value_sek, 110000);
+  close(inv.gain_sek, 10000);
+  close(inv.tax_sek, 3000);
+  close(inv.after_sek, 107000);
+  close(inv.tax, 300);                          // in euros at today's rate
+  close(inv.after, 10700);
+  assert.equal(inv.isk_tax_year, 0);            // under the 300 000 kr ISK allowance
+});
+
+test("investments: a loss means no tax, cost in euros uses that month's rate", () => {
+  const es = [entry("2026-09", { sek_to_eur: 0.08 }), entry("2026-10", { invested_eur: 8000, sek_to_eur: 0.1 })];
+  const data = { settings: { inv_basis: { amount: 8000, currency: "EUR", as_of: "2026-09" } } };
+  const inv = c.investmentStatus(data, es);
+  close(inv.cost_sek, 100000);                  // 8 000 € at 0.08
+  close(inv.gain_sek, -20000);                  // same euros, stronger krona: a loss in kronor
+  assert.equal(inv.tax_sek, 0);
+});
+
+test("ISK comparison tax above the allowance", () => {
+  const inv = c.investmentStatus({ settings: {} }, [entry("2026-10", { invested_eur: 40000, sek_to_eur: 0.1 })]);
+  close(inv.isk_tax_year, 100000 * 0.01065);    // 400 000 − 300 000 tax-free
+});
+
+test("growth illustration", () => {
+  const [total, putIn] = c.futureValue(10000, 1000, 10, 0);
+  assert.equal(total, 130000);
+  assert.equal(putIn, 130000);
+  close(c.futureValue(10000, 0, 10, 0.05)[0], 10000 * 1.05 ** 10);
+  close(c.futureValue(0, 1000, 1, 0.05)[0], 1000 * 0.05 / (1.05 ** (1 / 12) - 1));   // 12 monthly deposits, 5% a year
+});
+
+// ---------------------------------------------------------------------------
+test("payday: the 25th, or the last banking day before it", () => {
+  const pay = (m) => c.isoDay(c.paydayFor(m));
+  assert.equal(pay("2026-06"), "2026-06-25");   // Thursday
+  assert.equal(pay("2026-10"), "2026-10-23");   // 25th is a Sunday
+  assert.equal(pay("2026-04"), "2026-04-24");   // 25th is a Saturday
+  assert.equal(pay("2026-12"), "2026-12-23");   // 25th and 24th are holidays
+  assert.equal(c.paydayReason(c.paydayFor("2026-12")), "Christmas Day");
+});
+
+test("Swedish holidays move with Easter and Midsummer", () => {
+  assert.equal(c.isoDay(c.easterSunday(2026)), "2026-04-05");
+  assert.equal(c.isoDay(c.easterSunday(2027)), "2027-03-28");
+  const h = c.bankHolidays(2026);
+  assert.equal(h.get("2026-04-03"), "Good Friday");
+  assert.equal(h.get("2026-05-14"), "Ascension Day");
+  assert.equal(h.get("2026-06-19"), "Midsummer Eve");
+});
+
+// ---------------------------------------------------------------------------
+test("budget: costs, goals, saving, buffer first", () => {
+  const expenses = [{ amount: 12000, per: "month", active: true, currency: "SEK" },
+    { amount: 36000, per: "year", active: true, currency: "SEK" }];          // 3 000 a month
+  const goals = [{ kind: "year", amount: 24000, active: true }];            // 2 000 a month
+  const b = c.computeBudget(40000, expenses, goals, "2026-10", 20, 30000, true, 0.09, 3);
+  assert.equal(b.fixed, 15000);
+  assert.equal(b.goals, 2000);
+  assert.equal(b.free, 23000);
+  assert.equal(b.future, 8000);                 // 20% of 40 000
+  assert.equal(b.living, 15000);
+  assert.equal(b.target, 45000);                // 3 months of fixed costs
+  assert.equal(b.shortfall, 15000);
+  assert.equal(b.to_buffer, 8000);              // buffer first: all of it
+  assert.equal(b.invest, 0);
+});
+
+test("budget: saving is capped by what's free, small shortfalls count as full", () => {
+  const b = c.computeBudget(20000, [{ amount: 18000, per: "month", active: true }], [], "2026-10", 30, 53800, false, 0.09, 3);
+  assert.equal(b.future, 2000);                 // wanted 6 000, only 2 000 free
+  assert.equal(b.capped, true);
+  assert.equal(b.shortfall, 0);                 // 200 kr short of 54 000
+  assert.equal(b.invest, 2000);
+});
+
+test("euro costs are converted at the budget rate", () => {
+  close(c.expenseMonthlySek({ amount: 120, per: "year", currency: "EUR" }, 0.1), 100);
+});
