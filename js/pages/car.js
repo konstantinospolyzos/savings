@@ -265,24 +265,25 @@ const TONE_CHIP = { up: "All good", warn: "Soon", down: "Change now" };
 // ---------------------------------------------------------------------------
 // Your tyres, one by one: a car seen from above with its four tyres
 // ---------------------------------------------------------------------------
-// The car (viewBox 120 x 260, the front at the top) and where its tyres are (13 x 36 each).
-const WHEEL = { FL: [13, 44], FR: [94, 44], RL: [13, 180], RR: [94, 180] };
+// The car (viewBox 140 x 202, the front at the top): a compact hatchback, about 2.2 times as long as wide,
+// with the axles where a real car has them. Its tyres are 15 x 32 each.
+const WHEEL = { FL: [19, 31], FR: [106, 31], RL: [19, 142], RR: [106, 142] };
 function carSvg(wheelClass = () => "") {
   const wheels = POS_KEYS.map((p) => {
     const [x, y] = WHEEL[p];
-    return `<g class="cm-wheel ${wheelClass(p)}" data-pos="${p}"><rect class="cm-hit" x="${p.endsWith("L") ? 0 : 82}" y="${y - 12}" width="38" height="60"/>`
-      + `<rect class="cm-tyre" x="${x}" y="${y}" width="13" height="36" rx="4"/>`
-      + `<path class="cm-tread" d="M${x + 3} ${y + 8}h7M${x + 3} ${y + 14}h7M${x + 3} ${y + 20}h7M${x + 3} ${y + 26}h7"/></g>`;
+    return `<g class="cm-wheel ${wheelClass(p)}" data-pos="${p}"><rect class="cm-hit" x="${p.endsWith("L") ? 0 : 96}" y="${y - 14}" width="44" height="60"/>`
+      + `<rect class="cm-tyre" x="${x}" y="${y}" width="15" height="32" rx="4.5"/>`
+      + `<path class="cm-tread" d="M${x + 3.5} ${y + 7}h8M${x + 3.5} ${y + 12.7}h8M${x + 3.5} ${y + 18.4}h8M${x + 3.5} ${y + 24.1}h8"/></g>`;
   }).join("");
-  return `<svg class="tm-car" viewBox="0 0 120 260" aria-hidden="true">`
-    + `<path class="cm-body" d="M25.5 88L16.5 85v11l9 1.5zM94.5 88l9-3v11l-9 1.5z"/>`
-    + `<path class="cm-body" d="M34 14C40 7 80 7 86 14C93 22 95 40 95 60V205C95 230 92 246 84 250C72 255 48 255 36 250C28 246 25 230 25 205V60C25 40 27 22 34 14Z"/>`
-    + `<path class="cm-glass" d="M34 101H86L80.5 79Q60 73 39.5 79Z"/>`
-    + `<rect class="cm-roof" x="34" y="105" width="52" height="68" rx="9"/>`
-    + `<path class="cm-glass" d="M35 177H85L81.5 196Q60 201 38.5 196Z"/>`
-    + `<path class="cm-line" d="M44 76Q46 46 48 21M76 76Q74 46 72 21"/>`
-    + `<path class="cm-lamp" d="M33.5 16.5q4-3.5 11-4.2M86.5 16.5q-4-3.5-11-4.2"/>`
-    + `<path class="cm-tail" d="M33 246.5q5 2.5 11 3M87 246.5q-5 2.5-11 3"/>`
+  return `<svg class="tm-car" viewBox="0 0 140 202" aria-hidden="true">`
+    + `<path class="cm-body" d="M27.5 71L18 68.5v11l9.5 1.5zM112.5 71l9.5-2.5v11l-9.5 1.5z"/>`
+    + `<path class="cm-body" d="M44 8.5C56 5.5 84 5.5 96 8.5C106 11 112 18 113 30V172C113 185 108 191 98 193C86 195.5 54 195.5 42 193C32 191 27 185 27 172V30C28 18 34 11 44 8.5Z"/>`
+    + `<path class="cm-glass" d="M37 67Q70 60 103 67L98 89H42Z"/>`
+    + `<rect class="cm-roof" x="42" y="92" width="56" height="50" rx="9"/>`
+    + `<path class="cm-glass" d="M42 145H98L95 163Q70 168 45 163Z"/>`
+    + `<path class="cm-line" d="M49 64Q51 38 53 15M91 64Q89 38 87 15"/>`
+    + `<path class="cm-lamp" d="M34 17Q40 11 50 10M106 17Q100 11 90 10"/>`
+    + `<path class="cm-tail" d="M33 185Q39 190.5 49 191.5M107 185Q101 190.5 91 191.5"/>`
     + `${wheels}</svg>`;
 }
 
