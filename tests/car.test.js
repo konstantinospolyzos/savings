@@ -524,3 +524,20 @@ test("fixed costs: the cars saved before keep 787 kr insurance and 863 kr parkin
     { type: "parking", amount: 500, from: "Jan" }]), []);
   assert.equal(car.normalizeFixed([{ type: "other", amount: 99, from: "2025-01", day: 45 }])[0].day, 1);
 });
+
+test("the purchase: date, price, seller and the papers, not a running cost", () => {
+  const c = car.normalizeCar({ make: "Volvo", purchase: { date: "2025-03-14", price: "245000", seller: "  Bilia Göteborg ",
+    docs: [{ id: "p1", drive: "d1" }, { id: "p2", drive: null, pdf: true, name: "Faktura 1043.pdf" }, { id: "" }, { drive: "x" }] },
+  logs: [log("2025-03-20", "fuel", { km: 1000, litres: 40, cost: 700 })], fixed: [] });
+  assert.deepEqual(c.purchase, { date: "2025-03-14", price: 245000, seller: "Bilia Göteborg",
+    docs: [{ id: "p1", drive: "d1" }, { id: "p2", drive: null, pdf: true, name: "Faktura 1043.pdf" }] });
+  assert.equal(car.carSummary(c, day(2025, 10, 1)).costs_all, 700);        // the price isn't in the costs
+  assert.deepEqual(car.normalizeCar({ purchase: { date: "2025-02-30", price: -5 } }).purchase, { date: null, price: null, seller: "", docs: [] });
+  // PDFs on logs too
+  assert.deepEqual(car.normalizeCar({ logs: [{ date: "2026-01-01", type: "service", km: 5, photos: [{ id: "a", pdf: true, name: "x.pdf" }, { id: "b", pdf: "yes" }] }] }).logs[0].photos,
+    [{ id: "a", drive: null, pdf: true, name: "x.pdf" }, { id: "b", drive: null }]);
+  // the details sheet saves it; the round trip keeps it
+  let d = applyOp(emptyData(), { type: "putCar", car: { ...c, logs: undefined } });
+  assert.deepEqual(d.cars[0].purchase, c.purchase);
+  assert.deepEqual(normalize(JSON.parse(JSON.stringify(d))).cars[0].purchase, c.purchase);
+});

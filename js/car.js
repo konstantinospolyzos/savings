@@ -65,7 +65,8 @@ const MONTH_RX = /^\d{4}-\d{2}$/;
 export const newLogId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 export const newCarId = () => `car-${newLogId()}`;
 export const emptyCar = (id = newCarId()) => ({ id, name: "", make: "", model: "", year: null, plate: "", fuel: "95",
-  first_registered: null, service_km: null, service_months: null, fixed: [], logs: [] });
+  first_registered: null, service_km: null, service_months: null, fixed: [],
+  purchase: { date: null, price: null, seller: "", docs: [] }, logs: [] });
 export const byDateKm = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.km ?? -1) - (b.km ?? -1));
 
 const optPos = (v) => {
@@ -74,6 +75,20 @@ const optPos = (v) => {
   return Number.isFinite(n) && n >= 0 ? n : null;
 };
 const str = (v, max = 60) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+
+/** Photos and PDFs (invoices, papers): {id, drive, pdf, name}. The file is on the device and/or in Drive. */
+export function normalizeFiles(raw, max = 12) {
+  return (Array.isArray(raw) ? raw : []).filter((p) => p && typeof p.id === "string" && p.id).slice(0, max)
+    .map((p) => ({ id: p.id, drive: typeof p.drive === "string" && p.drive ? p.drive : null,
+      ...(p.pdf === true ? { pdf: true, name: str(p.name, 80) } : {}) }));
+}
+
+/** When and how the car was bought, and the papers (the invoice, the contract). Not a running cost. */
+function normalizePurchase(raw) {
+  const p = raw && typeof raw === "object" ? raw : {};
+  return { date: typeof p.date === "string" && isRealDay(p.date) ? p.date : null, price: optPos(p.price) || null,
+    seller: str(p.seller), docs: normalizeFiles(p.docs, 20) };
+}
 
 function normalizeLogs(raw) {
   const seen = new Set();
@@ -92,8 +107,7 @@ function normalizeLogs(raw) {
       fitted: type === "tyre_buy" ? l.fitted !== false : null,   // new tyres put on at once: also a tyre change
       note: typeof l.note === "string" ? l.note : "",
       // invoice photos: the picture is kept on the device and (with Drive) as a file in Drive
-      photos: (Array.isArray(l.photos) ? l.photos : []).filter((p) => p && typeof p.id === "string" && p.id).slice(0, 12)
-        .map((p) => ({ id: p.id, drive: typeof p.drive === "string" && p.drive ? p.drive : null })),
+      photos: normalizeFiles(l.photos),
     });
   }
   return logs.sort(byDateKm);
@@ -205,6 +219,7 @@ export function normalizeCar(raw, id = null) {
     service_km: optPos(c.service_km) || null,
     service_months: months ? Math.round(months) : null,
     fixed: Array.isArray(c.fixed) ? normalizeFixed(c.fixed) : fixedFromOld(c),
+    purchase: normalizePurchase(c.purchase),
     logs: normalizeLogs(c.logs),
   };
 }

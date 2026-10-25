@@ -1,4 +1,5 @@
-// Invoice photos for car logs. A log only holds references ({id, drive}); the pictures themselves live
+// Invoice photos and PDFs for car logs and the car's purchase papers. A log only holds references
+// ({id, drive, pdf, name}); the files themselves live
 // in Google Drive, as files in the Savings Tracker folder next to the data file. The phone keeps a
 // photo only until it's uploaded (so you can attach one without signal), then deletes its copy.
 // Without Drive ("this device only") the phone is the only place, so it keeps them.
@@ -88,6 +89,21 @@ export async function removePhotos(store, refs) {
   }
 }
 
+const fileName = (car, what, date, p) =>
+  `${car.make || "car"}-${what}-${date || "papers"}-${p.id}.${p.pdf ? "pdf" : "jpg"}`.toLowerCase().replace(/[^a-z0-9.-]+/g, "-");
+
+/** Upload the files of a list that aren't in Drive yet: a Map of photo id -> Drive id. */
+async function uploadList(store, car, what, date, refs) {
+  const done = new Map();
+  for (const p of (refs || []).filter((x) => !x.drive)) {
+    const blob = await getLocal(p.id);
+    if (!blob) continue;                                   // added on another device: it uploads it
+    const made = await store.drive.uploadPhoto(blob, fileName(car, what, date, p));
+    if (made?.id) { done.set(p.id, made.id); remember(p.id, blob); }
+  }
+  return done;
+}
+
 /** After each sync: upload the photos that aren't in Drive yet, and note their Drive ids in the logs. */
 let uploading = false;
 export async function uploadPending(store) {
@@ -95,16 +111,16 @@ export async function uploadPending(store) {
   uploading = true;
   try {
     for (const car of store.data.cars || []) {
+      // the purchase papers
+      const papers = await uploadList(store, car, "purchase", car.purchase?.date, car.purchase?.docs);
+      if (papers.size) {
+        const fresh = store.data.cars.find((c) => c.id === car.id);
+        if (fresh) store.saveCar({ ...fresh, purchase: { ...fresh.purchase, docs: fresh.purchase.docs.map((p) => (papers.has(p.id) ? { ...p, drive: papers.get(p.id) } : p)) } });
+        for (const id of papers.keys()) await deleteLocal(id);
+      }
       for (const log of car.logs) {
-        const todo = (log.photos || []).filter((p) => !p.drive);
-        if (!todo.length) continue;
-        const done = new Map();
-        for (const p of todo) {
-          const blob = await getLocal(p.id);
-          if (!blob) continue;                                   // taken on another device: it uploads it
-          const made = await store.drive.uploadPhoto(blob, `${car.make || "car"}-${log.type}-${log.date}-${p.id}.jpg`.toLowerCase().replace(/[^a-z0-9.-]+/g, "-"));
-          if (made?.id) { done.set(p.id, made.id); remember(p.id, blob); }
-        }
+        if (!(log.photos || []).some((p) => !p.drive)) continue;
+        const done = await uploadList(store, car, log.type, log.date, log.photos);
         if (!done.size) continue;
         // the log as it is now (it may have changed meanwhile)
         const fresh = store.data.cars.find((c) => c.id === car.id)?.logs.find((l) => l.id === log.id);
