@@ -9,7 +9,7 @@ import { renderInsights } from "./pages/insights.js";
 import { renderWelcome } from "./pages/welcome.js";
 import { openMonthSheet } from "./pages/month.js";
 import { openSettings } from "./pages/settings.js";
-import { renderCar, renderCarLog, renderCarInsights, openNewCarLog, carHeading, addFixedCostLogs } from "./pages/car.js";
+import { renderCar, renderCarLog, renderCarInsights, renderGarage, openNewCarLog, openCarSheet, carHeading, addFixedCostLogs } from "./pages/car.js";
 import { uploadPending } from "./photos.js";
 
 const TABS = [
@@ -24,6 +24,7 @@ const CAR_TABS = [
   { key: "car", title: "Car", icon: "car", render: renderCar, heading: carHeading },
   { key: "car-log", title: "Log", icon: "history", render: renderCarLog },
   { key: "car-insights", title: "Insights", icon: "charts", render: renderCarInsights },
+  { key: "car-garage", title: "Garage", icon: "garage", render: renderGarage },
 ];
 const ALL_TABS = [...TABS, ...CAR_TABS.filter((t) => !t.exit)];
 const tabKeys = ALL_TABS.map((t) => t.key);
@@ -165,7 +166,7 @@ function render() {
   const [subtitle, ...content] = tab.render(ctx);
   const title = tab.heading ? tab.heading(ctx) : tab.title;
   navTitle.textContent = title;
-  addBtn.setAttribute("aria-label", inCar() ? "Add a car log" : "Add a month");
+  addBtn.setAttribute("aria-label", current === "car-garage" ? "Add a car" : inCar() ? "Add a car log" : "Add a month");
   // the car button opens the car monitor; in there it's a € button back to your savings
   carBtn.replaceChildren(icon(inCar() ? "euro" : "car", 25));
   carBtn.setAttribute("aria-label", inCar() ? "Back to Savings" : "Car monitor");
@@ -186,7 +187,8 @@ function render() {
 // ---------------------------------------------------------------------------
 document.getElementById("settings-btn").addEventListener("click", () => store.ready && openSettings(context()));
 carBtn.addEventListener("click", () => store.ready && go(inCar() ? "savings" : store.pref("car_tab", "car")));
-const addNew = () => (inCar() ? openNewCarLog(context()) : openMonthSheet(context(), null));
+// +: a month; in the car monitor a log for the car shown, or in the Garage a car
+const addNew = () => (current === "car-garage" ? openCarSheet(context(), null) : inCar() ? openNewCarLog(context()) : openMonthSheet(context(), null));
 addBtn.addEventListener("click", () => store.ready && addNew());
 privacyBtn.addEventListener("click", () => setPrivacy(!store.pref("privacy", false), true));
 syncBtn.addEventListener("click", () => {

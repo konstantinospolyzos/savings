@@ -99,7 +99,7 @@ function fileGrid(initial, { max = 12, from = "this log", readOnly = false } = {
       if (added.has(p.id)) { added.delete(p.id); deleteLocal(p.id); } else removed.push(p);
       draw();
     } }));
-    if (p.pdf) { t.append(icon("doc", 28), h("span", { class: "invoice-name" }, p.name || "PDF")); return t; }
+    if (p.pdf) { t.append(icon("pdf", 28), h("span", { class: "invoice-name" }, p.name || "PDF")); return t; }
     if (readOnly && thumbs.has(p.id)) { t.append(h("img", { src: thumbs.get(p.id), alt: "" })); return t; }
     loadPhoto(store, p).then((blob) => {
       if (!blob) { t.append(icon("cloud", 22, "invoice-missing")); return; }
@@ -544,6 +544,14 @@ function fuelPriceCard(car, sum, today) {
 // ---------------------------------------------------------------------------
 // Real consumption and fuel cost per km, from full tank to full tank
 // ---------------------------------------------------------------------------
+/** A tile with the number big and its unit small, so "6.6 l/100 km" fits a phone. */
+const fmetric = (cap, color, [num, unit], sub, money = false) => h("div", { class: "fmetric" },
+  h("div", { class: "cap-row" }, dot(color, 7), h("span", { class: "caption" }, cap)),
+  // a long unit (kWh/100 km) goes under the number when the tile is too narrow for both
+  h("div", { class: `fmetric-value ${money ? "amt" : ""} ${unit && unit.length > 8 ? "wrap" : ""}` }, num,
+    unit ? h("span", { class: "fmetric-unit" }, ` ${unit}`) : null),
+  h("div", { class: `fmetric-sub ${money ? "amt" : ""}` }, sub));
+
 function consumptionCard(car, sum, today, ctx) {
   const en = energy(car), f = sum.fuel;
   const kwh = en.unit === "kWh";
@@ -559,11 +567,7 @@ function consumptionCard(car, sum, today, ctx) {
         : `Every time you ${kwh ? "charge" : "refuel"}, log the odometer, the ${en.amount.toLowerCase()} and the price. From the second ${tank} on, the app works out what the car really uses and what each kilometre costs.`),
       actions(logBtn));
   }
-  // the number big, its unit small, so "6.6 l/100 km" fits a phone
-  const metric = (cap, color, [num, unit], sub, money = false) => h("div", { class: "fmetric" },
-    h("div", { class: "cap-row" }, dot(color, 7), h("span", { class: "caption" }, cap)),
-    h("div", { class: `fmetric-value ${money ? "amt" : ""}` }, num, unit ? h("span", { class: "fmetric-unit" }, ` ${unit}`) : null),
-    h("div", { class: `fmetric-sub ${money ? "amt" : ""}` }, sub));
+  const metric = fmetric;
   const chips = [];
   if (f.latest) chips.push(chip(`Latest ${f.latest.per100.toFixed(1)} ${en.per100}`, "flat"));
   if (f.segments.length >= 3) chips.push(chip(`Best ${f.best.per100.toFixed(1)}  ·  worst ${f.worst.per100.toFixed(1)}`, "flat"));
@@ -860,6 +864,61 @@ export function renderCar(ctx) {
   if (!sum.n) return [subtitle, picker, noLogsCard(ctx, car), tyreCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), fixedCard(car, ctx), detailsCard(car, ctx)];
   return [subtitle, picker, odoHero(sum, today), stats(sum, today), consumptionCard(car, sum, today, ctx), tyreCard(car, sum, today, ctx),
     serviceCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), fixedCard(car, ctx), detailsCard(car, ctx)];
+}
+
+// ---------------------------------------------------------------------------
+// Garage page: all your cars at a glance
+// ---------------------------------------------------------------------------
+const serviceEvery = (car) => [car.service_km ? fmtKm(car.service_km) : null, car.service_months ? `${car.service_months} months` : null]
+  .filter(Boolean).join(" or ") || "—";
+
+function garageCard(car, ctx, showing) {
+  const today = ctx.today;
+  const sum = carSummary(car, today);
+  const en = energy(car), kwh = en.unit === "kWh";
+  const f = sum.fuel;
+  const recent = f.recent.n >= 2 && f.recent.per100 !== null;
+  const v = recent ? f.recent : f.all;
+  const L = sum.latest;
+  const makeModel = [car.make, car.model].filter(Boolean).join(" ");
+  const pu = car.purchase;
+  const sec = (title, ...children) => h("div", { class: "garage-sec" }, h("div", { class: "caption" }, title), ...children);
+  const open = () => { store.setPref(PREF, car.id); ctx.go("car"); window.scrollTo(0, 0); };
+  return card(
+    head(carTitle(car), car.name && makeModel ? makeModel : null, showing ? chip("Showing", "flat") : null),
+    h("div", { class: "cap-row" }, dot(COLORS.blue), h("span", { class: "caption" }, "ODOMETER"),
+      L ? h("span", { class: "hint" }, `on ${dayText(L.date, today)}`) : null),
+    h("div", { class: "block-value" }, L ? fmtKm(L.km) : "—"),
+    h("div", { class: "muted" }, !L ? "No odometer reading yet" : sum.per_year !== null ? `≈ ${fmtKm(round100(sum.per_year))} a year` : plural(sum.n, "log")),
+    v.per100 !== null
+      ? h("div", { class: "fmetrics garage-use" },
+        fmetric(kwh ? "ENERGY USE" : "CONSUMPTION", COLORS.orange, [v.per100.toFixed(1), en.per100], recent ? "last 12 months" : "all your logs"),
+        fmetric(kwh ? "CHARGING COST" : "FUEL COST", COLORS.green, v.per_km !== null ? [plainNumber(v.per_km, 2), `${localSym()}/km`] : ["—", ""],
+          v.per_km !== null ? `${fmtSek(v.per_km * 100)} per 100 km` : "no prices logged", true))
+      : sec(kwh ? "ENERGY USE" : "CONSUMPTION", h("div", { class: "muted garage-none" },
+        `Shows from the second ${kwh ? "full charge" : "full tank"} logged with the odometer.`)),
+    sec("SPECS", h("div", { class: "kv-list" },
+      kv("Make and model", makeModel || "—", { amt: false }),
+      kv("Model year", car.year ? String(car.year) : "—", { amt: false }),
+      kv("Registration", car.plate || "—", { amt: false }),
+      kv("Runs on", FUEL_NAME[car.fuel], { amt: false }),
+      kv("First registered", car.first_registered ? mLong(car.first_registered) : "—", { amt: false }),
+      kv("Service every", serviceEvery(car), { amt: false }))),
+    sec("PURCHASE", h("div", { class: "kv-list" },
+      kv("Bought", [pu.date ? dayText(pu.date, today) : null, pu.price ? fmtSek(pu.price) : null].filter(Boolean).join("  ·  ") || "—"),
+      pu.seller ? kv("Bought from", pu.seller, { amt: false }) : null),
+    pu.docs.length ? fileGrid(pu.docs, { readOnly: true }).el
+      : h("div", { class: "muted garage-none" }, "No invoice or papers yet. Add them in Edit details.")),
+    actions(btn("Open", open), btn("Edit details", () => openCarSheet(ctx, car), "plain")));
+}
+
+export function renderGarage(ctx) {
+  const cars = ctx.data.cars;
+  if (!cars.length) return ["All your cars at a glance", noCarState(ctx)];
+  const shown = selectedCar(ctx.data);
+  return [cars.length > 1 ? `${cars.length} cars  ·  Open one for its logs and charts` : "Your car at a glance",
+    ...cars.map((c) => garageCard(c, ctx, cars.length > 1 && c === shown)),
+    h("button", { type: "button", class: "btn tinted wide garage-add", onclick: () => openCarSheet(ctx, null) }, "+  Add a car")];
 }
 
 // ---------------------------------------------------------------------------

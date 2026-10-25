@@ -634,6 +634,12 @@ body.privacy .crow-note { filter: blur(7px); -webkit-filter: blur(7px); }
 .viewer.zoom .viewer-pages { align-items: flex-start; }
 .viewer.zoom .viewer-page { width: 220%; max-width: none; }
 .papers .invoice-tile { background: var(--card2); }
+.garage-sec { margin-top: 16px; }
+.garage-sec .invoice-grid { margin-top: 10px; }
+.garage-sec .invoice-tile { background: var(--card2); }
+.garage-use { margin-top: 12px; }
+.garage-none { margin-top: 6px; font-size: 13.5px; }
+.garage-add { margin-top: 2px; }
 .fixed-list .crow:active { background: var(--fill); }
 .chart .dot-mark { stroke: var(--card); stroke-width: 1.5; }
 .segmented.car-picker button { overflow: hidden; text-overflow: ellipsis; }
@@ -659,6 +665,10 @@ body.privacy .crow-note { filter: blur(7px); -webkit-filter: blur(7px); }
 .form-input.auto { color: var(--gray); }
 .section-footer .use-now { color: var(--label); font-weight: 700; }
 .fmetric-unit { font-size: 14px; font-weight: 600; color: var(--label2); }
+.fmetric-value.wrap { white-space: normal; overflow: visible; }
+.fmetric .cap-row { flex-wrap: nowrap; }
+.fmetric .cap-row .caption { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fmetric-value.wrap .fmetric-unit { white-space: nowrap; display: inline-block; line-height: 18px; }
 .photo-box { margin: 2px 0 10px; display: flex; flex-direction: column; gap: 8px; }
 .photo-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 46px; border-radius: 12px;
   background: var(--info-bg); color: var(--blue); font-size: 16px; font-weight: 600; }
