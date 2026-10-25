@@ -265,26 +265,25 @@ const TONE_CHIP = { up: "All good", warn: "Soon", down: "Change now" };
 // ---------------------------------------------------------------------------
 // Your tyres, one by one: a car seen from above with its four tyres
 // ---------------------------------------------------------------------------
-// The car (viewBox 140 x 202, the front at the top): a compact hatchback, about 2.2 times as long as wide,
-// with the axles where a real car has them. Its tyres are 15 x 32 each.
-const WHEEL = { FL: [19, 31], FR: [106, 31], RL: [19, 142], RR: [106, 142] };
+// The car from above: your photo (img/car-top.webp, 1084 x 525 here), the front to the left. Its tyres where a
+// Seat Leon has them: the axles 21 % and 82 % along its 4.37 m, the track 1.54 m of its 1.80 m, 225/45 R17
+// tyres (63 cm across, 22.5 cm wide). Seen from above with the front to the left, the right side is at the top.
+const TYRE_AT = { FR: [152, 45], RR: [814, 45], FL: [152, 425], RL: [814, 425] };   // the corner of each, 156 x 55
+let carSvgN = 0;
 function carSvg(wheelClass = () => "") {
+  const glow = `tg${++carSvgN}`;
   const wheels = POS_KEYS.map((p) => {
-    const [x, y] = WHEEL[p];
-    return `<g class="cm-wheel ${wheelClass(p)}" data-pos="${p}"><rect class="cm-hit" x="${p.endsWith("L") ? 0 : 96}" y="${y - 14}" width="44" height="60"/>`
-      + `<rect class="cm-tyre" x="${x}" y="${y}" width="15" height="32" rx="4.5"/>`
-      + `<path class="cm-tread" d="M${x + 3.5} ${y + 7}h8M${x + 3.5} ${y + 12.7}h8M${x + 3.5} ${y + 18.4}h8M${x + 3.5} ${y + 24.1}h8"/></g>`;
+    const [x, y] = TYRE_AT[p];
+    const tread = Array.from({ length: 7 }, (_, i) => `M${x + 20 + i * 19.3} ${y + 11}v33`).join("");
+    return `<g class="cm-wheel ${wheelClass(p)}" data-pos="${p}">`
+      + `<rect class="cm-hit" x="${x - 70}" y="${y < 200 ? 0 : 330}" width="296" height="195"/>`
+      + `<rect class="cm-glow" x="${x}" y="${y}" width="156" height="55" rx="20" filter="url(#${glow})"/>`
+      + `<rect class="cm-tyre" x="${x}" y="${y}" width="156" height="55" rx="20"/>`
+      + `<path class="cm-tread" d="${tread}"/></g>`;
   }).join("");
-  return `<svg class="tm-car" viewBox="0 0 140 202" aria-hidden="true">`
-    + `<path class="cm-body" d="M27.5 71L18 68.5v11l9.5 1.5zM112.5 71l9.5-2.5v11l-9.5 1.5z"/>`
-    + `<path class="cm-body" d="M44 8.5C56 5.5 84 5.5 96 8.5C106 11 112 18 113 30V172C113 185 108 191 98 193C86 195.5 54 195.5 42 193C32 191 27 185 27 172V30C28 18 34 11 44 8.5Z"/>`
-    + `<path class="cm-glass" d="M37 67Q70 60 103 67L98 89H42Z"/>`
-    + `<rect class="cm-roof" x="42" y="92" width="56" height="50" rx="9"/>`
-    + `<path class="cm-glass" d="M42 145H98L95 163Q70 168 45 163Z"/>`
-    + `<path class="cm-line" d="M49 64Q51 38 53 15M91 64Q89 38 87 15"/>`
-    + `<path class="cm-lamp" d="M34 17Q40 11 50 10M106 17Q100 11 90 10"/>`
-    + `<path class="cm-tail" d="M33 185Q39 190.5 49 191.5M107 185Q101 190.5 91 191.5"/>`
-    + `${wheels}</svg>`;
+  return `<svg class="tm-car" viewBox="0 0 1084 525" aria-hidden="true">`
+    + `<defs><filter id="${glow}" x="-25%" y="-70%" width="150%" height="240%"><feGaussianBlur stdDeviation="10"/></filter></defs>`
+    + `<image class="cm-photo" href="img/car-top.webp" x="0" y="0" width="1084" height="525"/>${wheels}</svg>`;
 }
 
 const TONE_COLOR = { up: COLORS.green, warn: COLORS.orange, down: COLORS.red, flat: COLORS.gray3 };
@@ -312,13 +311,14 @@ function tyreLabel(t, onTap, row) {
     t.info?.tread ? h("div", { class: "tm-km" }, `${plainNumber(t.info.tread.mm, 1)} mm`, h("span", { class: "tm-long" }, " tread")) : null);
 }
 
-/** The car from above, with what each tyre has done around it. tyres: {FL: tyre, FR: ..., RL, RR} */
+/** The car from above, with what each tyre has done above and below it. tyres: {FL: tyre, FR: ..., RL, RR} */
 function tyreMap(tyres, onTap) {
   const carEl = h("div", { class: "tm-carwrap" });
   carEl.innerHTML = carSvg((p) => `tone-${tyres[p]?.tone || "flat"}`);
   for (const g of carEl.querySelectorAll("[data-pos]")) g.addEventListener("click", () => tyres[g.dataset.pos] && onTap(tyres[g.dataset.pos]));
-  const side = (cls, front, rear) => h("div", { class: `tm-side ${cls}` }, tyreLabel(tyres[front], onTap, "front"), tyreLabel(tyres[rear], onTap, "rear"));
-  return h("div", { class: "tyre-map" }, side("left", "FL", "RL"), carEl, side("right", "FR", "RR"));
+  // the front to the left: the right side of the car at the top, the left side at the bottom
+  const rowOf = (cls, front, rear) => h("div", { class: `tm-row ${cls}` }, tyreLabel(tyres[front], onTap, "front"), tyreLabel(tyres[rear], onTap, "rear"));
+  return h("div", { class: "tyre-map" }, rowOf("top", "FR", "RR"), carEl, rowOf("bottom", "FL", "RL"));
 }
 
 const tyreSetShown = new Map();       // car id -> the set Your tyres shows (the one on the car at first)
@@ -346,7 +346,6 @@ function tyresCard(car, ctx) {
       byLog.size && older ? `${older} older` : null].filter(Boolean).join("  ·  ");
     const unknown = Object.values(now).some((t) => t.age_days === null);
     body.replaceChildren(...[
-      h("div", { class: "tm-front caption" }, "FRONT"),
       tyreMap(now, (t) => openTyreSheet(ctx, car, t)),
       lines ? h("div", { class: "tm-note" }, lines) : null,
       h("div", { class: "hint" }, unknown
@@ -1313,7 +1312,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
   const posPick = h("div", { class: "tm-pick" });
   const posFooter = footer("");
   function drawPick() {
-    posPick.innerHTML = `<div class="caption">FRONT</div>${carSvg((p) => (positions.includes(p) ? "on" : "off"))}`;
+    posPick.innerHTML = carSvg((p) => (positions.includes(p) ? "on" : "off"));
     for (const g of posPick.querySelectorAll("[data-pos]")) {
       g.addEventListener("click", () => {
         const p = g.dataset.pos;

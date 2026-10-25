@@ -4,7 +4,6 @@
   --gray: #8E8E93; --gray2: #AEAEB2; --gray3: #C7C7CC; --sep: rgba(60, 60, 67, 0.16); --fill: #EFEFF4;
   --blue: #007AFF; --green: #34C759; --red: #FF3B30; --orange: #FF9500; --cyan: #32ADE6;
   --purple: #AF52DE; --pink: #FF2D55; --indigo: #5856D6; --teal: #30B0C7; --brown: #A2845E;
-  --cm-glass: #D5DEEA; --cm-tyre: #3A3A3C; --cm-tread: #8E8E93;
   --up-fg: #248A3D; --up-bg: #E3F6E8; --down-fg: #D70015; --down-bg: #FFE7E5;
   --flat-fg: #6E6E73; --flat-bg: #EFEFF4; --info-bg: #E3EEFF; --warn-fg: #C93400;
   --bar-bg: rgba(249, 249, 251, 0.82); --mark: #FFE58F; --shadow: 0 10px 40px rgba(0, 0, 0, 0.18);
@@ -19,7 +18,6 @@
     --gray: #8E8E93; --gray2: #636366; --gray3: #48484A; --sep: rgba(84, 84, 88, 0.55); --fill: #2C2C2E;
     --blue: #0A84FF; --green: #30D158; --red: #FF453A; --orange: #FF9F0A; --cyan: #64D2FF;
     --purple: #BF5AF2; --pink: #FF375F; --indigo: #5E5CE6; --teal: #40C8E0; --brown: #AC8E68;
-    --cm-glass: #3B424C; --cm-tyre: #8E8E93; --cm-tread: #C7C7CC;
     --up-fg: #30D158; --up-bg: rgba(48, 209, 88, 0.16); --down-fg: #FF6961; --down-bg: rgba(255, 69, 58, 0.18);
     --flat-fg: #AEAEB2; --flat-bg: #2C2C2E; --info-bg: rgba(10, 132, 255, 0.18); --warn-fg: #FF9F0A;
     --bar-bg: rgba(22, 22, 24, 0.82); --mark: #7A5C00; --shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
@@ -642,62 +640,46 @@ body.privacy .crow-note { filter: blur(7px); -webkit-filter: blur(7px); }
 .garage-use { margin-top: 12px; }
 .garage-none { margin-top: 6px; font-size: 13.5px; }
 .garage-add { margin-top: 2px; }
-/* Your tyres: the car from above, each tyre with its age and kilometres */
-.tm-front { text-align: center; margin-top: 12px; }
-.tyre-map { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 4px; margin-top: 4px; padding-bottom: 6px; }
-.tm-carwrap { display: flex; }
-.tm-car { width: 124px; height: 179px; display: block; overflow: visible; }
-.tm-side { position: relative; min-height: 179px; }
-/* level with the axles: 47 and 158 of the drawing's 202 */
-.tm-label { position: absolute; left: 0; right: 0; top: 23.27%; transform: translateY(-50%); padding: 6px 3px; border-radius: 10px; text-align: left; }
-.tm-label.rear { top: 78.22%; }
+/* Your tyres: the car from above (a photo, the front to the left), each tyre with its age and kilometres */
+.tyre-map { margin-top: 10px; }
+.tm-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; }
+.tm-row.bottom { align-items: flex-start; }
+.tm-carwrap { margin: 0 -6px; }
+.tm-car { width: 100%; height: auto; display: block; overflow: visible; }
+.tm-label { min-width: 0; max-width: 50%; padding: 5px 4px; border-radius: 10px; text-align: left; }
+.tm-label.rear { text-align: right; }
+.tm-label.rear .cap-row { justify-content: flex-end; }
 .tm-label:active { background: var(--fill); }
 .tm-label .cap-row { flex-wrap: nowrap; }
 .tm-label .caption { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; letter-spacing: 0.01em; }
-.tm-side.left .tm-label { text-align: right; }
-.tm-side.left .tm-label .cap-row { justify-content: flex-end; }
 .tm-age { font-size: 18px; line-height: 22px; font-weight: 800; margin-top: 3px; white-space: nowrap; }
 .tm-age.add { font-size: 14.5px; font-weight: 600; color: var(--blue); }
 .tm-km { font-size: 13px; line-height: 17px; color: var(--label2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tm-note { font-size: 13.5px; color: var(--label2); margin-top: 6px; text-align: center; }
-.cm-body { fill: var(--card2); stroke: var(--gray3); stroke-width: 1.1; }
-.cm-roof { fill: var(--card); stroke: var(--gray3); stroke-width: 0.8; }
-.cm-glass { fill: var(--cm-glass); }
-.cm-line { fill: none; stroke: var(--gray3); stroke-width: 0.8; }
-.cm-lamp { fill: none; stroke: var(--gray2); stroke-width: 2.4; stroke-linecap: round; }
-.cm-tail { fill: none; stroke: var(--red); stroke-width: 2.4; stroke-linecap: round; opacity: 0.75; }
-.cm-tyre { fill: var(--cm-tyre); }
-.cm-tread { stroke: var(--cm-tread); stroke-width: 1.2; stroke-linecap: round; }
+.tm-note { font-size: 13.5px; color: var(--label2); margin-top: 8px; text-align: center; }
+.tm-short { display: none; }
+.cm-photo { opacity: 0.85; }
+@media (prefers-color-scheme: dark) { .cm-photo { opacity: 0.78; } }
+.cm-tyre { fill: rgba(28, 28, 30, 0.58); stroke: rgba(255, 255, 255, 0.9); stroke-width: 5; }
+.cm-tread { stroke: rgba(255, 255, 255, 0.45); stroke-width: 3.5; stroke-linecap: round; }
+.cm-glow { fill: none; stroke-width: 14; opacity: 0.85; }
+.tone-up .cm-glow { stroke: var(--green); }
+.tone-warn .cm-glow { stroke: var(--orange); }
+.tone-down .cm-glow { stroke: var(--red); }
+.tone-flat .cm-glow { display: none; }
+.tone-warn .cm-tyre { stroke: var(--orange); }
+.tone-down .cm-tyre { stroke: var(--red); }
 .cm-hit { fill: transparent; }
 .cm-wheel { cursor: pointer; }
-.tone-warn .cm-tyre { stroke: var(--orange); stroke-width: 2.2; }
-.tone-down .cm-tyre { stroke: var(--red); stroke-width: 2.2; }
-.tm-pick { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.tm-pick .tm-car { width: 104px; height: 150px; }
-.tm-pick .cm-wheel.on .cm-tyre { fill: var(--blue); }
-.tm-pick .cm-wheel.on .cm-tread { stroke: rgba(255, 255, 255, 0.6); }
-.tm-pick .cm-wheel.off .cm-tyre { fill: var(--card); stroke: var(--gray2); stroke-width: 1.2; stroke-dasharray: 2.5 2; }
-.tm-pick .cm-wheel.off .cm-tread { display: none; }
+.cm-tread, .cm-glow, .cm-photo { pointer-events: none; }   /* a tap goes to the tyre */
+.tm-pick { display: flex; justify-content: center; padding: 4px 0 2px; }
+.tm-pick .tm-car { max-width: 320px; }
+.tm-pick .cm-wheel.on .cm-tyre { fill: rgba(10, 132, 255, 0.6); stroke: var(--blue); }
+.tm-pick .cm-wheel.on .cm-glow { display: inline; stroke: var(--blue); }
+.tm-pick .cm-wheel.off .cm-tyre { fill: rgba(255, 255, 255, 0.35); stroke: rgba(60, 60, 67, 0.7); stroke-dasharray: 14 10; }
+.tm-pick .cm-wheel.off .cm-tread, .tm-pick .cm-wheel.off .cm-glow { display: none; }
 .tyre-warn { font-size: 14.5px; line-height: 1.4; font-weight: 600; padding: 10px 16px 0; }
 .form-value { margin-left: auto; color: var(--label2); text-align: right; font-size: 16px; }
-.tm-short { display: none; }
-@media (max-width: 380px) {
-  .tm-car { width: 112px; height: 162px; }
-  .tm-side { min-height: 162px; }
-  .tyre-map { padding-bottom: 12px; }
-}
-@media (max-width: 370px) {
-  .tm-car { width: 100px; height: 144px; }
-  .tm-side { min-height: 144px; }
-  .tyre-map { padding-bottom: 18px; }
-  .tm-label .caption { font-size: 10px; letter-spacing: 0; }
-}
 @media (max-width: 350px) {
-  .tm-long { display: none; }
-  .tm-short { display: inline; }
-  .tm-car { width: 92px; height: 133px; }
-  .tm-side { min-height: 133px; }
-  .tyre-map { padding-bottom: 20px; }
   .tm-age { font-size: 16px; line-height: 20px; }
   .tm-km { font-size: 12px; line-height: 16px; }
 }
