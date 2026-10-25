@@ -1137,8 +1137,8 @@ export function renderCarInsights(ctx) {
 // Log page
 // ---------------------------------------------------------------------------
 const FILTERS = [["All", () => true], ["Refuels", (l) => l.type === "fuel"],
-  ["Service & tyres", (l) => ["service", "tires", "tyre_buy"].includes(l.type)],
-  ["Other", (l) => !["fuel", "service", "tires", "tyre_buy"].includes(l.type)]];
+  ["Service & tyres", (l) => ["service", "tires", "tyre_buy", "inspection"].includes(l.type)],   // and the inspections
+  ["Other", (l) => !["fuel", "service", "tires", "tyre_buy", "inspection"].includes(l.type)]];
 
 function logRow(l, ctx, car, perFill, prevKm, today, en) {
   const sub = [dayText(l.date, today), l.km !== null ? fmtKm(l.km) : null].filter(Boolean).join("  ·  ");
