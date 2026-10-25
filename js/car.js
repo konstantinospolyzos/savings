@@ -66,7 +66,7 @@ export const newLogId = () => `${Date.now().toString(36)}${Math.random().toStrin
 export const newCarId = () => `car-${newLogId()}`;
 export const emptyCar = (id = newCarId()) => ({ id, name: "", make: "", model: "", year: null, plate: "", fuel: "95",
   first_registered: null, service_km: null, service_months: null, fixed: [],
-  purchase: { date: null, price: null, seller: "", docs: [] }, tyre_info: {}, logs: [] });
+  purchase: { date: null, price: null, km: null, seller: "", docs: [] }, tyre_info: {}, logs: [] });
 export const byDateKm = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.km ?? -1) - (b.km ?? -1));
 
 const optPos = (v) => {
@@ -89,11 +89,12 @@ export function normalizeFiles(raw, max = 12) {
       ...(p.pdf === true ? { pdf: true, name: str(p.name, 80) } : {}) }));
 }
 
-/** When and how the car was bought, and the papers (the invoice, the contract). Not a running cost. */
+/** When and how the car was bought, the odometer then (used cars), and the papers. Not a running cost. */
 function normalizePurchase(raw) {
   const p = raw && typeof raw === "object" ? raw : {};
+  const km = optPos(p.km);
   return { date: typeof p.date === "string" && isRealDay(p.date) ? p.date : null, price: optPos(p.price) || null,
-    seller: str(p.seller), docs: normalizeFiles(p.docs, 20) };
+    km: km === null ? null : Math.round(km), seller: str(p.seller), docs: normalizeFiles(p.docs, 20) };
 }
 
 function normalizeLogs(raw) {

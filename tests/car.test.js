@@ -526,13 +526,16 @@ test("fixed costs: the cars saved before keep 787 kr insurance and 863 kr parkin
 });
 
 test("the purchase: date, price, seller and the papers, not a running cost", () => {
-  const c = car.normalizeCar({ make: "Volvo", purchase: { date: "2025-03-14", price: "245000", seller: "  Bilia Göteborg ",
+  const c = car.normalizeCar({ make: "Volvo", purchase: { date: "2025-03-14", price: "245000", km: "45210.4", seller: "  Bilia Göteborg ",
     docs: [{ id: "p1", drive: "d1" }, { id: "p2", drive: null, pdf: true, name: "Faktura 1043.pdf" }, { id: "" }, { drive: "x" }] },
   logs: [log("2025-03-20", "fuel", { km: 1000, litres: 40, cost: 700 })], fixed: [] });
-  assert.deepEqual(c.purchase, { date: "2025-03-14", price: 245000, seller: "Bilia Göteborg",
+  assert.deepEqual(c.purchase, { date: "2025-03-14", price: 245000, km: 45210, seller: "Bilia Göteborg",
     docs: [{ id: "p1", drive: "d1" }, { id: "p2", drive: null, pdf: true, name: "Faktura 1043.pdf" }] });
   assert.equal(car.carSummary(c, day(2025, 10, 1)).costs_all, 700);        // the price isn't in the costs
-  assert.deepEqual(car.normalizeCar({ purchase: { date: "2025-02-30", price: -5 } }).purchase, { date: null, price: null, seller: "", docs: [] });
+  assert.deepEqual(car.normalizeCar({ purchase: { date: "2025-02-30", price: -5, km: -3 } }).purchase, { date: null, price: null, km: null, seller: "", docs: [] });
+  assert.equal(car.normalizeCar({ purchase: { km: 0 } }).purchase.km, 0);                  // bought new
+  assert.equal(car.normalizeCar({ purchase: { km: 45210 } }).purchase.km, 45210);
+  assert.equal(car.carSummary(c, day(2025, 10, 1)).points.length, 1);    // not an odometer reading: the averages stay as they are
   // PDFs on logs too
   assert.deepEqual(car.normalizeCar({ logs: [{ date: "2026-01-01", type: "service", km: 5, photos: [{ id: "a", pdf: true, name: "x.pdf" }, { id: "b", pdf: "yes" }] }] }).logs[0].photos,
     [{ id: "a", drive: null, pdf: true, name: "x.pdf" }, { id: "b", drive: null }]);

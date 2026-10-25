@@ -898,6 +898,15 @@ function yearsCard(sum, today) {
       rows));
 }
 
+/** The odometer when you bought the car, and how far you've driven it since (with a later reading). */
+function purchaseKmRows(car) {
+  const pu = car.purchase;
+  if (pu.km === null || pu.km === undefined) return [];
+  const latest = car.logs.reduce((m, l) => (l.km !== null && l.km > m ? l.km : m), -1);
+  return [kv("Odometer when bought", fmtKm(pu.km), { amt: false }),
+    latest >= pu.km ? kv("Driven since then", fmtKm(latest - pu.km), { amt: false }) : null];
+}
+
 function detailsCard(car, ctx) {
   const pu = car.purchase;
   const makeModel = [car.make, car.model].filter(Boolean).join(" ");
@@ -909,6 +918,7 @@ function detailsCard(car, ctx) {
     kv("Runs on", FUEL_NAME[car.fuel], { amt: false }),
     kv("First registered", car.first_registered ? mLong(car.first_registered) : "—", { amt: false }),
     kv("Bought", [pu.date ? dayText(pu.date) : null, pu.price ? fmtSek(pu.price) : null].filter(Boolean).join("  ·  ") || "—"),
+    ...purchaseKmRows(car),
     pu.seller ? kv("Bought from", pu.seller, { amt: false }) : null,
   ];
   const missing = !makeModel && !car.plate;
@@ -1084,6 +1094,7 @@ function garageCard(car, ctx, showing) {
       kv("Service every", serviceEvery(car), { amt: false }))),
     sec("PURCHASE", h("div", { class: "kv-list" },
       kv("Bought", [pu.date ? dayText(pu.date, today) : null, pu.price ? fmtSek(pu.price) : null].filter(Boolean).join("  ·  ") || "—"),
+      ...purchaseKmRows(car),
       pu.seller ? kv("Bought from", pu.seller, { amt: false }) : null),
     pu.docs.length ? fileGrid(pu.docs, { readOnly: true }).el
       : h("div", { class: "muted garage-none" }, "No invoice or papers yet. Add them in Edit details.")),
@@ -1559,11 +1570,16 @@ export function openCarSheet(ctx, car = null) {
   if (c.service_km) kmI.value = plainNumber(c.service_km);
   if (c.service_months) monthsI.value = String(c.service_months);
   // the purchase: when, the price, from whom, and the invoice (not a running cost)
-  const pu = c.purchase || { date: null, price: null, seller: "", docs: [] };
+  const pu = c.purchase || { date: null, price: null, km: null, seller: "", docs: [] };
   const bought = h("input", { class: "form-input date-input", type: "date", value: pu.date || "", "aria-label": "Bought on" });
   const priceI = numField("optional", "decimal");
   if (pu.price) priceI.value = plainNumber(pu.price, pu.price % 1 ? 2 : 0);
   const seller = textField("optional, e.g. the dealer", pu.seller, { "aria-label": "Bought from", autocapitalize: "words" });
+  // the odometer when you bought it: most cars are bought used
+  const boughtKm = numField("optional", "numeric");
+  if (pu.km !== null && pu.km !== undefined) boughtKm.value = plainNumber(pu.km);
+  const readings = c.logs.filter((l) => l.km !== null).sort(byDateKm);
+  const purchaseFooter = footer("");
   const docs = fileGrid(pu.docs, { max: 20, from: "the car details" });
   let saved = false;
   let api = null;
@@ -1578,15 +1594,26 @@ export function openCarSheet(ctx, car = null) {
       reg: Boolean(r) && !MONTH_RX.test(r),
       bought: Boolean(bought.value) && !DATE_RX.test(bought.value),
       price: Boolean(priceI.value.trim()) && !(parseNumber(priceI.value) > 0),
+      boughtKm: Boolean(boughtKm.value.trim()) && !(parseNumber(boughtKm.value) >= 0),
     };
     priceI.classList.toggle("invalid", bad.price);
+    boughtKm.classList.toggle("invalid", bad.boughtKm);
+    // the odometer then: before your first log, and how far you've driven since
+    const bk = bad.boughtKm || !boughtKm.value.trim() ? null : parseNumber(boughtKm.value);
+    const first = readings[0], last = readings.at(-1);
+    purchaseFooter.className = "section-footer";
+    if (bk !== null && first && bk > first.km) {
+      purchaseFooter.textContent = `That's more than the ${fmtKm(first.km)} of your first log (${dayText(first.date, ctx.today)}). Check the number.`;
+      purchaseFooter.className = "section-footer tone-text-warn";
+    } else if (bk !== null && last) purchaseFooter.textContent = `You've driven ${fmtKm(last.km - bk)} in it since you bought it.`;
+    else purchaseFooter.textContent = "The odometer when you bought the car, from the contract or the ad.";
     year.classList.toggle("invalid", bad.year);
     kmI.classList.toggle("invalid", bad.km);
     monthsI.classList.toggle("invalid", bad.months);
     reg.classList.toggle("invalid", bad.reg);
     api?.setRight({ disabled: Object.values(bad).some(Boolean) });
   };
-  for (const f of [year, kmI, monthsI, reg, bought, priceI]) f.addEventListener("input", validate);
+  for (const f of [year, kmI, monthsI, reg, bought, priceI, boughtKm]) f.addEventListener("input", validate);
   bought.addEventListener("change", validate);
   reg.addEventListener("change", validate);
 
@@ -1604,7 +1631,9 @@ export function openCarSheet(ctx, car = null) {
     group(row("Kilometres", kmI, "km"), row("or months", monthsI, "months")),
     footer("From your service book, e.g. every 15 000 km or 12 months, whichever comes first. Fill in one or both to get a reminder on the Car page."),
     caption("PURCHASE"),
-    group(h("label", { class: "form-row" }, h("span", { class: "form-label" }, "Bought on"), bought), row("Price", priceI, localSym()), row("Bought from", seller)),
+    group(h("label", { class: "form-row" }, h("span", { class: "form-label" }, "Bought on"), bought), row("Price", priceI, localSym()),
+      row("Odometer", boughtKm, "km"), row("Bought from", seller)),
+    purchaseFooter,
     caption("INVOICE AND PAPERS"),
     docs.el,
     footer("The purchase invoice, the contract (köpekontrakt) or other papers, as photos or PDFs. With Google Drive they're saved in your Savings Tracker folder, next to your data; otherwise on this device. The price isn't counted in the running costs."),
@@ -1633,6 +1662,7 @@ export function openCarSheet(ctx, car = null) {
         year: Number.isInteger(y) ? y : null, plate: plate.value.trim(), fuel, first_registered: MONTH_RX.test(r) ? r : null,
         service_km: k > 0 ? k : null, service_months: m > 0 ? Math.round(m) : null,
         purchase: { date: DATE_RX.test(bought.value) ? bought.value : null, price: parseNumber(priceI.value) > 0 ? parseNumber(priceI.value) : null,
+          km: boughtKm.value.trim() && parseNumber(boughtKm.value) >= 0 ? Math.round(parseNumber(boughtKm.value)) : null,
           seller: seller.value.trim(), docs: docs.list() } };
       saved = true;
       removePhotos(store, docs.removed);
