@@ -9,7 +9,8 @@ import {
 import {
   CAR_TYPES, TYPE, NEEDS_KM, TYRE_SETS, FUELS, FUEL_NAME, carSummary, monthlyKm, monthlyCosts, previousReading, fuelStats,
   byDateKm, fmtKm, fmtKmSigned, fmtPerKm, fmtAxisKm, monthPos, parseDay, newLogId, carCsv, emptyCar, carTitle, carLine,
-  energy, priceSummary, paidPrices, fillPreview, consumptionByMonth, yearForecast, MONTHLY_TYPES, monthlyNow, setMonthly,
+  energy, priceSummary, paidPrices, fillPreview, consumptionByMonth, yearForecast,
+  FIXED_TYPES, newFixedId, fixedDate, dueFixedLogs, dueCarFixed, nextFixedDate,
 } from "../car.js";
 import { store } from "../store.js";
 import { statCard } from "./overview.js";
@@ -626,15 +627,125 @@ function detailsCard(car, ctx) {
     kv("Registration", car.plate || "—", { amt: false }),
     kv("Runs on", FUEL_NAME[car.fuel], { amt: false }),
     kv("First registered", car.first_registered ? mLong(car.first_registered) : "—", { amt: false }),
-    ...MONTHLY_TYPES.map((t) => {
-      const m = monthlyNow(car, t);
-      return m.amount ? kv(TYPE[t].name, `${fmtSek(m.amount)}/month  ·  since ${mLong(m.since)}`) : null;
-    }),
   ];
   const missing = !makeModel && !car.plate;
   return card(head("Car details", missing ? "Add the make, model and registration number." : null),
     h("div", { class: "kv-list" }, rows.filter(Boolean)),
     actions(btn("Edit details", () => openCarSheet(ctx, car)), btn("+  Add another car", () => openCarSheet(ctx, null), "plain")));
+}
+
+// ---------------------------------------------------------------------------
+// Fixed costs: what you pay every month (insurance, a parking space...), logged by themselves
+// ---------------------------------------------------------------------------
+/** Add the logs of the fixed costs that are due (on opening the app, after a sync, at midnight). */
+export function addFixedCostLogs() {
+  if (!store.ready) return;
+  const today = todayDate();
+  for (const car of store.data.cars || []) {
+    const due = dueCarFixed(car, today);
+    if (due) store.addFixedLogs(car.id, due.entries, due.done);
+  }
+}
+
+const ordinal = (n) => (n === 31 ? "the last day" : `the ${n}${[11, 12, 13].includes(n) ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th"}`);
+const DAY_OPTIONS = [...Array.from({ length: 28 }, (_, i) => [String(i + 1), ordinal(i + 1).replace("the ", "")]), ["31", "Last day of the month"]];
+const fixedName = (f) => f.name || (f.type === "tax" ? "Vehicle tax" : TYPE[f.type].name);
+const fixedLogCount = (car, f) => car.logs.filter((l) => l.id.startsWith(`${f.id}-`) || (f.id === `fc-${f.type}` && l.id.startsWith(`auto-${f.type}-`))).length;
+
+function fixedCard(car, ctx) {
+  const today = ctx.today;
+  const items = car.fixed || [];
+  const total = items.reduce((a, f) => a + f.amount, 0);
+  const rows = items.map((f) => h("button", { type: "button", class: "crow", onclick: () => openFixedSheet(ctx, car, f) },
+    typeBadge(f.type),
+    h("div", { class: "crow-main" },
+      h("div", { class: "crow-title" }, fixedName(f)),
+      h("div", { class: "crow-sub" }, `Every month on ${ordinal(f.day)}`),
+      h("div", { class: "crow-extra" }, `Next log ${dayText(nextFixedDate(f, today), today)}  ·  since ${MONTHS[Number(f.from.slice(5)) - 1].slice(0, 3)} ${f.from.slice(0, 4)}`)),
+    h("div", { class: "crow-cost amt" }, fmtSek(f.amount)),
+    icon("chevron", 16, "chev")));
+  return card(head("Fixed costs", items.length ? h("span", { class: "amt-soft" }, `${fmtSek(total)} a month, logged by themselves`) : null),
+    items.length ? h("div", { class: "fixed-list" }, rows)
+      : h("div", { class: "muted" }, "Costs you pay every month, like insurance or a parking space you rent. Add them here and the app logs them on their day every month, so you don't have to."),
+    actions(btn("+  Add a fixed cost", () => openFixedSheet(ctx, car, null))));
+}
+
+export function openFixedSheet(ctx, car, item = null) {
+  const today = ctx.today;
+  const thisMonth = monthOf(today);
+  const isNew = !item;
+  const f = item || { id: newFixedId(), type: "insurance", name: "", amount: null, day: 1, from: thisMonth, added: null };
+  let type = f.type, day = String(f.day);
+  const typeRow = selectRow("Kind", FIXED_TYPES.map((t) => [t, t === "tax" ? "Vehicle tax" : TYPE[t].name]), type, (v) => { type = v; validate(); });
+  const name = textField("optional, e.g. the company", f.name, { "aria-label": "Name" });
+  const amount = numField("e.g. 787");
+  if (f.amount) amount.value = plainNumber(f.amount, f.amount % 1 ? 2 : 0);
+  const dayRow = selectRow("Logged on", DAY_OPTIONS, day, (v) => { day = v; validate(); });
+  const since = h("input", { class: "form-input date-input", type: "month", value: f.from, "aria-label": "Since" });
+  const preview = footer("");
+  let api = null;
+
+  const draft = () => ({ ...f, type, name: name.value.trim(), amount: parseNumber(amount.value), day: Number(day), from: since.value });
+  /** The logs saving adds at once: the months up to today (a new one), or the months before a start moved earlier. */
+  const fillIn = (d) => (isNew || !f.added ? dueFixedLogs(car, today, { ...d, added: null })
+    : d.from < f.from ? dueFixedLogs(car, today, d, d.from, addMonths(f.from, -1)) : { entries: [] }).entries;
+  function validate() {
+    const d = draft();
+    const amountBad = Boolean(amount.value.trim()) && !(d.amount > 0);
+    const sinceBad = !MONTH_RX.test(d.from);
+    amount.classList.toggle("invalid", amountBad);
+    since.classList.toggle("invalid", sinceBad);
+    api?.setRight({ disabled: amountBad || sinceBad || !(d.amount > 0) });
+    if (!(d.amount > 0) || sinceBad) {
+      preview.textContent = "What you pay every month, and the day. The app adds a log for it on that day every month, from the month in Since.";
+      return;
+    }
+    const now = fillIn(d).length;
+    const next = nextFixedDate(isNew || !f.added ? { ...d, added: null } : d, today);
+    preview.textContent = `${now ? `${plural(now, "log")} for the months up to today ${now === 1 ? "is" : "are"} added when you save. ` : ""}`
+      + `Next log: ${dayText(next, today)}, ${fmtSek(d.amount)}.`
+      + (isNew ? "" : " The logs already added stay as they are; you can edit or delete them in the Log.");
+  }
+  for (const el of [name, amount, since]) el.addEventListener("input", validate);
+  since.addEventListener("change", validate);
+
+  const body = h("div", { class: "form" },
+    ctx.data.cars.length > 1 ? footer(`For ${carTitle(car)}`) : null,
+    caption("WHAT"),
+    group(typeRow, row("Name", name)),
+    footer("The name goes in the note of every log, e.g. the insurance company or the garage."),
+    caption("EVERY MONTH"),
+    group(row("Amount", amount, `${localSym()}/month`), dayRow, row("Since", since)),
+    preview,
+    !isNew ? h("button", { type: "button", class: "btn destructive-row", onclick: () => remove() }, "Stop This Fixed Cost") : null);
+
+  async function remove() {
+    const n = fixedLogCount(car, f);
+    const ok = await alertBox({ title: `Stop ${fixedName(f)}?`,
+      message: `No more logs from now on.${n ? ` The ${plural(n, "log")} it added stay in your Log.` : ""}`,
+      buttons: [{ text: "Cancel", value: false, style: "cancel" }, { text: "Stop", value: true, style: "destructive" }] });
+    if (!ok) return;
+    store.deleteFixed(car.id, f.id);
+    api.close();
+    toast(`Stopped ${fixedName(f).toLowerCase()}`);
+    syncTap();
+  }
+
+  api = sheet({ title: isNew ? "New Fixed Cost" : "Fixed Cost", left: { text: "Cancel" }, body,
+    right: { text: "Save", bold: true, onClick: (sh) => {
+      const d = draft();
+      if (!(d.amount > 0) || !MONTH_RX.test(d.from)) return;
+      const next = { ...d, amount: Math.round(d.amount * 100) / 100 };
+      const entries = fillIn(next);
+      store.saveFixed(car.id, next);
+      if (entries.length && !isNew && f.added) store.addFixedLogs(car.id, entries, {}, true);   // a start moved earlier
+      addFixedCostLogs();                                                                       // the months up to today
+      sh.close();
+      toast(`✓  ${isNew ? "Added" : "Saved"} ${fixedName(next).toLowerCase()}${entries.length ? `  ·  ${plural(entries.length, "log")} added` : ""}`);
+      syncTap();
+    } } });
+  validate();
+  return api;
 }
 
 export function renderCar(ctx) {
@@ -644,9 +755,9 @@ export function renderCar(ctx) {
   const sum = carSummary(car, today);
   const subtitle = [carLine(car), sum.n ? `${plural(sum.n, "log")}, latest ${dayText(sum.logs.at(-1).date, today)}` : "no logs yet"].filter(Boolean).join("  ·  ");
   const picker = carPicker(ctx, car);
-  if (!sum.n) return [subtitle, picker, noLogsCard(ctx, car), tyreCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), detailsCard(car, ctx)];
+  if (!sum.n) return [subtitle, picker, noLogsCard(ctx, car), tyreCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), fixedCard(car, ctx), detailsCard(car, ctx)];
   return [subtitle, picker, odoHero(sum, today), stats(sum, today), consumptionCard(car, sum, today, ctx), tyreCard(car, sum, today, ctx),
-    serviceCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), detailsCard(car, ctx)];
+    serviceCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), fixedCard(car, ctx), detailsCard(car, ctx)];
 }
 
 // ---------------------------------------------------------------------------
@@ -694,7 +805,7 @@ function logRow(l, ctx, car, perFill, prevKm, today, en) {
       seg.per_km !== null ? h("span", { class: "amt" }, `  ·  ${fmtMoney(CUR.local, seg.per_km, 2)}/km`) : null);
   }
   if (l.km !== null && prevKm !== null && l.km >= prevKm) extra.push(`${fmtKmSigned(l.km - prevKm)}`);
-  if (l.id.startsWith("auto-")) extra.push("every month");
+  if (/^(auto|fc)-/.test(l.id)) extra.push("fixed cost, every month");
   if (l.photos?.length) extra.push(`📎 ${plural(l.photos.length, "photo")}`);
   return h("button", { type: "button", class: "crow", onclick: () => openCarLogSheet(ctx, car, l) },
     typeBadge(l.type),
@@ -788,8 +899,8 @@ const NOTE_HINTS = {
   inspection: "Optional, e.g. remarks from the inspection.",
   repair: "What was fixed.",
   tax: "Optional, e.g. which year it's for.",
-  insurance: "Optional, e.g. the period it covers. A fixed monthly price goes in Car details instead.",
-  parking: "Optional, e.g. where. A parking space you rent every month goes in Car details instead.",
+  insurance: "Optional, e.g. the period it covers. Insurance you pay every month goes in Fixed costs on the Car page, and logs itself.",
+  parking: "Optional, e.g. where. A parking space you rent every month goes in Fixed costs on the Car page, and logs itself.",
   other: "What it was: washing, parking, a toll, a part…",
 };
 
@@ -1127,20 +1238,9 @@ export function openCarSheet(ctx, car = null) {
   const monthsI = numField("e.g. 12", "numeric");
   if (c.service_km) kmI.value = plainNumber(c.service_km);
   if (c.service_months) monthsI.value = String(c.service_months);
-  // fixed monthly costs: what you pay now, and the month you started paying
-  const thisMonth = monthOf(ctx.today);
-  const startGuess = c.logs.length ? [...c.logs].sort(byDateKm)[0].date.slice(0, 7) : thisMonth;
-  const monthly = Object.fromEntries(MONTHLY_TYPES.map((t) => {
-    const now = monthlyNow(c, t);
-    const amount = numField("none", "decimal");
-    if (now.amount) amount.value = plainNumber(now.amount, now.amount % 1 ? 2 : 0);
-    const since = h("input", { class: "form-input date-input", type: "month", value: now.since || startGuess, "aria-label": `${TYPE[t].name} since` });
-    return [t, { amount, since, was: now.since }];
-  }));
   let api = null;
 
   const read = () => ({ y: parseNumber(year.value), k: parseNumber(kmI.value), m: parseNumber(monthsI.value), r: reg.value.trim() });
-  const monthlyBad = (f) => (Boolean(f.amount.value.trim()) && !(parseNumber(f.amount.value) >= 0)) || (Boolean(f.since.value) && !MONTH_RX.test(f.since.value));
   const validate = () => {
     const { y, k, m, r } = read();
     const bad = {
@@ -1153,10 +1253,9 @@ export function openCarSheet(ctx, car = null) {
     kmI.classList.toggle("invalid", bad.km);
     monthsI.classList.toggle("invalid", bad.months);
     reg.classList.toggle("invalid", bad.reg);
-    for (const f of Object.values(monthly)) f.amount.classList.toggle("invalid", monthlyBad(f));
-    api?.setRight({ disabled: Object.values(bad).some(Boolean) || Object.values(monthly).some(monthlyBad) });
+    api?.setRight({ disabled: Object.values(bad).some(Boolean) });
   };
-  for (const f of [year, kmI, monthsI, reg, ...Object.values(monthly).flatMap((x) => [x.amount, x.since])]) f.addEventListener("input", validate);
+  for (const f of [year, kmI, monthsI, reg]) f.addEventListener("input", validate);
   reg.addEventListener("change", validate);
 
   const others = ctx.data.cars.length - (isNew ? 0 : 1);
@@ -1172,10 +1271,6 @@ export function openCarSheet(ctx, car = null) {
     caption("SERVICE EVERY"),
     group(row("Kilometres", kmI, "km"), row("or months", monthsI, "months")),
     footer("From your service book, e.g. every 15 000 km or 12 months, whichever comes first. Fill in one or both to get a reminder on the Car page."),
-    caption("EVERY MONTH"),
-    ...MONTHLY_TYPES.flatMap((t, i) => [i ? h("div", { class: "group-gap" }) : null,
-      group(row(TYPE[t].name, monthly[t].amount, `${localSym()}/month`), row("Paying since", monthly[t].since))]),
-    footer("Fixed costs are logged by themselves: on the 1st of every month the app adds a log for each, from the month you started. If the price changes, type the new one: it's used from next month's log (you can edit any log). Empty it when you stop paying."),
     !isNew ? h("button", { type: "button", class: "btn destructive-row", onclick: () => remove() }, "Delete Car") : null);
 
   async function remove() {
@@ -1198,14 +1293,6 @@ export function openCarSheet(ctx, car = null) {
       const next = { ...c, name: name.value.trim(), make: make.value.trim(), model: model.value.trim(),
         year: Number.isInteger(y) ? y : null, plate: plate.value.trim(), fuel, first_registered: MONTH_RX.test(r) ? r : null,
         service_km: k > 0 ? k : null, service_months: m > 0 ? Math.round(m) : null };
-      for (const t of MONTHLY_TYPES) {
-        const f = monthly[t];
-        const amount = parseNumber(f.amount.value);
-        const since = MONTH_RX.test(f.since.value) ? f.since.value : null;
-        const moved = f.was && since && since !== f.was;
-        next.monthly = setMonthly(next.monthly, t, amount > 0 ? Math.round(amount * 100) / 100 : null, f.was && !moved ? null : since, thisMonth);
-        if (moved) next.monthly_added = { ...(next.monthly_added || {}), [t]: null };   // fill in from the new start
-      }
       if (isNew) store.setPref(PREF, c.id);
       store.saveCar(next);
       sh.close();

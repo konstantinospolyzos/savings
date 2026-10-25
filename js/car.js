@@ -65,7 +65,7 @@ const MONTH_RX = /^\d{4}-\d{2}$/;
 export const newLogId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 export const newCarId = () => `car-${newLogId()}`;
 export const emptyCar = (id = newCarId()) => ({ id, name: "", make: "", model: "", year: null, plate: "", fuel: "95",
-  first_registered: null, service_km: null, service_months: null, monthly: [], monthly_added: {}, logs: [] });
+  first_registered: null, service_km: null, service_months: null, fixed: [], logs: [] });
 export const byDateKm = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.km ?? -1) - (b.km ?? -1));
 
 const optPos = (v) => {
@@ -100,92 +100,94 @@ function normalizeLogs(raw) {
 }
 
 // ---------------------------------------------------------------------------
-// Fixed monthly costs (insurance, a parking space): set once in the car details; on the 1st of every
-// month from "from" to "to" (null: still paying) the app adds a log for each. A new price is a new period.
+// Fixed costs (insurance, a parking space, a leasing...): what you pay every month. On the day you choose,
+// the app adds a log for each one, from the month you started paying. Changes count from the next log;
+// the logs already added are ordinary logs, so you can edit or delete them.
 // ---------------------------------------------------------------------------
-export const MONTHLY_TYPES = ["insurance", "parking"];
-const newMonthlyId = () => `mo-${newLogId()}`;
+export const FIXED_TYPES = ["insurance", "parking", "tax", "other"];
+export const newFixedId = () => `fc-${newLogId()}`;
+const daysIn = (month) => { const [y, m] = month.split("-").map(Number); return new Date(y, m, 0).getDate(); };
+/** The day a fixed cost is logged in a month (31 is "the last day"). */
+export const fixedDate = (f, month) => `${month}-${String(Math.min(f.day, daysIn(month))).padStart(2, "0")}`;
 
-function normalizeMonthly(raw) {
+export function normalizeFixed(raw) {
   const out = [];
-  for (const e of Array.isArray(raw) ? raw : []) {
-    if (!e || !MONTHLY_TYPES.includes(e.type) || !MONTH_RX.test(e.from || "")) continue;
-    const amount = optPos(e.amount);
+  const ids = new Set();
+  for (const f of Array.isArray(raw) ? raw : []) {
+    if (!f || !FIXED_TYPES.includes(f.type) || !MONTH_RX.test(f.from || "")) continue;
+    const amount = optPos(f.amount);
     if (!(amount > 0)) continue;
-    const to = MONTH_RX.test(e.to || "") && e.to >= e.from ? e.to : null;
-    out.push({ id: typeof e.id === "string" && e.id ? e.id : newMonthlyId(), type: e.type, amount, from: e.from, to });
+    let id = typeof f.id === "string" && f.id ? f.id : newFixedId();
+    while (ids.has(id)) id = newFixedId();
+    ids.add(id);
+    const day = Math.round(Number(f.day));
+    out.push({ id, type: f.type, name: str(f.name), amount: Math.round(amount * 100) / 100, day: day >= 1 && day <= 31 ? day : 1,
+      from: f.from, added: MONTH_RX.test(f.added || "") ? f.added : null });
   }
-  return out.sort((a, b) => (a.type === b.type ? (a.from < b.from ? -1 : 1) : MONTHLY_TYPES.indexOf(a.type) - MONTHLY_TYPES.indexOf(b.type))).slice(0, 100);
+  return out.slice(0, 30);
 }
 
-// The fixed costs of the car you had when monthly costs came in (787 kr insurance and 863 kr parking a
-// month), from the month of its first log. Only for a car saved before then (it has no "monthly" yet);
-// fixed ids, so two phones filling them in agree.
-export const DEFAULT_MONTHLY = [["insurance", 787], ["parking", 863]];
-function defaultMonthly(c) {
+// The car you had when fixed costs came in pays 787 kr insurance and 863 kr parking a month, on the 1st,
+// from the month of its first log. Fixed ids, so two phones filling them in agree.
+export const DEFAULT_FIXED = [["insurance", 787], ["parking", 863]];
+function fixedFromOld(c) {
+  // the version just before: monthly periods per type, and the months already logged
+  if (Array.isArray(c.monthly)) {
+    return normalizeFixed(["insurance", "parking"].map((type) => {
+      const periods = c.monthly.filter((e) => e && e.type === type && MONTH_RX.test(e.from || "")).sort((a, b) => (a.from < b.from ? -1 : 1));
+      const active = periods.find((e) => !e.to);
+      return active ? { id: `fc-${type}`, type, amount: active.amount, day: 1, from: periods[0].from, added: c.monthly_added?.[type] || null } : null;
+    }));
+  }
   const days = (Array.isArray(c.logs) ? c.logs : []).map((l) => l && l.date).filter((d) => typeof d === "string" && isRealDay(d)).sort();
   if (!days.length) return [];
-  return normalizeMonthly(DEFAULT_MONTHLY.map(([type, amount]) => ({ id: `mo-${type}-first`, type, amount, from: days[0].slice(0, 7), to: null })));
+  return normalizeFixed(DEFAULT_FIXED.map(([type, amount]) => ({ id: `fc-${type}`, type, amount, day: 1, from: days[0].slice(0, 7) })));
 }
 
-/** What you pay every month now for this type (null if nothing), and since when you've been paying. */
-export function monthlyNow(car, type) {
-  const periods = (car.monthly || []).filter((e) => e.type === type);
-  const active = periods.find((e) => e.to === null) || null;
-  return { amount: active ? active.amount : null, since: periods.length ? periods[0].from : null, active, periods };
-}
+/** The id of a fixed cost's log for a month (the version before used "auto-insurance-2026-10"). */
+const fixedLogIds = (f, month) => [`${f.id}-${month}`, ...(f.id === `fc-${f.type}` ? [`auto-${f.type}-${month}`] : [])];
 
 /**
- * The periods after you set a monthly cost in the car details. This month's log is already added, so a
- * new price counts from next month; an empty amount stops it after this month; "since" moves the start
- * of the first period (when you began paying).
+ * The logs a fixed cost still has to add: one each month on its day, from the month after the last one
+ * added (or from the month it started), up to today. The months already added are remembered, so a log
+ * you delete stays deleted. [{ item, month, log }]
  */
-export function setMonthly(list, type, amount, since, now) {
-  const rest = (list || []).filter((e) => e.type !== type);
-  let periods = (list || []).filter((e) => e.type === type).map((e) => ({ ...e })).sort((a, b) => (a.from < b.from ? -1 : 1));
-  if (since && periods.length && since <= (periods[0].to ?? "9999-12")) periods[0].from = since;
-  const active = periods.find((e) => e.to === null) || null;
-  if (!(amount > 0)) {
-    if (active) {
-      if (active.from >= now) periods = periods.filter((e) => e !== active);
-      else active.to = now;
-    }
-  } else if (!active) {
-    periods.push({ id: newMonthlyId(), type, amount, from: periods.length ? addMonths(now, 1) : since || now, to: null });
-  } else if (active.amount !== amount) {
-    if (active.from > now) active.amount = amount;
-    else { active.to = now; periods.push({ id: newMonthlyId(), type, amount, from: addMonths(now, 1), to: null }); }
-  }
-  return normalizeMonthly([...rest, ...periods]);
-}
-
-/**
- * The logs the fixed monthly costs still have to add: one per type on the 1st of every month, from the
- * month after the last one added (or from the start) up to this month. A log you delete stays deleted,
- * because the months already added are remembered (car.monthly_added). null when nothing is due.
- */
-export function dueMonthlyLogs(car, today) {
-  const now = monthOf(today);
+export function dueFixedLogs(car, today, f, fromMonth = null, toMonth = null) {
+  const todayIso = isoDay(today);
   const ids = new Set((car.logs || []).map((l) => l.id));
-  const logs = [], added = {};
-  for (const type of MONTHLY_TYPES) {
-    const periods = (car.monthly || []).filter((e) => e.type === type);
-    if (!periods.length) continue;
-    const done = car.monthly_added?.[type] || null;
-    if (done && done >= now) continue;
-    const start = done ? addMonths(done, 1) : periods.map((e) => e.from).sort()[0];
-    for (let m = start; mIndex(m) <= mIndex(now); m = addMonths(m, 1)) {
-      const p = periods.find((e) => e.from <= m && (e.to === null || m <= e.to));
-      const id = `auto-${type}-${m}`;
-      if (p && !ids.has(id)) logs.push({ id, date: `${m}-01`, type, km: null, cost: p.amount, litres: null, full: null,
-        tires: null, fitted: null, note: "", photos: [] });
-    }
-    added[type] = now;
+  const out = [];
+  const start = fromMonth || (f.added ? addMonths(f.added, 1) : f.from);
+  const end = toMonth || monthOf(today);
+  let last = null;                // the last month this run got to (also when its log was there already)
+  for (let m = start; mIndex(m) <= mIndex(end); m = addMonths(m, 1)) {
+    const date = fixedDate(f, m);
+    if (date > todayIso) break;
+    last = m;
+    if (fixedLogIds(f, m).some((id) => ids.has(id))) continue;
+    out.push({ item: f.id, month: m, log: { id: `${f.id}-${m}`, date, type: f.type, km: null, cost: f.amount, litres: null,
+      full: null, tires: null, fitted: null, note: f.name, photos: [] } });
   }
-  return Object.keys(added).length ? { logs, added } : null;
+  return { entries: out, last };
 }
 
-const normAdded = (v) => Object.fromEntries(MONTHLY_TYPES.filter((t) => MONTH_RX.test(v?.[t] || "")).map((t) => [t, v[t]]));
+/** All the fixed costs of a car that have logs to add now: { entries, done } or null. */
+export function dueCarFixed(car, today) {
+  const entries = [], done = {};
+  for (const f of car.fixed || []) {
+    const r = dueFixedLogs(car, today, f);
+    entries.push(...r.entries);
+    if (r.last && r.last !== f.added) done[f.id] = r.last;
+  }
+  return entries.length || Object.keys(done).length ? { entries, done } : null;
+}
+
+/** When the next log of a fixed cost is added (YYYY-MM-DD): the first day after today it's due. */
+export function nextFixedDate(f, today) {
+  const todayIso = isoDay(today);
+  let m = f.added ? addMonths(f.added, 1) : f.from;
+  while (fixedDate(f, m) <= todayIso) m = addMonths(m, 1);
+  return fixedDate(f, m);
+}
 
 /** One car: its details and its logs, checked and tidied. */
 export function normalizeCar(raw, id = null) {
@@ -202,8 +204,7 @@ export function normalizeCar(raw, id = null) {
     first_registered: MONTH_RX.test(reg) ? reg : null,
     service_km: optPos(c.service_km) || null,
     service_months: months ? Math.round(months) : null,
-    monthly: c.monthly === undefined ? defaultMonthly(c) : normalizeMonthly(c.monthly),
-    monthly_added: normAdded(c.monthly_added),      // the last month the monthly costs added their logs for
+    fixed: Array.isArray(c.fixed) ? normalizeFixed(c.fixed) : fixedFromOld(c),
     logs: normalizeLogs(c.logs),
   };
 }
@@ -624,7 +625,7 @@ export function carSummary(car, today) {
       const yl = costLogs.filter((l) => l.date.startsWith(`${yr}-`));
       const km = points.length >= 2 && latest.t > ys && first.t < ye ? drivenBetween(points, Math.max(ys, first.t), Math.min(ye, latest.t)) : 0;
       const c = sum(yl.map((l) => l.cost || 0));
-      years.push({ year: yr, km, costs: c, per_km: km >= 100 ? c / km : null, logs: yl.filter((l) => !l.monthly).length,
+      years.push({ year: yr, km, costs: c, per_km: km >= 100 ? c / km : null, logs: yl.length,
         from: first && first.t > ys ? first.date : null });
     }
   }

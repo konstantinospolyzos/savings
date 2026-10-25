@@ -6,7 +6,7 @@
 
 import { CONFIG } from "./config.js";
 import { APP_NAME, DATA_VERSION, DEFAULT_EXPENSES, DEFAULT_GOALS, byPosition, mLong } from "./core.js";
-import { emptyCar, normalizeCar, normalizeCars, describeCars, byDateKm, LEGACY_CAR_ID } from "./car.js";
+import { emptyCar, normalizeCar, normalizeCars, normalizeFixed, describeCars, byDateKm, LEGACY_CAR_ID } from "./car.js";
 
 const KEY_DATA = "savingsTracker.data";
 const KEY_META = "savingsTracker.meta";
@@ -133,13 +133,8 @@ export function applyOp(data, op) {
       break;
     case "putCar": {            // add a car, or change its details (its logs stay)
       const old = d.cars.find((c) => c.id === op.car.id);
-      // the months the monthly costs were added for only move on (null: start again, after "since" moved)
-      const added = { ...(old?.monthly_added || {}) };
-      for (const [k, v] of Object.entries(op.car.monthly_added || {})) {
-        if (v === null) delete added[k];
-        else if (!added[k] || v > added[k]) added[k] = v;
-      }
-      const car = normalizeCar({ ...op.car, monthly_added: added, logs: old ? old.logs : [] }, op.car.id);
+      // its fixed costs have their own changes (putFixed), so an older copy of the details can't undo them
+      const car = normalizeCar({ ...op.car, fixed: old ? old.fixed : op.car.fixed || [], logs: old ? old.logs : [] }, op.car.id);
       d.cars = old ? d.cars.map((c) => (c.id === car.id ? car : c)) : d.cars.concat([car]);
       break;
     }
@@ -151,16 +146,38 @@ export function applyOp(data, op) {
       car.logs = car.logs.filter((l) => l.id !== op.log.id).concat([op.log]).sort(byDateKm);
       break;
     }
-    case "putCarLogs": {        // the monthly costs' logs; only months not added yet (on any phone)
+    case "putFixed": {          // add or change a fixed cost (the months it has logged only move on)
       const car = carFor(d, op.carId);
-      const done = { ...(car.monthly_added || {}) };
-      const ids = new Set(car.logs.map((l) => l.id));
-      const fresh = op.logs.filter((l) => !ids.has(l.id) && !(done[l.type] && l.date.slice(0, 7) <= done[l.type]));
-      car.logs = car.logs.concat(fresh).sort(byDateKm);
-      for (const [k, v] of Object.entries(op.added || {})) if (!done[k] || v > done[k]) done[k] = v;
-      car.monthly_added = done;
+      const old = car.fixed.find((f) => f.id === op.item.id);
+      const added = [old?.added, op.item.added].filter(Boolean).sort().at(-1) || null;
+      const item = normalizeFixed([{ ...op.item, added }])[0];
+      if (item) car.fixed = old ? car.fixed.map((f) => (f.id === item.id ? item : f)) : car.fixed.concat([item]);
       break;
     }
+    case "deleteFixed": {       // stop a fixed cost; the logs it added stay
+      const car = carFor(d, op.carId);
+      car.fixed = car.fixed.filter((f) => f.id !== op.id);
+      break;
+    }
+    case "addFixedLogs": {      // a fixed cost's logs; only months it hasn't logged yet (on any phone)
+      const car = carFor(d, op.carId);
+      const items = new Map(car.fixed.map((f) => [f.id, f]));
+      const ids = new Set(car.logs.map((l) => l.id));
+      for (const e of op.entries || []) {
+        const f = items.get(e.item);
+        if (!f || ids.has(e.log.id) || (!op.backfill && f.added && e.month <= f.added)) continue;
+        car.logs.push(e.log);
+        ids.add(e.log.id);
+      }
+      car.logs.sort(byDateKm);
+      for (const [id, m] of Object.entries(op.done || {})) {
+        const f = items.get(id);
+        if (f && (!f.added || m > f.added)) f.added = m;
+      }
+      break;
+    }
+    case "putCarLogs":          // from the version before fixed costs: those months are covered by addFixedLogs
+      break;
     case "deleteCarLog":
       for (const car of d.cars) if (!op.carId || car.id === op.carId) car.logs = car.logs.filter((l) => l.id !== op.id);
       break;
@@ -450,7 +467,9 @@ class Store {
   saveCar(car) { this.commit({ type: "putCar", car: { ...car, logs: undefined } }); }
   deleteCar(id) { this.commit({ type: "deleteCar", id }); }
   saveCarLog(carId, log) { this.commit({ type: "putCarLog", carId, log }); }
-  addCarLogs(carId, logs, added) { this.commit({ type: "putCarLogs", carId, logs, added }); }
+  saveFixed(carId, item) { this.commit({ type: "putFixed", carId, item }); }
+  deleteFixed(carId, id) { this.commit({ type: "deleteFixed", carId, id }); }
+  addFixedLogs(carId, entries, done, backfill = false) { this.commit({ type: "addFixedLogs", carId, entries, done, backfill }); }
   deleteCarLog(carId, id) { this.commit({ type: "deleteCarLog", carId, id }); }
   replaceAll(data) { this.commit({ type: "replaceAll", data: normalize(data) }); }
 

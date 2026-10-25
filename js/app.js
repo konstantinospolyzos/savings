@@ -9,8 +9,7 @@ import { renderInsights } from "./pages/insights.js";
 import { renderWelcome } from "./pages/welcome.js";
 import { openMonthSheet } from "./pages/month.js";
 import { openSettings } from "./pages/settings.js";
-import { renderCar, renderCarLog, renderCarInsights, openNewCarLog, carHeading } from "./pages/car.js";
-import { dueMonthlyLogs } from "./car.js";
+import { renderCar, renderCarLog, renderCarInsights, openNewCarLog, carHeading, addFixedCostLogs } from "./pages/car.js";
 import { uploadPending } from "./photos.js";
 
 const TABS = [
@@ -202,23 +201,16 @@ document.addEventListener("keydown", (ev) => {
 });
 
 store.on((kind) => (kind === "status" ? updateChrome() : render()));
-// on the 1st of every month: the logs of the fixed monthly costs (insurance, parking)
-function addMonthlyLogs() {
-  if (!store.ready) return;
-  for (const car of store.data.cars || []) {
-    const due = dueMonthlyLogs(car, todayDate());
-    if (due) store.addCarLogs(car.id, due.logs, due.added);
-  }
-}
-store.onSynced = () => { addMonthlyLogs(); uploadPending(store); };     // invoice photos go to Drive after each sync
+// the car's fixed costs (insurance, parking...) log themselves on their day of the month
+store.onSynced = () => { addFixedCostLogs(); uploadPending(store); };     // invoice photos go to Drive after each sync
 store.load();
-addMonthlyLogs();
+addFixedCostLogs();
 setPrivacy(store.pref("privacy", false));
 render();
 if (store.mode === "drive") store.sync();
 
 // midnight: the payday countdown moves on
-setInterval(() => { const t = todayDate().getDate(); if (t !== render.lastDay) { render.lastDay = t; if (store.ready) { addMonthlyLogs(); render(); } } }, 60000);
+setInterval(() => { const t = todayDate().getDate(); if (t !== render.lastDay) { render.lastDay = t; if (store.ready) { addFixedCostLogs(); render(); } } }, 60000);
 render.lastDay = todayDate().getDate();
 
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});

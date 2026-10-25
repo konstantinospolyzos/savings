@@ -621,7 +621,8 @@ body.privacy .crow-note { filter: blur(7px); -webkit-filter: blur(7px); }
 .form > .segmented.full { margin-top: 2px; }
 .form > .segmented.full + .group { margin-top: 10px; }
 .form > .segmented.tyre-kind { margin-top: 10px; }
-.form > .group-gap { height: 10px; }
+.fixed-list { margin: 10px -16px 0; }
+.fixed-list .crow:active { background: var(--fill); }
 .chart .dot-mark { stroke: var(--card); stroke-width: 1.5; }
 .segmented.car-picker button { overflow: hidden; text-overflow: ellipsis; }
 .fuel-card .block-value { margin-top: 2px; }

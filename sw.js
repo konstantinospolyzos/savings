@@ -1,6 +1,6 @@
 // Offline support: the newest files when online, the saved copies when offline.
 // Google Drive, Google sign-in and the exchange-rate service always go to the network.
-const CACHE = "savings-tracker-v23";
+const CACHE = "savings-tracker-v24";
 const FILES = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
   "js/app.js", "js/core.js", "js/car.js", "js/pump.js", "js/photos.js", "js/store.js", "js/ui.js", "js/charts.js", "js/config.js",
