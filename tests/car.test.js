@@ -541,3 +541,81 @@ test("the purchase: date, price, seller and the papers, not a running cost", () 
   assert.deepEqual(d.cars[0].purchase, c.purchase);
   assert.deepEqual(normalize(JSON.parse(JSON.stringify(d))).cars[0].purchase, c.purchase);
 });
+
+// ---------------------------------------------------------------------------
+const tyreCar = (info = {}) => car.normalizeCar({ id: "c", fixed: [], tyre_info: info, logs: [
+  { id: "f1", date: "2025-11-01", type: "fuel", km: 40000, litres: 40, cost: 700 },
+  { id: "ch1", date: "2025-11-08", type: "tires", km: 41010, tires: "studded" },
+  { id: "ch2", date: "2026-04-11", type: "tires", km: 47300, tires: "summer" },
+  { id: "buy", date: "2026-10-20", type: "tyre_buy", km: 54000, cost: 3200, tires: "studded", positions: ["RR", "RL"] },   // two new, fitted
+  { id: "f2", date: "2026-10-24", type: "fuel", km: 54200, litres: 40, cost: 700 },
+] });
+const tyreAt = (list, set, pos, current = true) => list.find((t) => t.set === set && t.pos === pos && t.current === current);
+
+test("tyres one by one: kilometres while the set was on the car, and two new ones", () => {
+  const c = tyreCar();
+  assert.deepEqual(c.logs.find((l) => l.id === "buy").positions, ["RL", "RR"]);
+  assert.deepEqual(car.tyrePeriods(c.logs).map((p) => [p.set, p.from, p.to]),
+    [["studded", "2025-11-08", "2026-04-11"], ["summer", "2026-04-11", "2026-10-20"], ["studded", "2026-10-20", null]]);
+  assert.deepEqual(car.tyreSets(c), ["summer", "studded"]);
+  const list = car.tyreList(c, day(2026, 10, 25));
+  // the new rear tyres: from the day they were bought, exactly
+  const rl = tyreAt(list, "studded", "RL");
+  assert.deepEqual([rl.id, rl.km, rl.partial, rl.seasons, rl.since, rl.price, rl.on_car], ["buy-RL", 200, false, 1, "2026-10-20", 1600, true]);
+  assert.deepEqual(rl.together, ["buy-RL", "buy-RR"]);
+  assert.equal(rl.age_days, 5);
+  // the front ones were on the car before: older than the logs know
+  const fl = tyreAt(list, "studded", "FL");
+  assert.deepEqual([fl.id, fl.km, fl.partial, fl.seasons, fl.age_days, fl.tone], ["studded-FL", 6290 + 200, true, 2, null, "flat"]);
+  // the rear ones they replaced: one season, kept as history
+  const old = tyreAt(list, "studded", "RL", false);
+  assert.deepEqual([old.km, old.until, old.current], [6290, "2026-10-20", false]);
+  // summer tyres: in storage now
+  const sfl = tyreAt(list, "summer", "FL");
+  assert.deepEqual([sfl.km, sfl.on_car, sfl.counted_from], [6700, false, "2026-04-11"]);
+  assert.equal(list.filter((t) => t.current).length, 8);
+});
+
+test("tyres one by one: age from the DOT code, tread and what to do", () => {
+  const today = day(2026, 10, 25);
+  assert.equal(car.dotDate("2321"), "2021-06-07");
+  assert.equal(car.dotDate("5521"), null);
+  assert.equal(car.dotDate("23a1"), null);
+  const c = tyreCar({ "studded-FL": { dot: "4321", brand: "  Nokian Hakkapeliitta 10 " }, "studded-FR": { dot: "1018" },
+    "summer-FL": { tread: { mm: 2.4, date: "2026-04-11" } }, "summer-FR": { bought: "2026-04-11", tread: { mm: 1.4, date: "2026-04-11" } },
+    "buy-RL": { tread: { mm: 2.8, date: "2026-10-20" } }, "buy-RR": { tread: { mm: 3.6, date: "2026-10-20" } }, "x": { nothing: 1 } });
+  assert.equal(c.tyre_info["studded-FL"].brand, "Nokian Hakkapeliitta 10");
+  assert.equal(c.tyre_info.x, undefined);
+  const list = car.tyreList(c, today);
+  const t = (set, pos) => tyreAt(list, set, pos);
+  assert.deepEqual([t("studded", "FL").tone, Math.round(t("studded", "FL").age_days / 365.25)], ["up", 5]);
+  assert.equal(t("studded", "FR").tone, "warn");                         // over 6 years
+  assert.match(t("studded", "FR").warn, /6 years/);
+  assert.equal(t("studded", "RL").tone, "down");                         // winter tyre under 3 mm
+  assert.match(t("studded", "RL").warn, /legal minimum for winter tyres/);
+  assert.equal(t("studded", "RR").tone, "warn");                         // under 4 mm
+  assert.equal(t("summer", "FL").tone, "warn");                          // summer under 3 mm
+  assert.equal(t("summer", "FR").tone, "down");                          // under 1.6 mm
+  // bought on the day of a logged change: the kilometres are exact
+  assert.deepEqual([t("summer", "FR").partial, t("summer", "FR").km], [false, 6700]);
+});
+
+test("tyres one by one: kept with the car, cleaned up with their log", () => {
+  let d = applyOp(emptyData(), { type: "putCar", car: { ...tyreCar(), logs: undefined } });
+  for (const l of tyreCar().logs) d = applyOp(d, { type: "putCarLog", carId: "c", log: l });
+  d = applyOp(d, { type: "putTyreInfo", carId: "c", items: { "buy-RL": { brand: "Nokian", dot: "3926" }, "buy-RR": { brand: "Nokian", dot: "3926" }, "summer-FL": { tread: { mm: 6, date: "2026-04-11" } } } });
+  assert.deepEqual(Object.keys(d.cars[0].tyre_info).sort(), ["buy-RL", "buy-RR", "summer-FL"]);
+  d = applyOp(d, { type: "putCar", car: { ...d.cars[0], tyre_info: {}, make: "Volvo", logs: undefined } });   // the details sheet
+  assert.equal(Object.keys(d.cars[0].tyre_info).length, 3);
+  d = applyOp(d, { type: "putTyreInfo", carId: "c", items: { "summer-FL": null } });
+  assert.deepEqual(Object.keys(d.cars[0].tyre_info).sort(), ["buy-RL", "buy-RR"]);
+  assert.deepEqual(normalize(JSON.parse(JSON.stringify(d))).cars[0], d.cars[0]);
+  d = applyOp(d, { type: "deleteCarLog", carId: "c", id: "buy" });        // the New tyres log goes: its tyres too
+  assert.deepEqual(d.cars[0].tyre_info, {});
+  assert.equal(car.tyreList(d.cars[0], day(2026, 10, 25)).filter((t) => t.current).length, 8);
+  // a New tyres log from before says nothing about which ones: all four
+  const c = car.normalizeCar({ logs: [{ date: "2026-01-01", type: "tyre_buy", tires: "summer" }, { date: "2026-01-02", type: "service", km: 1, positions: ["FL"] }] });
+  assert.deepEqual(c.logs[0].positions, ["FL", "FR", "RL", "RR"]);
+  assert.equal("positions" in c.logs[1], false);
+  assert.match(car.carCsv(tyreCar().logs), /New tyres,54000,3200,,,,,,"Winter, studded \(fitted, rear pair\)",/);
+});

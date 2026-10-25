@@ -6,7 +6,7 @@
 
 import { CONFIG } from "./config.js";
 import { APP_NAME, DATA_VERSION, DEFAULT_EXPENSES, DEFAULT_GOALS, byPosition, mLong } from "./core.js";
-import { emptyCar, normalizeCar, normalizeCars, normalizeFixed, describeCars, byDateKm, LEGACY_CAR_ID } from "./car.js";
+import { emptyCar, normalizeCar, normalizeCars, normalizeFixed, normalizeTyreInfo, describeCars, byDateKm, LEGACY_CAR_ID } from "./car.js";
 
 const KEY_DATA = "savingsTracker.data";
 const KEY_META = "savingsTracker.meta";
@@ -133,8 +133,9 @@ export function applyOp(data, op) {
       break;
     case "putCar": {            // add a car, or change its details (its logs stay)
       const old = d.cars.find((c) => c.id === op.car.id);
-      // its fixed costs have their own changes (putFixed), so an older copy of the details can't undo them
-      const car = normalizeCar({ ...op.car, fixed: old ? old.fixed : op.car.fixed || [], logs: old ? old.logs : [] }, op.car.id);
+      // its fixed costs and tyre notes have their own changes, so an older copy of the details can't undo them
+      const car = normalizeCar({ ...op.car, fixed: old ? old.fixed : op.car.fixed || [], tyre_info: old ? old.tyre_info : op.car.tyre_info || {},
+        logs: old ? old.logs : [] }, op.car.id);
       d.cars = old ? d.cars.map((c) => (c.id === car.id ? car : c)) : d.cars.concat([car]);
       break;
     }
@@ -179,8 +180,20 @@ export function applyOp(data, op) {
     case "putCarLogs":          // from the version before fixed costs: those months are covered by addFixedLogs
       break;
     case "deleteCarLog":
-      for (const car of d.cars) if (!op.carId || car.id === op.carId) car.logs = car.logs.filter((l) => l.id !== op.id);
+      for (const car of d.cars) {
+        if (op.carId && car.id !== op.carId) continue;
+        car.logs = car.logs.filter((l) => l.id !== op.id);
+        // the notes about the tyres a New tyres log bought go with it
+        for (const k of Object.keys(car.tyre_info || {})) if (k.startsWith(`${op.id}-`)) delete car.tyre_info[k];
+      }
       break;
+    case "putTyreInfo": {       // brand, DOT code, tread... of tyres: {id: info, or null to clear}
+      const car = carFor(d, op.carId);
+      const next = { ...(car.tyre_info || {}) };
+      for (const [id, v] of Object.entries(op.items || {})) { if (v) next[id] = v; else delete next[id]; }
+      car.tyre_info = normalizeTyreInfo(next);
+      break;
+    }
     case "setCar":                // from the first version of the car monitor (one car)
       Object.assign(carFor(d, null), op.fields);
       break;
@@ -468,6 +481,7 @@ class Store {
   deleteCar(id) { this.commit({ type: "deleteCar", id }); }
   saveCarLog(carId, log) { this.commit({ type: "putCarLog", carId, log }); }
   saveFixed(carId, item) { this.commit({ type: "putFixed", carId, item }); }
+  saveTyreInfo(carId, items) { this.commit({ type: "putTyreInfo", carId, items }); }
   deleteFixed(carId, id) { this.commit({ type: "deleteFixed", carId, id }); }
   addFixedLogs(carId, entries, done, backfill = false) { this.commit({ type: "addFixedLogs", carId, entries, done, backfill }); }
   deleteCarLog(carId, id) { this.commit({ type: "deleteCarLog", carId, id }); }

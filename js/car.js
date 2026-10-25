@@ -66,7 +66,7 @@ export const newLogId = () => `${Date.now().toString(36)}${Math.random().toStrin
 export const newCarId = () => `car-${newLogId()}`;
 export const emptyCar = (id = newCarId()) => ({ id, name: "", make: "", model: "", year: null, plate: "", fuel: "95",
   first_registered: null, service_km: null, service_months: null, fixed: [],
-  purchase: { date: null, price: null, seller: "", docs: [] }, logs: [] });
+  purchase: { date: null, price: null, seller: "", docs: [] }, tyre_info: {}, logs: [] });
 export const byDateKm = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.km ?? -1) - (b.km ?? -1));
 
 const optPos = (v) => {
@@ -75,6 +75,12 @@ const optPos = (v) => {
   return Number.isFinite(n) && n >= 0 ? n : null;
 };
 const str = (v, max = 60) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+
+/** The tyres a New tyres log was for, in the order FL, FR, RL, RR; all four if it doesn't say. */
+const normPositions = (v) => {
+  const list = Array.isArray(v) ? POS_KEYS.filter((k) => v.includes(k)) : [];
+  return list.length ? list : [...POS_KEYS];
+};
 
 /** Photos and PDFs (invoices, papers): {id, drive, pdf, name}. The file is on the device and/or in Drive. */
 export function normalizeFiles(raw, max = 12) {
@@ -105,6 +111,7 @@ function normalizeLogs(raw) {
       full: type === "fuel" ? l.full !== false : null,       // a top-up has full: false
       tires: (type === "tires" || type === "tyre_buy") && TYRE_NAME[l.tires] ? l.tires : null,
       fitted: type === "tyre_buy" ? l.fitted !== false : null,   // new tyres put on at once: also a tyre change
+      ...(type === "tyre_buy" ? { positions: normPositions(l.positions) } : {}),   // which ones: FL, FR, RL, RR
       note: typeof l.note === "string" ? l.note : "",
       // invoice photos: the picture is kept on the device and (with Drive) as a file in Drive
       photos: normalizeFiles(l.photos),
@@ -220,6 +227,7 @@ export function normalizeCar(raw, id = null) {
     service_months: months ? Math.round(months) : null,
     fixed: Array.isArray(c.fixed) ? normalizeFixed(c.fixed) : fixedFromOld(c),
     purchase: normalizePurchase(c.purchase),
+    tyre_info: normalizeTyreInfo(c.tyre_info),
     logs: normalizeLogs(c.logs),
   };
 }
@@ -482,6 +490,132 @@ export function tyreStatus(logs, today, latestKm = null) {
 }
 
 // ---------------------------------------------------------------------------
+// Tyres one by one: front left, front right, rear left and rear right of every set. A New tyres log puts
+// new tyres in the places it names (sometimes only two); before the first one, each place has the tyre
+// the set came with. The kilometres come from the odometer while the set was on the car.
+// ---------------------------------------------------------------------------
+export const TYRE_POS = [["FL", "Front left"], ["FR", "Front right"], ["RL", "Rear left"], ["RR", "Rear right"]];
+export const POS_KEYS = TYRE_POS.map(([k]) => k);
+export const POS_NAME = Object.fromEntries(TYRE_POS);
+const WINTER_SETS = new Set(["studded", "winter"]);
+/** The legal minimum tread in Sweden: 3 mm on winter tyres (1 December – 31 March), 1.6 mm otherwise. */
+export const minTread = (set) => (WINTER_SETS.has(set) ? 3 : 1.6);
+/** Worn, but still legal: under 4 mm on winter tyres, under 3 mm on summer tyres. */
+export const lowTread = (set) => (WINTER_SETS.has(set) ? 4 : 3);
+export const positionsOf = (l) => (Array.isArray(l.positions) && l.positions.length ? l.positions : POS_KEYS);
+/** "the rear pair", "front left and rear right", "all four" */
+export function positionsWord(list) {
+  const k = POS_KEYS.filter((p) => list.includes(p)).join(",");
+  if (k === "FL,FR,RL,RR") return "all four";
+  if (k === "FL,FR") return "front pair";
+  if (k === "RL,RR") return "rear pair";
+  return POS_KEYS.filter((p) => list.includes(p)).map((p) => POS_NAME[p].toLowerCase()).join(", ");
+}
+
+/** The date code on the side of a tyre, e.g. DOT ... 2321: made in week 23 of 2021. As a day, or null. */
+export function dotDate(code) {
+  if (!/^\d{4}$/.test(code || "")) return null;
+  const w = Number(code.slice(0, 2)), y = 2000 + Number(code.slice(2));
+  if (w < 1 || w > 53) return null;
+  return isoDay(addDays(day(y, 1, 1), (w - 1) * 7 + 3));
+}
+
+/** What you noted about each tyre: brand, DOT code, when bought (the ones from before your logs), tread. */
+export function normalizeTyreInfo(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [id, v] of Object.entries(raw).slice(0, 300)) {
+    if (!id || !v || typeof v !== "object") continue;
+    const mm = Number(v.tread?.mm);
+    const info = {
+      brand: str(v.brand, 40),
+      dot: dotDate(v.dot) ? v.dot : null,
+      bought: typeof v.bought === "string" && isRealDay(v.bought) ? v.bought : null,
+      tread: v.tread && Number.isFinite(mm) && mm >= 0 && mm <= 20 && typeof v.tread.date === "string" && isRealDay(v.tread.date)
+        ? { mm: Math.round(mm * 10) / 10, date: v.tread.date } : null,
+    };
+    if (info.brand || info.dot || info.bought || info.tread) out[id] = info;
+  }
+  return out;
+}
+
+/** Which set was on the car when, from the tyre changes: [{set, from, to (null: still on)}] */
+export function tyrePeriods(logs) {
+  const events = logs.filter((l) => (l.type === "tires" || (l.type === "tyre_buy" && l.fitted !== false)) && l.tires).sort(byDateKm);
+  return events.map((e, i) => ({ set: e.tires, from: e.date, to: events[i + 1]?.date ?? null }));
+}
+
+/** The sets the car has: the ones in your logs, at least summer and a winter set. */
+export function tyreSets(car) {
+  const known = new Set(["summer"]);
+  for (const l of car.logs) if ((l.type === "tires" || l.type === "tyre_buy") && l.tires) known.add(l.tires);
+  for (const id of Object.keys(car.tyre_info || {})) { const s = id.split("-")[0]; if (TYRE_NAME[s]) known.add(s); }
+  if (!known.has("studded") && !known.has("winter")) { known.add("studded"); known.add("winter"); }
+  return TYRE_SETS.map(([k]) => k).filter((k) => known.has(k));
+}
+
+const SEVERITY = { flat: 0, up: 1, warn: 2, down: 3 };
+
+/**
+ * Every tyre of every set, the ones on now and the ones they replaced: where it is, since when, the
+ * kilometres on it (partial: it's older than your logs know), the seasons, its age and how it's doing.
+ */
+export function tyreList(car, today) {
+  const logs = car.logs;
+  const points = odoPoints(logs);
+  const todayIso = isoDay(today);
+  const periods = tyrePeriods(logs);
+  const odo = (iso) => odometerAt(points, dayT(iso));
+  const info = car.tyre_info || {};
+  const onNow = periods.at(-1)?.set || null;
+  const out = [];
+  for (const set of tyreSets(car)) {
+    const mine = periods.filter((p) => p.set === set);
+    const firstStart = mine[0]?.from || null;
+    for (const pos of POS_KEYS) {
+      const buys = logs.filter((l) => l.type === "tyre_buy" && l.tires === set && positionsOf(l).includes(pos)).sort(byDateKm);
+      const seq = [{ id: `${set}-${pos}`, log: null }, ...buys.map((b) => ({ id: `${b.id}-${pos}`, log: b }))];
+      seq.forEach((t, i) => {
+        const inf = info[t.id] || null;
+        const since = t.log ? t.log.date : inf?.bought || null;
+        const until = seq[i + 1]?.log.date ?? null;
+        let km = 0, seasons = 0;
+        for (const p of mine) {
+          const start = since && since > p.from ? since : p.from;
+          const end = [p.to ?? todayIso, until ?? todayIso].sort()[0];
+          if (start > end) continue;
+          if (start < end || (p.to === null && until === null)) seasons++;
+          if (points.length) km += Math.max(0, odo(end) - odo(start));
+        }
+        // older than what your logs know: the kilometres are at least this
+        const partial = !since || !firstStart || since < firstStart || (points.length > 0 && firstStart < points[0].date);
+        const made = inf?.dot ? dotDate(inf.dot) : since;
+        const age = made ? Math.max(0, daysBetween(parseDay(made), today)) : null;
+        const tread = inf?.tread || null;
+        let tone = age !== null || tread ? "up" : "flat", warn = null;
+        const worse = (t2, text) => { if (SEVERITY[t2] > SEVERITY[tone] || (SEVERITY[t2] === SEVERITY[tone] && !warn)) { tone = t2; warn = text; } };
+        if (age !== null && age >= 3652) worse("down", "10 years or older: time to replace it, even if the tread looks fine.");
+        else if (age !== null && age >= 2191) worse("warn", "6 years or older: the rubber hardens with age and grips worse, even with tread left. Have it checked.");
+        if (tread && tread.mm < minTread(set)) worse("down", WINTER_SETS.has(set)
+          ? `Under ${minTread(set)} mm: below the legal minimum for winter tyres in Sweden (1 December – 31 March).`
+          : `Under ${minTread(set)} mm: below the legal minimum.`);
+        else if (tread && tread.mm < lowTread(set)) worse("warn", WINTER_SETS.has(set)
+          ? `Under ${lowTread(set)} mm: close to the ${minTread(set)} mm legal minimum for winter tyres. Plan new ones.`
+          : `Under ${lowTread(set)} mm: worn, and they grip worse on wet roads. Plan new ones.`);
+        out.push({
+          id: t.id, set, pos, current: until === null, since, until, log: t.log, info: inf,
+          price: t.log?.cost > 0 ? t.log.cost / positionsOf(t.log).length : null,
+          together: t.log ? positionsOf(t.log).map((p) => `${t.log.id}-${p}`) : POS_KEYS.map((p) => `${set}-${p}`),
+          km, partial, counted_from: firstStart, seasons, made, age_days: age, tone, warn,
+          on_car: until === null && onNow === set,
+        });
+      });
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 export function serviceStatus(car, today, latestKm = null, perDay = null) {
@@ -705,7 +839,8 @@ export function carCsv(logs) {
     const seg = perFill.get(l.id);
     lines.push([l.date, TYPE[l.type].name, f(l.km), f(l.cost), f(l.litres), l.litres > 0 && l.cost > 0 ? r2(l.cost / l.litres) : "",
       l.type === "fuel" ? (l.full === false ? "no" : "yes") : "", seg ? r2(seg.per100) : "", seg ? r2(seg.per_km) : "",
-      l.tires ? `${TYRE_NAME[l.tires]}${l.type === "tyre_buy" ? (l.fitted === false ? " (not fitted)" : " (fitted)") : ""}` : "", l.note || ""]);
+      l.tires ? `${TYRE_NAME[l.tires]}${l.type === "tyre_buy" ? ` (${l.fitted === false ? "not fitted" : "fitted"}${positionsOf(l).length < 4 ? `, ${positionsWord(positionsOf(l))}` : ""})` : ""}` : "",
+      l.note || ""]);
   }
   return "\uFEFF" + lines.map((l) => l.map(q).join(",")).join("\r\n");
 }

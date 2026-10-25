@@ -11,6 +11,7 @@ import {
   byDateKm, fmtKm, fmtKmSigned, fmtPerKm, fmtAxisKm, monthPos, parseDay, newLogId, carCsv, emptyCar, carTitle, carLine,
   energy, priceSummary, paidPrices, fillPreview, consumptionByMonth, yearForecast,
   FIXED_TYPES, newFixedId, fixedDate, dueFixedLogs, dueCarFixed, nextFixedDate,
+  POS_KEYS, POS_NAME, positionsOf, positionsWord, tyreList, tyreSets, tyrePeriods, dotDate, minTread, lowTread,
 } from "../car.js";
 import { store } from "../store.js";
 import { statCard } from "./overview.js";
@@ -260,6 +261,183 @@ function stats(sum, today) {
 }
 
 const TONE_CHIP = { up: "All good", warn: "Soon", down: "Change now" };
+
+// ---------------------------------------------------------------------------
+// Your tyres, one by one: a car seen from above with its four tyres
+// ---------------------------------------------------------------------------
+// The car (viewBox 120 x 260, the front at the top) and where its tyres are (13 x 36 each).
+const WHEEL = { FL: [13, 44], FR: [94, 44], RL: [13, 180], RR: [94, 180] };
+function carSvg(wheelClass = () => "") {
+  const wheels = POS_KEYS.map((p) => {
+    const [x, y] = WHEEL[p];
+    return `<g class="cm-wheel ${wheelClass(p)}" data-pos="${p}"><rect class="cm-hit" x="${p.endsWith("L") ? 0 : 82}" y="${y - 12}" width="38" height="60"/>`
+      + `<rect class="cm-tyre" x="${x}" y="${y}" width="13" height="36" rx="4"/>`
+      + `<path class="cm-tread" d="M${x + 3} ${y + 8}h7M${x + 3} ${y + 14}h7M${x + 3} ${y + 20}h7M${x + 3} ${y + 26}h7"/></g>`;
+  }).join("");
+  return `<svg class="tm-car" viewBox="0 0 120 260" aria-hidden="true">`
+    + `<path class="cm-body" d="M25.5 88L16.5 85v11l9 1.5zM94.5 88l9-3v11l-9 1.5z"/>`
+    + `<path class="cm-body" d="M34 14C40 7 80 7 86 14C93 22 95 40 95 60V205C95 230 92 246 84 250C72 255 48 255 36 250C28 246 25 230 25 205V60C25 40 27 22 34 14Z"/>`
+    + `<path class="cm-glass" d="M34 101H86L80.5 79Q60 73 39.5 79Z"/>`
+    + `<rect class="cm-roof" x="34" y="105" width="52" height="68" rx="9"/>`
+    + `<path class="cm-glass" d="M35 177H85L81.5 196Q60 201 38.5 196Z"/>`
+    + `<path class="cm-line" d="M44 76Q46 46 48 21M76 76Q74 46 72 21"/>`
+    + `<path class="cm-lamp" d="M33.5 16.5q4-3.5 11-4.2M86.5 16.5q-4-3.5-11-4.2"/>`
+    + `<path class="cm-tail" d="M33 246.5q5 2.5 11 3M87 246.5q-5 2.5-11 3"/>`
+    + `${wheels}</svg>`;
+}
+
+const TONE_COLOR = { up: COLORS.green, warn: COLORS.orange, down: COLORS.red, flat: COLORS.gray3 };
+const SET_LABEL = { summer: "Summer", studded: "Studded", winter: "Non-studded" };
+const SET_TITLE = { summer: "Summer tyres", studded: "Studded winter tyres", winter: "Non-studded winter tyres" };
+const ageShort = (days) => (days < 45 ? "New" : days < 365 ? `${Math.max(1, Math.round(days / 30.44))} mo`
+  : `${(days / 365.25).toFixed(1).replace(/\.0$/, "")} yrs`);
+function ageLong(days) {
+  if (days < 45) return "New";
+  const months = Math.round(days / 30.44);
+  const y = Math.floor(months / 12), m = months % 12;
+  return [y ? plural(y, "year") : null, m ? plural(m, "month") : null].filter(Boolean).join(" ");
+}
+const kmShort = (t) => (t.km === 0 && t.partial ? "— km" : `${plainNumber(Math.round(t.km / 100) * 100)}${t.partial ? "+" : ""} km`);
+const dotWords = (code) => `week ${Number(code.slice(0, 2))} of 20${code.slice(2)}`;
+const pairWord = (list) => { const w = positionsWord(list); return w.endsWith("pair") ? `the ${w}` : w; };
+
+function tyreLabel(t, onTap, row) {
+  return h("button", { type: "button", class: `tm-label ${row}`, onclick: () => onTap(t) },
+    // on a small phone: FL, FR, RL, RR
+    h("div", { class: "cap-row" }, dot(TONE_COLOR[t.tone], 7),
+      h("span", { class: "caption" }, h("span", { class: "tm-long" }, POS_NAME[t.pos]), h("span", { class: "tm-short" }, t.pos))),
+    t.age_days === null ? h("div", { class: "tm-age add" }, "Add age") : h("div", { class: "tm-age" }, ageShort(t.age_days)),
+    h("div", { class: "tm-km" }, kmShort(t)),
+    t.info?.tread ? h("div", { class: "tm-km" }, `${plainNumber(t.info.tread.mm, 1)} mm`, h("span", { class: "tm-long" }, " tread")) : null);
+}
+
+/** The car from above, with what each tyre has done around it. tyres: {FL: tyre, FR: ..., RL, RR} */
+function tyreMap(tyres, onTap) {
+  const carEl = h("div", { class: "tm-carwrap" });
+  carEl.innerHTML = carSvg((p) => `tone-${tyres[p]?.tone || "flat"}`);
+  for (const g of carEl.querySelectorAll("[data-pos]")) g.addEventListener("click", () => tyres[g.dataset.pos] && onTap(tyres[g.dataset.pos]));
+  const side = (cls, front, rear) => h("div", { class: `tm-side ${cls}` }, tyreLabel(tyres[front], onTap, "front"), tyreLabel(tyres[rear], onTap, "rear"));
+  return h("div", { class: "tyre-map" }, side("left", "FL", "RL"), carEl, side("right", "FR", "RR"));
+}
+
+const tyreSetShown = new Map();       // car id -> the set Your tyres shows (the one on the car at first)
+
+function tyresCard(car, ctx) {
+  const today = ctx.today;
+  const all = tyreList(car, today);
+  const sets = tyreSets(car);
+  const periods = tyrePeriods(car.logs);
+  const onNow = periods.at(-1)?.set || null;
+  let set = tyreSetShown.get(car.id);
+  if (!sets.includes(set)) set = sets.includes(onNow) ? onNow : sets[0];
+  const sub = h("span");
+  const body = h("div");
+  function draw() {
+    const now = Object.fromEntries(all.filter((t) => t.set === set && t.current).map((t) => [t.pos, t]));
+    const last = periods.filter((p) => p.set === set).at(-1);
+    sub.textContent = `${SET_TITLE[set]}  ·  ${onNow === set ? `on the car${last ? ` since ${dayText(last.from, today)}` : ""}`
+      : last ? `in storage since ${dayText(last.to, today)}` : "not logged on the car yet"}`;
+    // which of them came from a New tyres log
+    const byLog = new Map();
+    for (const t of Object.values(now)) if (t.log) byLog.set(t.log.id, [...(byLog.get(t.log.id) || []), t]);
+    const older = Object.values(now).filter((t) => !t.log).length;
+    const lines = [...[...byLog.values()].map((ts) => `${ts.length === 4 ? "All four" : `${ts.length} (${pairWord(ts.map((t) => t.pos))})`} bought ${dayText(ts[0].log.date, today)}`),
+      byLog.size && older ? `${older} older` : null].filter(Boolean).join("  ·  ");
+    const unknown = Object.values(now).some((t) => t.age_days === null);
+    body.replaceChildren(...[
+      h("div", { class: "tm-front caption" }, "FRONT"),
+      tyreMap(now, (t) => openTyreSheet(ctx, car, t)),
+      lines ? h("div", { class: "tm-note" }, lines) : null,
+      h("div", { class: "hint" }, unknown
+        ? "Tap a tyre to add its age: the last four digits of the DOT code on its side are the week and year it was made (2321 = week 23 of 2021). New tyres you log fill this in by themselves."
+        : "Kilometres from your odometer while the set was on the car (+: the tyre is older than your logs). Tap a tyre for its details."),
+    ].filter(Boolean));
+  }
+  draw();
+  const seg = sets.length > 1
+    ? segmented(sets.map((k) => SET_LABEL[k]), sets.indexOf(set), (i) => { set = sets[i]; tyreSetShown.set(car.id, set); draw(); }, "full")
+    : null;
+  return card(head("Your tyres", sub), seg, body,
+    actions(btn("+  New tyres", () => openCarLogSheet(ctx, car, null, { type: "tyre_buy", tires: set }))));
+}
+
+/** One tyre: what it has done, and what you know about it (brand, DOT code, tread). */
+function openTyreSheet(ctx, car, t) {
+  const today = ctx.today;
+  const inf = t.info || {};
+  const notes = car.tyre_info || {};
+  const others = t.together.filter((id) => id !== t.id);
+  const brand = textField("e.g. Nokian Hakkapeliitta 10", inf.brand || "", { "aria-label": "Brand", autocapitalize: "words" });
+  const dotI = numField("e.g. 2321", "numeric");
+  dotI.value = inf.dot || "";
+  dotI.maxLength = 4;
+  const bought = t.log ? null : h("input", { class: "form-input date-input", type: "date", value: inf.bought || "", "aria-label": "Bought on" });
+  const tread = numField(`e.g. ${WINTER_TREAD.has(t.set) ? "7,5" : "5,5"}`);
+  if (inf.tread) tread.value = plainNumber(inf.tread.mm, 1);
+  const same = others.length ? toggle(others.every((id) => !notes[id]?.brand && !notes[id]?.dot), () => {}, "Same for the others") : null;
+  const dotFooter = footer("");
+  let api = null;
+
+  function validate() {
+    const code = dotI.value.trim();
+    const made = dotDate(code);
+    const dotBad = Boolean(code) && (!made || made > isoDay(today));
+    const mm = parseNumber(tread.value);
+    const treadBad = Boolean(tread.value.trim()) && !(mm >= 0 && mm <= 20);
+    const boughtBad = Boolean(bought?.value) && (!DATE_RX.test(bought.value) || bought.value > isoDay(today));
+    dotI.classList.toggle("invalid", dotBad);
+    tread.classList.toggle("invalid", treadBad);
+    dotFooter.textContent = made && !dotBad ? `Made in ${dotWords(code)}: ${ageLong(daysBetween(parseDay(made), today))} old.`
+      : "The DOT code on the side of the tyre ends with four digits: the week and the year it was made (2321 = week 23 of 2021). Tyres age even when they're not used.";
+    api?.setRight({ disabled: dotBad || treadBad || boughtBad });
+  }
+  for (const el of [dotI, tread, ...(bought ? [bought] : [])]) el.addEventListener("input", validate);
+  bought?.addEventListener("change", validate);
+
+  const info = (label, value) => h("div", { class: "form-row" }, h("span", { class: "form-label" }, label), h("span", { class: "form-value" }, value));
+  const driven = t.km === 0 && t.partial ? "Not logged yet" : `${kmShort(t)}${t.seasons ? `  ·  ${plural(t.seasons, "season")}` : ""}`;
+  const age = t.age_days === null ? "—" : `${ageLong(t.age_days)}${inf.dot ? "" : " (since bought)"}`;
+  const before = tyreList(car, today).filter((x) => x.set === t.set && x.pos === t.pos && x.until && x.until <= (t.since || "9999"))
+    .sort((a, b) => (a.until < b.until ? 1 : -1));
+  const body = h("div", { class: "form" },
+    footer(SET_TITLE[t.set]),
+    t.warn ? h("div", { class: `tyre-warn tone-text-${t.tone}` }, t.warn) : null,
+    caption("SO FAR"),
+    group(info("Driven", driven), info("Age", age),
+      t.log ? info("Bought", `${dayText(t.log.date, today)}${t.price ? `  ·  ${fmtSek(t.price)} each` : ""}`) : null),
+    footer(t.km === 0 && t.partial
+      ? "The kilometres count from your first logged tyre change with this set."
+      : t.partial ? `Counted since ${dayText(t.counted_from, today)}, your first logged change with this set; the tyre is older, so it has done more.`
+        : "Counted from your odometer logs while the set was on the car."),
+    caption("DETAILS"),
+    group(row("Brand", brand), row("DOT code", dotI), bought ? h("label", { class: "form-row" }, h("span", { class: "form-label" }, "Bought on"), bought) : null,
+      row("Tread depth", tread, "mm")),
+    dotFooter,
+    footer(`Measure the tread in the main grooves. In Sweden the legal minimum is ${WINTER_TREAD.has(t.set) ? `${minTread(t.set)} mm for winter tyres (1 December – 31 March), and under ${lowTread(t.set)} mm they're worn` : `${String(minTread(t.set)).replace(".", ",")} mm; under ${lowTread(t.set)} mm they grip worse in the wet`}.${inf.tread ? ` Last measured ${dayText(inf.tread.date, today)}.` : ""}`),
+    same ? group(h("label", { class: "form-row switch-row" }, h("span", { class: "form-label" }, `Same for all ${t.together.length}`), same)) : null,
+    same ? footer(t.log ? `The brand and the DOT code also for the ${plural(others.length, "other tyre")} bought with this one (${pairWord(positionsOf(t.log))}).`
+      : "The brand, the DOT code and the day you bought them also for the other tyres of this set from before your logs.") : null,
+    before.length ? caption("BEFORE THIS ONE") : null,
+    before.length ? group(...before.map((x) => info(x.log ? `Bought ${dayText(x.log.date, today)}` : "From before your logs",
+      `${kmShort(x)}, replaced ${dayText(x.until, today)}`))) : null);
+
+  api = sheet({ title: POS_NAME[t.pos], left: { text: "Cancel" }, body,
+    right: { text: "Save", bold: true, onClick: (sh) => {
+      const code = dotI.value.trim();
+      const mm = parseNumber(tread.value);
+      const next = { brand: brand.value.trim(), dot: dotDate(code) ? code : null, bought: bought ? bought.value || null : inf.bought || null,
+        tread: !tread.value.trim() ? null : inf.tread && Math.abs(inf.tread.mm - mm) < 0.05 ? inf.tread : { mm, date: isoDay(today) } };
+      const items = { [t.id]: next };
+      if (same?.input.checked) for (const id of others) items[id] = { ...(notes[id] || {}), brand: next.brand, dot: next.dot, ...(t.log ? {} : { bought: next.bought }) };
+      store.saveTyreInfo(car.id, items);
+      sh.close();
+      toast(`✓  Saved ${POS_NAME[t.pos].toLowerCase()}${same?.input.checked ? ` and the ${plural(others.length, "other")}` : ""}`);
+      syncTap();
+    } } });
+  validate();
+  return api;
+}
+const WINTER_TREAD = new Set(["studded", "winter"]);
 
 function tyreCard(car, sum, today, ctx) {
   const t = sum.tyres, d = sum.tyre_dates;
@@ -861,9 +1039,9 @@ export function renderCar(ctx) {
   const sum = carSummary(car, today);
   const subtitle = [carLine(car), sum.n ? `${plural(sum.n, "log")}, latest ${dayText(sum.logs.at(-1).date, today)}` : "no logs yet"].filter(Boolean).join("  ·  ");
   const picker = carPicker(ctx, car);
-  if (!sum.n) return [subtitle, picker, noLogsCard(ctx, car), tyreCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), fixedCard(car, ctx), detailsCard(car, ctx)];
+  if (!sum.n) return [subtitle, picker, noLogsCard(ctx, car), tyreCard(car, sum, today, ctx), tyresCard(car, ctx), inspectionCard(car, sum, today, ctx), fixedCard(car, ctx), detailsCard(car, ctx)];
   return [subtitle, picker, odoHero(sum, today), stats(sum, today), consumptionCard(car, sum, today, ctx), tyreCard(car, sum, today, ctx),
-    serviceCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), fixedCard(car, ctx), detailsCard(car, ctx)];
+    tyresCard(car, ctx), serviceCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), fixedCard(car, ctx), detailsCard(car, ctx)];
 }
 
 // ---------------------------------------------------------------------------
@@ -956,7 +1134,10 @@ function logRow(l, ctx, car, perFill, prevKm, today, en) {
   const extra = [];
   let use = null;
   if (l.type === "tires" && l.tires) extra.push(TYRE_ON[l.tires]);
-  if (l.type === "tyre_buy" && l.tires) extra.push(l.fitted === false ? `${TYRE_ON[l.tires].replace(/ on$/, "")}, not fitted` : TYRE_ON[l.tires]);
+  if (l.type === "tyre_buy" && l.tires) {
+    extra.push(l.fitted === false ? `${TYRE_ON[l.tires].replace(/ on$/, "")}, not fitted` : TYRE_ON[l.tires]);
+    if (positionsOf(l).length < 4) extra.push(`${plural(positionsOf(l).length, "tyre")} (${positionsWord(positionsOf(l))})`);
+  }
   if (l.type === "fuel") {
     if (l.litres) extra.push(`${plainNumber(l.litres, Math.round(l.litres * 100) % 10 ? 2 : Math.round(l.litres * 10) % 10 ? 1 : 0)} ${en.unit}`);
     if (l.litres > 0 && l.cost > 0) extra.push(perUnit(l.cost / l.litres, en));
@@ -1125,6 +1306,26 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
   const fittedSwitch = toggle(original?.type === "tyre_buy" ? original.fitted !== false : true, () => update(), "Fitted right away");
   const fittedGroup = group(h("label", { class: "form-row switch-row" }, h("span", { class: "form-label" }, "Fitted right away"), fittedSwitch));
   const fittedFooter = footer("On: they were put on the car when you bought them, so this also counts as your tyre change. Off: bought for later; log a tyre change when you put them on.");
+  // which ones: sometimes only two are new, and the others keep their age and kilometres
+  let positions = original?.type === "tyre_buy" ? [...positionsOf(original)] : [...POS_KEYS];
+  const posCaption = caption("WHICH ONES");
+  const posPick = h("div", { class: "tm-pick" });
+  const posFooter = footer("");
+  function drawPick() {
+    posPick.innerHTML = `<div class="caption">FRONT</div>${carSvg((p) => (positions.includes(p) ? "on" : "off"))}`;
+    for (const g of posPick.querySelectorAll("[data-pos]")) {
+      g.addEventListener("click", () => {
+        const p = g.dataset.pos;
+        positions = positions.includes(p) ? positions.filter((x) => x !== p) : POS_KEYS.filter((x) => x === p || positions.includes(x));
+        drawPick();
+        validate();
+      });
+    }
+    posFooter.textContent = !positions.length ? "Tap the tyres you bought."
+      : positions.length === 4 ? "All four. Tap a tyre to leave it out, e.g. when you bought only two: the others keep their age and kilometres."
+        : `${plural(positions.length, "new tyre")}: ${pairWord(positions)}. The others keep their age and kilometres.`;
+  }
+  drawPick();
 
   // a refuel: type any two of litres, price and total, and the third is worked out (shown in grey)
   const money = { litres, price, cost };
@@ -1152,7 +1353,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
   function update() {
     const isFuel = type === "fuel", isTyres = TYRE_KINDS.includes(type), isOther = !MAIN.includes(type) && !isTyres;
     tyreKindSeg.style.display = isTyres ? "" : "none";
-    for (const el of [fittedGroup, fittedFooter]) el.style.display = type === "tyre_buy" ? "" : "none";
+    for (const el of [fittedGroup, fittedFooter, posCaption, posPick, posFooter]) el.style.display = type === "tyre_buy" ? "" : "none";
     tyreCaption.textContent = type === "tyre_buy" ? "WHICH TYRES" : "TYRES PUT ON";
     kindGroup.style.display = isOther ? "" : "none";
     for (const el of [litresRow, priceRow, fullGroup, fullFooter]) el.style.display = isFuel ? "" : "none";
@@ -1182,7 +1383,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
     litres.classList.toggle("invalid", litresBad);
     price.classList.toggle("invalid", priceBad);
     const needKm = NEEDS_KM.has(type) || (type === "tyre_buy" && fittedSwitch.input.checked);
-    const ok = dateOk && !kmBad && !costBad && !litresBad && !priceBad && (!needKm || k !== null);
+    const ok = dateOk && !kmBad && !costBad && !litresBad && !priceBad && (!needKm || k !== null) && (type !== "tyre_buy" || positions.length > 0);
     api?.setRight({ disabled: !ok });
 
     // odometer: compared with the reading before this date
@@ -1291,7 +1492,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
     group(litresRow, priceRow, costRow),
     costFooter,
     fullGroup, fullFooter,
-    tyreCaption, tyreSeg, tyreFooter, fittedGroup, fittedFooter,
+    tyreCaption, tyreSeg, tyreFooter, posCaption, posPick, posFooter, fittedGroup, fittedFooter,
     photoCaption, photoGrid, photoFooter,
     caption("NOTE"),
     group(h("div", { class: "note-wrap" }, note)),
@@ -1301,11 +1502,12 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
   function save(sh) {
     const { d, k, c, l } = read();
     const needKm = NEEDS_KM.has(type) || (type === "tyre_buy" && fittedSwitch.input.checked);
-    if (!DATE_RX.test(d) || (needKm && k === null)) return;
+    if (!DATE_RX.test(d) || (needKm && k === null) || (type === "tyre_buy" && !positions.length)) return;
     const isFuel = type === "fuel";
     const log = { id: original ? original.id : newLogId(), date: d, type, km: k, cost: c === null ? null : Math.round(c * 100) / 100,
       litres: isFuel ? l : null, full: isFuel ? fullSwitch.input.checked : null, tires: TYRE_KINDS.includes(type) ? tires : null,
       fitted: type === "tyre_buy" ? fittedSwitch.input.checked : null,
+      ...(type === "tyre_buy" ? { positions: [...positions] } : {}),
       photos: isFuel ? [] : files.list(),
       note: note.value.trim() };
     saved = true;
