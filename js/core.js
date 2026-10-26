@@ -109,11 +109,24 @@ export const DEFAULT_EXPENSES = [
   ["Transport", "Transport"], ["Insurance", "Insurance"], ["Phone", "Subscriptions"],
   ["Streaming & apps", "Subscriptions"], ["Gym", "Health & fitness"],
 ];
+// [key, name, tagline, % of salary to your future, the least to live on a week (in SEK)]
 export const PROFILE_DEFS = [
-  ["light", "Light saving", "More room to enjoy now", 10],
-  ["balanced", "Balanced", "Steady, with room to live", 20],
-  ["high", "High saving", "Live lean, grow fast", 30],
+  ["light", "Light saving", "More room to enjoy now", 10, 800],
+  ["balanced", "Balanced", "Steady, with room to live", 20, 500],
+  ["high", "High saving", "Live lean, grow fast", 30, 300],
 ];
+/** Nobody lives on less than about 300 kr a week, so no plan goes below it. */
+export const MIN_FLOOR_SEK = 300;
+// Roughly what 1 SEK is in other currencies: only for the suggested minimums to live on (you can change them).
+const ROUGH_PER_SEK = { SEK: 1, NOK: 1, DKK: 0.65, ISK: 13, EUR: 0.09, GBP: 0.075, USD: 0.095, CHF: 0.08, PLN: 0.37, CZK: 2.2,
+  HUF: 34, RON: 0.43, TRY: 3.3, JPY: 14, CNY: 0.68, KRW: 130, AUD: 0.145, NZD: 0.16, CAD: 0.13, HKD: 0.74, SGD: 0.12,
+  ZAR: 1.7, BRL: 0.52, MXN: 1.8, ILS: 0.35, THB: 3.3, PHP: 5.4, IDR: 1500, MYR: 0.43, INR: 8 };
+/** An amount in SEK as a round amount in your currency (for the suggested minimums). */
+export function fromSek(sek) {
+  const v = sek * (ROUGH_PER_SEK[CUR.local] || 1);
+  const step = v >= 2000 ? 100 : v >= 200 ? 10 : v >= 20 ? 5 : 1;
+  return Math.max(step, Math.round(v / step) * step);
+}
 export const BUFFER_MONTH_CHOICES = [2, 3, 4, 6];
 export const GOAL_CATEGORIES = [
   ["Travel", COLORS.cyan], ["Gifts & events", COLORS.pink], ["Bigger buys", COLORS.purple],
@@ -526,15 +539,30 @@ export function weekChunks(start, end) {
 // ---------------------------------------------------------------------------
 // Budget: pay yourself first (fixed costs -> saving goals -> your future -> living money)
 // ---------------------------------------------------------------------------
-export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, bufferFirst, fx, bufferMonths = 3) {
+/**
+ * How a plan splits what's free (after fixed costs and goals) between your future and living money. It
+ * wants ratePct of the salary for your future, but always leaves at least floorTotal to live on: when
+ * the % doesn't fit, it saves less instead (capped); when even the minimum doesn't fit, nothing (short).
+ */
+export function planSplit(free, salary, ratePct, floorTotal = 0) {
+  const wanted = (Math.max(ratePct, 0) / 100) * salary;
+  const room = Math.max(free - Math.max(floorTotal, 0), 0);
+  const future = Math.max(0, Math.min(wanted, room));
+  const capped = wanted > future + 0.5;
+  return { wanted, future, living: Math.max(free - future, 0), capped,
+    short: floorTotal > 0 && free < floorTotal - 0.5,                     // even the minimum to live on doesn't fit
+    by_floor: capped && floorTotal > 0 && free >= wanted - 0.5 };       // the % fits, but would leave too little
+}
+
+export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, bufferFirst, fx, bufferMonths = 3, floorWeek = 0, days = 0) {
   const fixed = sum(expenses.filter((e) => expenseApplies(e, base)).map((e) => expenseMonthlySek(e, fx)));
   const goalRows = goals.filter((g) => goalApplies(g, base)).map((g) => [g, goalPerMonth(g)]);
   const goalsTotal = sum(goalRows.map(([, m]) => m));
   const left = salary - fixed;
   const free = left - goalsTotal;
-  const wanted = (Math.max(ratePct, 0) / 100) * salary;
-  const future = Math.max(0, Math.min(wanted, free));
-  const living = Math.max(free - future, 0);
+  const floorTotal = floorWeek > 0 && days > 0 ? floorWeek * days / 7 : 0;
+  const split = planSplit(free, salary, ratePct, floorTotal);
+  const { wanted, future, living } = split;
   const target = bufferMonths * fixed;
   let shortfall = Math.max(target - bankSek, 0);
   if (shortfall < 500) shortfall = 0;           // a few hundred kronor short counts as full
@@ -542,20 +570,54 @@ export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, b
   const invest = future - toBuffer;
   return {
     salary, fixed, left, goals: goalsTotal, goal_rows: goalRows, free, wanted, future,
-    capped: wanted > future + 0.5, living, to_buffer: toBuffer, invest, savings: goalsTotal + toBuffer,
+    capped: split.capped, short: split.short, by_floor: split.by_floor, floor_week: floorWeek, floor_total: floorTotal,
+    living, to_buffer: toBuffer, invest, savings: goalsTotal + toBuffer,
     save_rate: salary > 0 ? future / salary : 0, rate_pct: ratePct,
     max_rate: salary > 0 ? Math.max(free, 0) / salary : 0,
     target, shortfall, bank: bankSek, buffer_months: bufferMonths,
   };
 }
 
-export function planForRate(snap, ratePct) {
-  const salary = snap.salary, free = Math.max(snap.free, 0);
-  const wanted = (Math.max(ratePct, 0) / 100) * salary;
-  const future = Math.min(wanted, free);
-  const toBuffer = snap.buffer_first ? Math.min(future, snap.shortfall) : 0;
-  return { spend: free - future, save: snap.goals + toBuffer, invest: future - toBuffer, future,
-    capped: salary > 0 && wanted > free + 0.5 };
+/** What a profile would do this pay period: spend, save (goals + buffer), invest, and why it saves less. */
+export function planForRate(snap, ratePct, floorWeek = 0) {
+  const salary = snap.salary;
+  const floorTotal = floorWeek > 0 ? floorWeek * snap.days / 7 : 0;
+  const s = planSplit(snap.free, salary, ratePct, floorTotal);
+  const toBuffer = snap.buffer_first ? Math.min(s.future, snap.shortfall) : 0;
+  return { spend: s.living, save: snap.goals + toBuffer, invest: s.future - toBuffer, to_buffer: toBuffer, future: s.future,
+    rate: salary > 0 ? s.future / salary : 0, capped: salary > 0 && s.capped, short: salary > 0 && s.short, by_floor: s.by_floor,
+    floor_week: floorWeek, floor_total: floorTotal };
+}
+
+/** The least each profile lives on a week, in your currency (yours, or the suggested ones). */
+export function loadFloors(data) {
+  const stored = getSetting(data, "profile_floors", {}) || {};
+  const out = {};
+  for (const [key, , , , def] of PROFILE_DEFS) {
+    const val = typeof stored === "object" ? stored[key] : null;
+    out[key] = typeof val === "number" && val >= 0 && val < 1e9 ? val : fromSek(def);
+  }
+  return out;
+}
+
+/**
+ * What you usually spend a week beyond your fixed costs, from your monthly logs (income minus what you
+ * saved, minus the fixed costs): the median of the last 12 months, trip months left out. null with fewer
+ * than 3 months to go on.
+ */
+export function usualSpending(entries, fixed) {
+  const vals = monthFlows(entries).slice(-12).filter((f) => !isTrip(f.entry)).map((f) => f.spending - fixed).filter((v) => v > 0)
+    .sort((a, b) => a - b);
+  if (vals.length < 3) return null;
+  const mid = vals.length / 2;
+  const month = vals.length % 2 ? vals[Math.floor(mid)] : (vals[mid - 1] + vals[mid]) / 2;
+  return { month, week: month * 7 / 30.4375, months: vals.length };
+}
+
+/** The plans you started for pay periods: {"2026-10": plan}. A plan keeps its numbers for the whole period. */
+export function loadPlans(data) {
+  const p = getSetting(data, "period_plans", {});
+  return p && typeof p === "object" ? p : {};
 }
 
 export function loadProfiles(data) {
@@ -592,16 +654,18 @@ export function budgetSnapshot(data, today = todayDate(), offset = 0, salaryOver
   const profiles = loadProfiles(data);
   let key = getSetting(data, "profile", "balanced");
   if (!(key in profiles)) key = "balanced";
+  const floors = loadFloors(data);
   const bufferFirst = Boolean(getSetting(data, "buffer_first", true));
   let months = getSetting(data, "buffer_months", 3);
   if (!BUFFER_MONTH_CHOICES.includes(months)) months = 3;
   const b = computeBudget(salary, expenses, goals, base, profiles[key], latest ? latest.bank_sek : 0,
-    bufferFirst, fx, months);
+    bufferFirst, fx, months, floors[key], daysBetween(start, end));
+  const plan = loadPlans(data)[base] || null;
   const active = expenses.filter((e) => expenseApplies(e, base));
   const missing = active.filter((e) => e.amount === 0);
   return Object.assign(b, {
     today, base, start, end, days: daysBetween(start, end), fx, fx_src: fxSrc, fx_override: fxOverride,
-    expenses, active, profiles, profile: key, goals_list: goals, latest, salary_kept: salaryOverride === null && savedSalary !== null, buffer_first: bufferFirst, missing,
+    expenses, active, profiles, floors, plan, profile: key, goals_list: goals, latest, salary_kept: salaryOverride === null && savedSalary !== null, buffer_first: bufferFirst, missing,
     plan_ready: salary > 0 && b.fixed > 0 && missing.length <= 2,
   });
 }
@@ -614,23 +678,27 @@ export function buildActions(snap, summ, tags, fund, inv, flows) {
     items.push([0, `Fill in ${n} fixed cost${n !== 1 ? "s" : ""} on the Budget page`,
       "The plan, the buffer target and several insights compare against your fixed costs, so they get sharper once every cost has its amount.", COLORS.orange]);
   }
-  const planned = snap.future;
-  if (snap.plan_ready && planned + snap.goals > 0) {
+  const P = snap.plan || snap;          // the plan you started for this pay period, if you did
+  const planned = P.future;
+  if (snap.plan_ready && planned + P.goals > 0) {
     const ps = paydayStatus(snap.today);
     const when = ps.isToday ? "today" : shortDate(ps.next);
     const moves = joinAnd([
-      snap.invest > 0 ? `${fmtSek(snap.invest)} to ${brokersText("your investments")}` : "",
-      snap.to_buffer > 0 ? `${fmtSek(snap.to_buffer)} to your buffer` : "",
-      snap.goals > 0 ? `${fmtSek(snap.goals)} to your saving goals` : "",
+      P.invest > 0 ? `${fmtSek(P.invest)} to ${brokersText("your investments")}` : "",
+      P.to_buffer > 0 ? `${fmtSek(P.to_buffer)} to your buffer` : "",
+      P.goals > 0 ? `${fmtSek(P.goals)} to your saving goals` : "",
     ]);
     items.push([1, `On payday (${when}), move the money first`,
       `Send ${moves} as soon as the salary lands. Standing transfers make it automatic, and what's left in the account is yours to spend.`, COLORS.blue]);
   }
   if (summ && snap.plan_ready) {
-    const planRate = snap.save_rate, actual = summ.rate;
+    const planRate = P.save_rate ?? snap.save_rate, actual = summ.rate;
     if (actual < planRate - 0.05)
       items.push([2, `You save ${pct(actual)} of your income, the plan says ${pct(planRate)}`,
         `Over the last ${summ.n} months you put aside ${fmtSek(summ.saved)} a month on average, the plan puts aside ${fmtSek(planned)}. That's about ${fmtSek(planned - summ.saved)} a month to find.`, COLORS.orange]);
+    else if (actual < planRate - 0.005)
+      items.push([6, `You're saving ${pct(actual)} of your income, close to your plan`,
+        `Your plan says ${pct(planRate)}. Over the last ${summ.n} months you put aside ${fmtSek(summ.saved)} a month: about ${fmtSek(planned - summ.saved)} a month more would reach it.`, COLORS.green]);
     else
       items.push([6, `You're saving ${pct(actual)} of your income`,
         `That matches or beats your plan of ${pct(planRate)} over the last ${summ.n} months. Keep the transfers going.`, COLORS.green]);

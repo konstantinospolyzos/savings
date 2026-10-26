@@ -445,6 +445,11 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
 .tile-cap { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--gray); font-weight: 600; text-transform: uppercase; }
 .tile-amount { font-size: 14px; font-weight: 600; margin-top: 2px; white-space: nowrap; }
 .tile-pct { font-size: 11.5px; color: var(--gray); }
+.tile-why { font-size: 12.5px; color: var(--gray); margin-top: 6px; line-height: 1.35; }
+.plan-note { margin-bottom: 12px; }
+.note-actions { margin-top: 8px; }
+.move-row { cursor: default; }
+.move-row .row-title.moved { text-decoration: line-through; color: var(--gray); }
 
 .alloc { display: flex; flex-direction: column; gap: 3px; }
 .alloc-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
@@ -557,7 +562,9 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
   .stats { grid-template-columns: repeat(4, 1fr); }
   .hero { display: grid; grid-template-columns: 1fr auto 1fr; gap: 0 24px; }
   .hero .hairline { width: 0.5px; height: auto; margin: 0; }
-  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .tiles .tile-head { flex-wrap: wrap; }
+  .tiles .tile-head > div:first-child { flex: 1 1 120px; }
   .tile-cols { grid-template-columns: 1fr; gap: 4px; }
   .donut { flex-direction: row; align-items: center; }
   .donut-legend { flex: 1; }

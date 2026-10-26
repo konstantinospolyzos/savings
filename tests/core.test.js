@@ -202,3 +202,41 @@ test("budget: saving is capped by what's free, small shortfalls count as full", 
 test("euro costs are converted at the budget rate", () => {
   close(c.expenseMonthlySek({ amount: 120, per: "year", currency: "EUR" }, 0.1), 100);
 });
+
+// ---------------------------------------------------------------------------
+test("saving plans always leave a minimum to live on", () => {
+  // 38 095 salary, 27 756 fixed costs: 10 339 left for a 33-day pay period (4.71 weeks)
+  const fixed = [{ amount: 27756, per: "month", active: true, currency: "SEK" }];
+  const days = 33, weeks = 33 / 7;
+  const plan = (rate, floor) => c.computeBudget(38095, fixed, [], "2026-10", rate, 100000, false, 0.09, 3, floor, days);
+  const high = plan(35, 300);                       // 35% wants 13 333: doesn't fit
+  close(high.living, 300 * weeks);                  // the minimum: 300 kr a week
+  close(high.future, 10339 - 300 * weeks);
+  assert.equal(high.capped, true);
+  assert.equal(high.by_floor, false);               // the % doesn't even fit before the minimum
+  assert.equal(high.short, false);
+  const balanced = plan(25, 500);                   // 25% (9 524) fits, but would leave 815 kr: less than 500 a week
+  close(balanced.living, 500 * weeks);
+  assert.equal(balanced.by_floor, true);
+  const light = plan(10, 800);                      // 10% fits and leaves plenty
+  close(light.future, 3809.5);
+  assert.equal(light.capped, false);
+  // even the minimum doesn't fit: nothing to the future, all of it to live on
+  const tight = c.computeBudget(30000, fixed, [], "2026-10", 20, 0, false, 0.09, 3, 800, days);
+  assert.deepEqual([tight.short, tight.future, tight.living], [true, 0, 30000 - 27756]);
+  // the old way (no minimum) still works
+  assert.equal(c.computeBudget(38095, fixed, [], "2026-10", 35, 0, false, 0.09, 3).living, 0);
+  assert.equal(c.fromSek(300), 300);
+});
+
+test("what you usually spend beyond fixed costs, from the logs", () => {
+  const e = (month, income, bank, comment = "") => ({ month, income_sek: income, bank_sek: bank, invested_eur: 0, sek_to_eur: 0.09, added_eur: null, comment, trip: null });
+  const entries = [e("2026-01", 38000, 50000), e("2026-02", 38000, 54000), e("2026-03", 38000, 57000),
+    e("2026-04", 38000, 52000, "Flight to Greece"), e("2026-05", 38000, 56500), e("2026-06", 38000, 61000)];
+  // spending a month: 34 000, 35 000, (trip), 33 500, 33 500 -> beyond 28 000 of fixed costs: 6 000, 7 000, 5 500, 5 500
+  const u = c.usualSpending(entries, 28000);
+  assert.equal(u.months, 4);
+  assert.equal(u.month, 5750);
+  close(u.week, 5750 * 7 / 30.4375);
+  assert.equal(c.usualSpending(entries.slice(0, 3), 28000), null);   // too few months
+});

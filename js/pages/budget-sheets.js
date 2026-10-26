@@ -2,7 +2,7 @@
 import { h, sheet, group, caption, footer, toggle, segmented, selectRow, alertBox, toast, icon } from "../ui.js";
 import {
   CATEGORIES, GOAL_CATEGORIES, PROFILE_DEFS, addMonths, mShort, mIndex, parseNumber, plainNumber, fmtSek,
-  goalPlannedBy, roundTo10, CUR, CURRENCIES, inSweden, localSym, rateShown,
+  goalPlannedBy, roundTo10, CUR, CURRENCIES, inSweden, localSym, rateShown, fromSek, MIN_FLOOR_SEK,
 } from "../core.js";
 import { store } from "../store.js";
 
@@ -224,31 +224,47 @@ export function openGoalSheet(ctx, snap, original = null) {
 
 // ---------------------------------------------------------------------------
 export function openProfilesSheet(ctx, snap) {
-  const fields = {};
-  const rows = PROFILE_DEFS.map(([key, title]) => {
+  const fields = {}, floorFields = {};
+  const minFloor = fromSek(MIN_FLOOR_SEK);
+  const pctField = (key, title) => {
     const f = h("input", { class: "form-input pct-input", type: "text", inputmode: "decimal", autocomplete: "off",
       value: String(snap.profiles[key]), "aria-label": `${title} percent` });
     fields[key] = f;
     f.addEventListener("input", validate);
     return row(title, f, "% of salary");
-  });
+  };
+  const floorField = (key, title) => {
+    const f = h("input", { class: "form-input pct-input", type: "text", inputmode: "numeric", autocomplete: "off",
+      value: plainNumber(snap.floors[key]), "aria-label": `${title}: at least, per week` });
+    floorFields[key] = f;
+    f.addEventListener("input", validate);
+    return row(title, f, `${localSym()} a week`);
+  };
+  const rows = PROFILE_DEFS.map(([key, title]) => pctField(key, title));
+  const floorRows = PROFILE_DEFS.map(([key, title]) => floorField(key, title));
   const note = footer("");
   const values = () => Object.fromEntries(Object.entries(fields).map(([k, f]) => [k, parseNumber(f.value, true)]));
+  const floors = () => Object.fromEntries(Object.entries(floorFields).map(([k, f]) => [k, parseNumber(f.value)]));
   let api = null;
   function validate() {
-    const v = values();
+    const v = values(), fl = floors();
     const bad = Object.keys(v).filter((k) => v[k] === null || v[k] < 0 || v[k] > 90);
+    const badFloor = Object.keys(fl).filter((k) => fl[k] === null || fl[k] < minFloor || fl[k] > 1e8);
     for (const [k, f] of Object.entries(fields)) f.classList.toggle("invalid", bad.includes(k));
-    if (bad.length) { note.textContent = "Use numbers from 0 to 90."; note.className = "section-footer tone-text-down"; }
+    for (const [k, f] of Object.entries(floorFields)) f.classList.toggle("invalid", badFloor.includes(k));
+    if (bad.length) { note.textContent = "Use percentages from 0 to 90."; note.className = "section-footer tone-text-down"; }
+    else if (badFloor.length) { note.textContent = `At least ${fmtSek(minFloor)} a week for every plan: living on less isn't realistic.`; note.className = "section-footer tone-text-down"; }
     else if (!(v.light <= v.balanced && v.balanced <= v.high)) { note.textContent = "Tip: keep Light ≤ Balanced ≤ High so the names still fit."; note.className = "section-footer tone-text-warn"; }
+    else if (!(fl.light >= fl.balanced && fl.balanced >= fl.high)) { note.textContent = "Tip: give Light the most to live on and High the least."; note.className = "section-footer tone-text-warn"; }
     else { note.textContent = ""; note.className = "section-footer"; }
     note.style.display = note.textContent ? "" : "none";
-    api?.setRight({ disabled: bad.length > 0 });
-    return !bad.length;
+    api?.setRight({ disabled: bad.length > 0 || badFloor.length > 0 });
+    return !bad.length && !badFloor.length;
   }
   function save(sh) {
     if (!validate()) return;
     store.setSetting("profile_rates", values());
+    store.setSetting("profile_floors", floors());
     sh.close();
     toast("✓  Profiles updated");
     syncNow();
@@ -257,10 +273,13 @@ export function openProfilesSheet(ctx, snap) {
     footer("How much of your salary each profile puts toward your future (buffer + investing). Fixed costs and saving goals come first; living money is what's left."),
     caption("SAVE FOR YOUR FUTURE"),
     group(rows),
-    note,
     footer(`Rules of thumb: about 10% is ${inSweden() ? "Swedbank's everyday suggestion" : "a common everyday minimum"}, 20% matches the 50/30/20 rule, and 30% or more is high saving.`),
+    caption("LIVE ON AT LEAST"),
+    group(floorRows),
+    footer(`Living money is what you spend beyond your fixed costs: eating out, fun, small buys. A plan never leaves you less than this a week: when its % doesn't fit, it saves less instead. At least ${fmtSek(minFloor)} a week.`),
+    note,
     h("button", { type: "button", class: "link-btn center", onclick: () => {
-      for (const [key, , , def] of PROFILE_DEFS) fields[key].value = String(def);
+      for (const [key, , , def, floorDef] of PROFILE_DEFS) { fields[key].value = String(def); floorFields[key].value = plainNumber(fromSek(floorDef)); }
       validate();
     } }, "Reset to suggested"));
   api = sheet({ title: "Saving Profiles", left: { text: "Cancel" }, right: { text: "Save", bold: true, onClick: save }, body });
