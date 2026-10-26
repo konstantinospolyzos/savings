@@ -21,7 +21,9 @@ export const CAR_TYPES = [
 ];
 export const TYPE = Object.fromEntries(CAR_TYPES.map(([key, name, costName, color, icon]) => [key, { key, name, costName, color, icon }]));
 /** Odometer needed for these; optional for the rest (an inspection fee, parking...) */
-export const NEEDS_KM = new Set(["fuel", "service", "tires"]);
+export const NEEDS_KM = new Set(["fuel", "service"]);
+/** Tyre changes and new tyres: the odometer is optional (estimated from the readings around the day). */
+export const TYRE_LOGS = new Set(["tires", "tyre_buy"]);
 
 export const TYRE_SETS = [
   ["summer", "Summer"],
@@ -279,6 +281,22 @@ export function odoPoints(logs) {
   return [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, km]) => ({ date, t: dayT(date), km }));
 }
 
+/**
+ * The odometer on a day you didn't read it: a straight line between the readings before and after it (the
+ * odometer when you bought the car counts too). null before the first or after the last one. Only shown,
+ * never saved as a reading.
+ */
+export function estimateKm(car, iso, exceptId = null) {
+  const pts = odoPoints(car.logs.filter((l) => l.id !== exceptId));
+  const pu = car.purchase;
+  if (pu?.date && pu.km !== null && pu.km !== undefined && !pts.some((p) => p.date === pu.date)) {
+    pts.push({ date: pu.date, t: dayT(pu.date), km: pu.km });
+    pts.sort((a, b) => a.t - b.t);
+  }
+  if (pts.length < 2 || iso < pts[0].date || iso > pts.at(-1).date) return null;
+  return Math.round(odometerAt(pts, dayT(iso)) / 10) * 10;
+}
+
 /** The odometer at time t: a straight line between readings, held at the first and last reading outside them. */
 export function odometerAt(points, t) {
   if (!points.length) return null;
@@ -435,7 +453,7 @@ export function costsByType(logs) {
 // Tyres (Swedish rules, Transportstyrelsen): winter tyres are required 1 Dec - 31 Mar when the
 // roads are wintry; studded tyres are allowed 1 Oct - 15 Apr (outside that only in winter conditions).
 // ---------------------------------------------------------------------------
-export function tyreStatus(logs, today, latestKm = null) {
+export function tyreStatus(logs, today, latestKm = null, estimate = null) {
   // a tyre change, or new tyres fitted when they were bought
   const changes = logs.filter((l) => (l.type === "tires" || (l.type === "tyre_buy" && l.fitted !== false)) && l.tires).sort(byDateKm);
   const last = changes.at(-1) || null;
@@ -483,9 +501,12 @@ export function tyreStatus(logs, today, latestKm = null) {
     detail = "Next change: summer tyres in April.";
   }
   const costs = changes.filter((l) => l.type === "tires" && l.cost > 0).map((l) => l.cost);   // what a swap costs, without new tyres
+  const lastKm = last ? last.km ?? (estimate ? estimate(last.date) : null) : null;
   return {
     on, last, changes, tone, title, detail, deadline, days_left: deadline ? until(deadline) : null,
-    km_on: last && last.km !== null && latestKm !== null ? Math.max(0, latestKm - last.km) : null,
+    // the odometer at the change: logged, or estimated from the readings around it
+    last_km: lastKm, last_km_estimated: Boolean(last) && last.km === null && lastKm !== null,
+    km_on: lastKm !== null && latestKm !== null ? Math.max(0, latestKm - lastKm) : null,
     avg_cost: costs.length ? mean(costs) : null, priced_changes: costs.length,
   };
 }
@@ -792,7 +813,7 @@ export function carSummary(car, today) {
     cost_per_km_ex_fuel: kmWindow >= 100 ? (costs - fuelCosts) / kmWindow : null,
     by_type: costsByType(inWindow), costs_all: sum(costLogs.map((l) => l.cost || 0)),
     fuel: fuelStats(logs, today),
-    tyres: tyreStatus(logs, today, latest ? latest.km : null),
+    tyres: tyreStatus(logs, today, latest ? latest.km : null, (iso) => estimateKm(car, iso)),
     service: serviceStatus({ ...car, logs }, today, latest ? latest.km : null, perDay),
     inspection: inspectionStatus({ ...car, logs }, today),
     tyre_dates: tyreDates(today),

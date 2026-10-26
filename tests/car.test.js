@@ -622,3 +622,18 @@ test("tyres one by one: kept with the car, cleaned up with their log", () => {
   assert.equal("positions" in c.logs[1], false);
   assert.match(car.carCsv(tyreCar().logs), /New tyres,54000,3200,,,,,,"Winter, studded \(fitted, rear pair\)",/);
 });
+
+test("the odometer on a day without a reading: a straight line between the ones around it", () => {
+  const c = car.normalizeCar({ fixed: [], purchase: { date: "2025-03-01", km: 30000 }, logs: [
+    { id: "a", date: "2025-09-01", type: "fuel", km: 38000 }, { id: "b", date: "2025-12-01", type: "fuel", km: 41640 },
+    { id: "t", date: "2025-11-08", type: "tires", tires: "studded" } ] });              // the tyre change: no odometer
+  assert.equal(car.NEEDS_KM.has("tires"), false);
+  assert.equal(car.estimateKm(c, "2025-11-08"), 40720);                    // 38 000 + 68 of 91 days of 3 640 km
+  assert.equal(car.estimateKm(c, "2025-06-01"), 34000);                    // between the purchase and the first log
+  assert.equal(car.estimateKm(c, "2025-01-01"), null);                     // before anything is known
+  assert.equal(car.estimateKm(c, "2026-01-01"), null);                     // after the last reading
+  assert.equal(car.estimateKm({ ...c, purchase: { date: null, km: null } }, "2025-06-01"), null);
+  const t = car.carSummary(c, day(2025, 12, 5)).tyres;
+  assert.deepEqual([t.last_km, t.last_km_estimated, t.km_on], [40720, true, 920]);
+  assert.equal(car.odoPoints(c.logs).length, 2);                           // the estimate isn't a reading
+});

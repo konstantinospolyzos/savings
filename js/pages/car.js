@@ -7,7 +7,7 @@ import {
   daysBetween, todayDate, weekday, parseNumber, plainNumber, pct, plural, shortNote, mean, inSweden,
 } from "../core.js";
 import {
-  CAR_TYPES, TYPE, NEEDS_KM, TYRE_SETS, FUELS, FUEL_NAME, carSummary, monthlyKm, monthlyCosts, previousReading, fuelStats,
+  CAR_TYPES, TYPE, NEEDS_KM, TYRE_LOGS, estimateKm, TYRE_SETS, FUELS, FUEL_NAME, carSummary, monthlyKm, monthlyCosts, previousReading, fuelStats,
   byDateKm, fmtKm, fmtKmSigned, fmtPerKm, fmtAxisKm, monthPos, parseDay, newLogId, carCsv, emptyCar, carTitle, carLine,
   energy, priceSummary, paidPrices, fillPreview, consumptionByMonth, yearForecast,
   FIXED_TYPES, newFixedId, fixedDate, dueFixedLogs, dueCarFixed, nextFixedDate,
@@ -457,7 +457,7 @@ function tyreCard(car, sum, today, ctx) {
         : cell("Studs", "Allowed now", `until ${short(d.studs_until)}`, false));
   const rows = [];
   if (t.last) {
-    rows.push(kv(t.last.type === "tyre_buy" ? "Changed (new tyres)" : "Changed", `${dayText(t.last.date, today)}${t.last.km !== null ? `  ·  ${fmtKm(t.last.km)}` : ""}`, { amt: false }));
+    rows.push(kv(t.last.type === "tyre_buy" ? "Changed (new tyres)" : "Changed", `${dayText(t.last.date, today)}${t.last_km !== null ? `  ·  ${t.last_km_estimated ? "≈ " : ""}${fmtKm(t.last_km)}` : ""}`, { amt: false }));
     if (t.km_on !== null) rows.push(kv("Driven on them", fmtKm(t.km_on), { amt: false }));
     if (t.avg_cost !== null) rows.push(kv(`Average change (${plural(t.priced_changes, "time")})`, fmtSek(t.avg_cost)));
   }
@@ -1141,7 +1141,8 @@ const FILTERS = [["All", () => true], ["Refuels", (l) => l.type === "fuel"],
   ["Other", (l) => !["fuel", "service", "tires", "tyre_buy", "inspection"].includes(l.type)]];
 
 function logRow(l, ctx, car, perFill, prevKm, today, en) {
-  const sub = [dayText(l.date, today), l.km !== null ? fmtKm(l.km) : null].filter(Boolean).join("  ·  ");
+  const est = l.km === null && TYRE_LOGS.has(l.type) ? estimateKm(car, l.date) : null;     // an older tyre change: estimated
+  const sub = [dayText(l.date, today), l.km !== null ? fmtKm(l.km) : est !== null ? `≈ ${fmtKm(est)}` : null].filter(Boolean).join("  ·  ");
   const extra = [];
   let use = null;
   if (l.type === "tires" && l.tires) extra.push(TYRE_ON[l.tires]);
@@ -1393,7 +1394,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
     cost.classList.toggle("invalid", costBad);
     litres.classList.toggle("invalid", litresBad);
     price.classList.toggle("invalid", priceBad);
-    const needKm = NEEDS_KM.has(type) || (type === "tyre_buy" && fittedSwitch.input.checked);
+    const needKm = NEEDS_KM.has(type);
     const ok = dateOk && !kmBad && !costBad && !litresBad && !priceBad && (!needKm || k !== null) && (type !== "tyre_buy" || positions.length > 0);
     api?.setRight({ disabled: !ok });
 
@@ -1409,6 +1410,9 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
         const days = daysBetween(parseDay(prev.date), parseDay(d));
         kmFooter.textContent = `${fmtKmSigned(diff)} since ${dayText(prev.date, today)}${days > 0 ? ` (${daysWord(days)})` : ""}`;
       }
+    } else if (k === null && dateOk && TYRE_LOGS.has(type) && estimateKm(car, d, original?.id) !== null) {
+      // an older tyre change: the odometer from the readings before and after that day
+      kmFooter.textContent = `Leave it empty if you don't know it: about ${fmtKm(estimateKm(car, d, original?.id))}, from your readings before and after this day.`;
     } else if (prev) kmFooter.textContent = `Last reading: ${fmtKm(prev.km)} on ${dayText(prev.date, today)}.${needKm ? "" : " Optional for this one."}`;
     else kmFooter.textContent = needKm ? "What the odometer shows, in kilometres." : "Optional for this one.";
 
@@ -1512,7 +1516,7 @@ export function openCarLogSheet(ctx, car, original = null, preset = {}) {
 
   function save(sh) {
     const { d, k, c, l } = read();
-    const needKm = NEEDS_KM.has(type) || (type === "tyre_buy" && fittedSwitch.input.checked);
+    const needKm = NEEDS_KM.has(type);
     if (!DATE_RX.test(d) || (needKm && k === null) || (type === "tyre_buy" && !positions.length)) return;
     const isFuel = type === "fuel";
     const log = { id: original ? original.id : newLogId(), date: d, type, km: k, cost: c === null ? null : Math.round(c * 100) / 100,
