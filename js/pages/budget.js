@@ -10,6 +10,7 @@ import {
 } from "../core.js";
 import { store } from "../store.js";
 import { openExpenseSheet, openGoalSheet, openProfilesSheet } from "./budget-sheets.js";
+import { startPlan, stopPlan, planChanges, paydayMoves, profileName } from "./plan.js";
 
 const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, GOALS_C = COLORS.teal, BUFFER_C = COLORS.blue, INVEST_C = COLORS.orange;
 
@@ -170,22 +171,6 @@ function rateMeter(rate, marker) {
       h("span", { style: { left: x(v) } }, h("b", null, a), h("br"), b))));
 }
 
-/** Fix this pay period's plan, so you can follow it through the month. */
-function startPlan(snap, ctx) {
-  const plan = { profile: snap.profile, rate: snap.rate_pct, floor_week: snap.floor_week, salary: snap.salary, fixed: snap.fixed,
-    goals: snap.goals, living: snap.living, to_buffer: snap.to_buffer, invest: snap.invest, future: snap.future,
-    save_rate: snap.save_rate, days: snap.days, started: isoDay(ctx.today), done: { save: false, invest: false } };
-  const plans = { ...loadPlans(ctx.data), [snap.base]: plan };
-  for (const k of Object.keys(plans).sort().slice(0, -24)) delete plans[k];      // the last two years
-  store.setSetting("period_plans", plans);
-}
-function setPlan(ctx, base, plan) {
-  const plans = { ...loadPlans(ctx.data) };
-  if (plan) plans[base] = plan; else delete plans[base];
-  store.setSetting("period_plans", plans);
-}
-const profileName = (key) => PROFILE_DEFS.find(([k]) => k === key)?.[1] || "Your";
-
 function planCard(snap, ctx) {
   if (snap.plan) return startedPlanCard(snap, ctx);
   const { fx, salary } = snap;
@@ -260,43 +245,23 @@ function startedPlanCard(snap, ctx) {
       `${fmtSek(P.living)} for the whole pay period, about ${fmtSek(roundTo10(P.living / weeks))} a week.${k + 1 < chunks.length ? ` Next week: ${fmtSek(weekMoney(chunks[k + 1]))}.` : " Payday is next."}`)
     : block("SPEND", LIVING_C, fmtSek(P.living), `≈ ${fmtSek(roundTo10(P.living / weeks))} per week`, past ? null : "Starts on payday.");
 
-  // the money to move on payday, ticked off when it's done
-  const save = P.goals + P.to_buffer;
-  const moves = [
-    save > 0 ? ["save", `Save ${fmtSek(save)}`, `To your savings account${P.goals > 0 && P.to_buffer > 0 ? `: goals ${fmtSek(P.goals)} + buffer ${fmtSek(P.to_buffer)}` : P.goals > 0 ? ": your saving goals" : ": your buffer"}`, COLORS.blue] : null,
-    P.invest > 0 ? ["invest", `Invest ${fmtSek(P.invest)}`, `To ${brokersText("your investment account")}`, COLORS.orange] : null,
-  ].filter(Boolean);
-  const done = P.done || {};
-  const moveRows = moves.map(([key, title, subText, color]) => {
-    const sw = toggle(Boolean(done[key]), (on) => setTimeout(() => setPlan(ctx, snap.base, { ...P, done: { ...done, [key]: on } }), 220), title);
-    return h("label", { class: "list-row move-row" }, dot(color, 10),
-      h("div", { class: "row-main" }, h("div", { class: `row-title amt ${done[key] ? "moved" : ""}` }, title), h("div", { class: "row-sub amt-soft" }, subText)), sw);
-  });
-  const allDone = moves.length > 0 && moves.every(([key]) => done[key]);
-
-  // the budget changed since: offer to update the plan
-  const changed = snap.salary > 0 && (snap.profile !== P.profile || Math.abs(snap.living - P.living) > 50
-    || Math.abs(snap.future - P.future) > 50 || Math.abs(snap.goals - P.goals) > 50);
-  const why = [snap.profile !== P.profile ? `you picked ${profileName(snap.profile)}` : null,
-    Math.abs(snap.salary - P.salary) > 0.5 ? "the salary" : null, Math.abs(snap.fixed - P.fixed) > 0.5 ? "the fixed costs" : null,
-    Math.abs(snap.goals - P.goals) > 0.5 ? "the goals" : null].filter(Boolean);
-  const update = () => { startPlan(snap, ctx); toast(`✓  Plan updated: ${profileName(snap.profile)}`); };
-  const stop = async () => {
-    const ok = await alertBox({ title: "Stop this plan?", message: "The Budget page goes back to working the plan out from your numbers as they are. You can start it again.",
-      buttons: [{ text: "Cancel", value: false, style: "cancel" }, { text: "Stop", value: true, style: "destructive" }] });
-    if (ok) { setPlan(ctx, snap.base, null); toast("Plan stopped"); }
-  };
+  // the money to move on payday, ticked off when it's done; and has the budget changed since?
+  const m = paydayMoves(snap);
+  const { changed, why } = planChanges(snap);
+  const update = () => { startPlan(snap, ctx, P); toast(`✓  Plan updated: ${profileName(snap.profile)}`); };
   const status = past ? chip("Done", "flat") : now ? chip(`Day ${dayN} of ${snap.days}`, "info") : chip("Upcoming", "flat");
   return card(
     head("Your plan for this pay period", `${profileName(P.profile)}, started ${shortDate(new Date(`${P.started}T12:00:00`))}  ·  saves ${pct(P.save_rate || 0)} of your salary`, status),
     changed && !past ? h("div", { class: "warn-note" }, `Your budget has changed since you started${why.length ? ` (${why.join(", ")})` : ""}: the plan would now be ${fmtSek(roundTo10(snap.living / weeks))} a week to spend, ${fmtSek(snap.goals + snap.to_buffer)} to save and ${fmtSek(snap.invest)} to invest.`,
       h("div", { class: "note-actions" }, h("button", { type: "button", class: "btn tinted small", onclick: update }, "Update the plan"))) : null,
     spend,
-    moves.length ? h("div", { class: "hairline" }) : null,
-    moves.length ? h("div", { class: "cap-row" }, h("span", { class: "caption" }, "ON PAYDAY, MOVE")) : null,
-    moves.length ? h("div", { class: "list" }, moveRows) : null,
-    moves.length ? h("div", { class: "hint" }, allDone ? "✓ Done. What's left in your everyday account is yours to spend." : "Tick them off when you've moved the money. Standing transfers make it automatic.") : null,
-    h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn plain small", onclick: stop }, "Stop the plan")));
+    m.count ? h("div", { class: "hairline" }) : null,
+    m.count ? h("div", { class: "cap-row" }, h("span", { class: "caption" }, "ON PAYDAY, MOVE")) : null,
+    m.count ? h("div", { class: "list" }, m.rows) : null,
+    m.count ? h("div", { class: "hint" }, m.all_done ? "✓ Done. What's left in your everyday account is yours to spend." : "Tick them off when you've moved the money. Standing transfers make it automatic.") : null,
+    h("div", { class: "card-actions" },
+      now ? h("button", { type: "button", class: "btn tinted small", onclick: () => ctx.go("plan") }, "Open my plan") : null,
+      h("button", { type: "button", class: "btn plain small", onclick: () => stopPlan(snap.base) }, "Stop the plan")));
 }
 
 // ---------------------------------------------------------------------------

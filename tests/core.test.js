@@ -240,3 +240,29 @@ test("what you usually spend beyond fixed costs, from the logs", () => {
   close(u.week, 5750 * 7 / 30.4375);
   assert.equal(c.usualSpending(entries.slice(0, 3), 28000), null);   // too few months
 });
+
+test("a started plan day by day, and checking in", () => {
+  // the pay period 23 Oct - 24 Nov 2026 (payday 23 Oct, the next on 25 Nov): 33 days
+  const per = c.currentPeriod(c.day(2026, 10, 28));
+  assert.deepEqual([per.base, c.isoDay(per.start), c.isoDay(per.end), per.days], ["2026-10", "2026-10-23", "2026-11-25", 33]);
+  const plan = { living: 3300 };                       // 100 kr a day
+  const pr = c.planProgress(plan, per.start, per.end, c.day(2026, 10, 28));
+  assert.deepEqual([pr.day, pr.days_left, pr.week_index, pr.week_days_left], [6, 28, 0, 2]);   // week 1: 23 - 29 Oct
+  close(pr.per_day, 100);
+  close(pr.expected, 2800);
+  close(pr.week_money, 700);
+  assert.equal(pr.weeks.length, 5);
+  const last = c.planProgress(plan, per.start, per.end, c.day(2026, 11, 24));
+  assert.deepEqual([last.day, last.days_left, last.week_index, last.week.days], [33, 1, 4, 5]);
+  // 28 Oct, 28 days to go: the plan has 2 800 for them
+  const at = (left) => c.planCheck(plan, per.start, per.end, { date: "2026-10-28", left });
+  assert.equal(at(2800).status, "On track");
+  assert.equal(at(2950).status, "Ahead");
+  assert.equal(at(2650).status, "A bit behind");
+  assert.equal(at(2400).status, "Behind");
+  close(at(2400).diff, -400);
+  close(at(2400).per_day_now, 2400 / 28);                // so it lasts to payday
+  // the next pay period starts on payday itself
+  assert.equal(c.currentPeriod(c.day(2026, 11, 25)).base, "2026-11");
+  assert.equal(c.currentPeriod(c.day(2026, 11, 24)).base, "2026-10");
+});

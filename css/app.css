@@ -65,7 +65,10 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1
 .nav-right, .nav-left { display: flex; gap: 2px; flex: 1 1 0; min-width: max-content; }
 .nav-right { justify-content: flex-end; }
 #privacy-btn.on { color: var(--orange); }
-body.welcome-mode #privacy-btn { display: none; }
+body.welcome-mode #privacy-btn, body.welcome-mode #plan-btn { display: none; }
+#plan-btn { position: relative; }
+#plan-btn.on { background: var(--info-bg); }
+.nav-badge { position: absolute; top: 9px; right: 8px; width: 9px; height: 9px; border-radius: 5px; background: var(--green); box-shadow: 0 0 0 2px var(--bg); }
 .nav-btn { width: 44px; height: 44px; border-radius: 22px; display: inline-flex; align-items: center; justify-content: center; color: var(--blue); }
 .nav-btn:active { opacity: 0.5; }
 .sync-state-local, .sync-state-idle { color: var(--gray); }
@@ -449,6 +452,33 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
 .plan-note { margin-bottom: 12px; }
 .note-actions { margin-top: 8px; }
 .move-row { cursor: default; }
+/* My plan */
+.plan-hero .cap-row { flex-wrap: wrap; }
+.plan-day { margin-left: auto; }
+.plan-progress { margin-top: 14px; }
+.plan-progress-labels { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--gray); margin: 5px 0 10px; }
+.check-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.check-label { font-size: 15px; flex: 1 1 140px; }
+.check-input { width: 110px; flex: 0 1 110px; min-width: 0; border: 0; border-radius: 10px; background: var(--fill); padding: 9px 10px; font-size: 17px; font-weight: 600; text-align: right; color: var(--label); outline: none; }
+.check-input.invalid { color: var(--red); box-shadow: inset 0 0 0 1.5px var(--red); }
+.check-unit { color: var(--gray); }
+.check-result { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+.check-line { font-size: 14px; color: var(--label2); line-height: 1.4; }
+.check-now { font-size: 16px; font-weight: 700; }
+.check-history { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.check-old { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
+.check-old .amt { margin-left: auto; }
+.build + .build { margin-top: 16px; padding-top: 14px; border-top: 0.5px solid var(--sep); }
+.build-value { font-size: 19px; font-weight: 700; margin: 3px 0 8px; }
+.build .hint { margin-top: 6px; }
+.week-row.past { opacity: 0.5; }
+.past-plan { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
+.past-plan + .past-plan { border-top: 0.5px solid var(--sep); }
+.plan-pick { display: flex; align-items: center; gap: 10px; padding: 11px 0; }
+.plan-pick + .plan-pick { border-top: 0.5px solid var(--sep); }
+.plan-pick.picked .row-title { color: var(--blue); }
+.plan-prev { margin: 4px 0 8px; }
+.plan-next { font-size: 14px; color: var(--label2); }
 .move-row .row-title.moved { text-decoration: line-through; color: var(--gray); }
 
 .alloc { display: flex; flex-direction: column; gap: 3px; }
@@ -736,7 +766,9 @@ body.privacy .crow-note { filter: blur(7px); -webkit-filter: blur(7px); }
 .photo-thumb.big { max-height: 70vh; cursor: zoom-out; }
 .link-btn { color: var(--blue); font: inherit; font-weight: 600; }
 .section-footer.steps a { color: var(--blue); }
-@media (max-width: 340px) { .nav-btn { width: 40px; } }   /* the smallest phones: room for the title */
+@media (max-width: 380px) { .nav-btn { width: 40px; } }
+@media (max-width: 340px) { .nav-btn { width: 36px; } #nav-title { font-size: 16px; }
+  #navbar { gap: 2px; padding-left: calc(6px + var(--safe-l)); padding-right: calc(6px + var(--safe-r)); } }   /* the smallest phones: room for the title */
 .invoice-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
 .invoice-tile { aspect-ratio: 3 / 4; border-radius: 10px; overflow: hidden; background: var(--card); display: flex; align-items: center;
   justify-content: center; flex-direction: column; gap: 4px; color: var(--gray); }

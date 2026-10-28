@@ -614,6 +614,49 @@ export function usualSpending(entries, fixed) {
   return { month, week: month * 7 / 30.4375, months: vals.length };
 }
 
+/** The pay period today is in: from the last payday to the day before the next one. {base, start, end, days} */
+export function currentPeriod(today) {
+  const ps = paydayStatus(today);
+  const base = monthOf(ps.prev);
+  return { base, start: ps.prev, end: ps.next, days: daysBetween(ps.prev, ps.next) };
+}
+
+/**
+ * Where you are in a plan on a day: the day of the period, this week and its money, and what the plan has
+ * left for the days still to come (today included).
+ */
+export function planProgress(plan, start, end, today) {
+  const days = daysBetween(start, end);
+  const perDay = days > 0 ? plan.living / days : 0;
+  const daysLeft = Math.max(0, Math.min(days, daysBetween(today, end)));
+  const weeks = weekChunks(start, end);
+  const k = weeks.findIndex((w) => w.start <= today && today <= w.end);
+  const week = k >= 0 ? weeks[k] : null;
+  return {
+    days, day: Math.min(Math.max(daysBetween(start, today) + 1, 1), days), days_left: daysLeft, per_day: perDay, per_week: perDay * 7,
+    expected: perDay * daysLeft, weeks, week_index: k, week, week_money: week ? perDay * week.days : 0,
+    week_days_left: week ? daysBetween(today, addDays(week.end, 1)) : 0, started: today >= start, ended: today >= end,
+  };
+}
+
+/**
+ * A check-in: what was left of the living money on a day, against what the plan has for the days from
+ * then to payday. Ahead or behind by more than a day's money says so; it also works out what you can
+ * spend a day from then so it lasts.
+ */
+export function planCheck(plan, start, end, check) {
+  const [y, m, d] = check.date.split("-").map(Number);
+  const at = day(y, m, d);
+  const days = daysBetween(start, end);
+  const perDay = days > 0 ? plan.living / days : 0;
+  const daysLeft = Math.max(1, Math.min(days, daysBetween(at, end)));
+  const expected = perDay * daysLeft;
+  const diff = check.left - expected;
+  const [status, tone] = diff >= perDay ? ["Ahead", "up"] : diff > -perDay ? ["On track", "up"]
+    : diff > -3 * perDay ? ["A bit behind", "warn"] : ["Behind", "down"];
+  return { ...check, days_left: daysLeft, expected, diff, status, tone, per_day_now: check.left / daysLeft, per_week_now: check.left / daysLeft * 7 };
+}
+
 /** The plans you started for pay periods: {"2026-10": plan}. A plan keeps its numbers for the whole period. */
 export function loadPlans(data) {
   const p = getSetting(data, "period_plans", {});

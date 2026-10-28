@@ -68,6 +68,7 @@ const ICONS = {
   wrench: '<path d="M14.8 6.2a4.1 4.1 0 0 0-5.4 5.4l-5.3 5.3a1.6 1.6 0 0 0 2.3 2.3l5.3-5.3a4.1 4.1 0 0 0 5.4-5.4l-2.6 2.6-2.2-.4-.4-2.2z"/>',
   tyre: '<circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="3.3"/><path d="M12 3.6v5.1M12 15.3v5.1M3.6 12h5.1M15.3 12h5.1"/>',
   check: '<path d="M5 12.6l4.3 4.3L19 7.2"/>',
+  target: '<circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="4.9"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>',
   garage: '<path d="M3.6 20.2V9.8L12 4.3l8.4 5.5v10.4"/><path d="M7 20.2v-7.4h10v7.4"/><path d="M7 15.4h10M7 17.9h10"/>',
   pdf: '<path d="M6.5 3.5h7.3l4.2 4.2v12.8h-11.5z"/><path d="M13.5 3.7v4.3h4.3"/><path d="M9.3 12.3h5.4M9.3 15.6h5.4"/>',
   shield: '<path d="M12 3.4l7 2.7v5.3c0 4.3-2.9 7.8-7 9.2-4.1-1.4-7-4.9-7-9.2V6.1z"/>',

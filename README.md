@@ -8,6 +8,7 @@ Data is a JSON file in the user's own Google Drive (or on the device only), sync
 - `js/core.js`: all calculations, ported line by line from `savings_tracker.py`
 - `js/store.js`: Google Drive sync, offline queue, import of the desktop `savings.db`
 - `js/car.js` + `js/pages/car.js`: the car monitor (the car button in the navigation bar): one or more cars with their details, odometer, fuel, services, inspections, tyres, fixed costs and the purchase papers, saved in the same data file. Its tabs: Car (the car shown), Log, Insights and Garage (all your cars at a glance)
+- `js/pages/plan.js`: My plan (the target button at the top): the saving plan you started for this pay period, day by day: this week's money, check-ins, the payday transfers, what it builds and your past plans
 - `js/photos.js`: invoice photos and PDFs, kept on the device until they're in the Google Drive folder
 - `vendor/pdfjs/`: PDF.js (Apache 2.0), to show PDF invoices in the app
 - `img/car-top.webp`: the car seen from above in Your tyres (its background removed)
