@@ -657,6 +657,31 @@ export function planCheck(plan, start, end, check) {
   return { ...check, days_left: daysLeft, expected, diff, status, tone, per_day_now: check.left / daysLeft, per_week_now: check.left / daysLeft * 7 };
 }
 
+/** The budgets you saved on the Budget page for pay periods: {"2026-10": budget}. My plan works from them. */
+export function loadBudgets(data) {
+  const b = getSetting(data, "period_budgets", {});
+  return b && typeof b === "object" ? b : {};
+}
+
+/** What the Budget page saves for My plan: the numbers a saving plan is worked out from. */
+export function budgetToSave(snap, today) {
+  return {
+    salary: snap.salary, fixed: snap.fixed, goals: snap.goals, goal_rows: snap.goal_rows.map(([g, m]) => [g.name, m]),
+    left: snap.left, free: snap.free, bank: snap.bank, target: snap.target, shortfall: snap.shortfall,
+    buffer_first: snap.buffer_first, buffer_months: snap.buffer_months, days: snap.days, saved: isoDay(today),
+  };
+}
+
+/** What changed on the Budget page since a budget was saved: [] when nothing did. */
+export function budgetChanges(saved, snap) {
+  const out = [];
+  if (Math.abs(saved.salary - snap.salary) > 0.5) out.push("the salary");
+  if (Math.abs(saved.fixed - snap.fixed) > 0.5) out.push("the fixed costs");
+  if (Math.abs(saved.goals - snap.goals) > 0.5) out.push("the saving goals");
+  if (Math.abs((saved.shortfall || 0) - snap.shortfall) > 0.5 || Boolean(saved.buffer_first) !== Boolean(snap.buffer_first)) out.push("the buffer");
+  return out;
+}
+
 /** The plans you started for pay periods: {"2026-10": plan}. A plan keeps its numbers for the whole period. */
 export function loadPlans(data) {
   const p = getSetting(data, "period_plans", {});

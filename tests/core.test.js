@@ -266,3 +266,20 @@ test("a started plan day by day, and checking in", () => {
   assert.equal(c.currentPeriod(c.day(2026, 11, 25)).base, "2026-11");
   assert.equal(c.currentPeriod(c.day(2026, 11, 24)).base, "2026-10");
 });
+
+test("the budget saved for My plan, and what changed since", () => {
+  const fixed = [{ amount: 27756, per: "month", active: true, currency: "SEK" }];
+  const goals = [{ name: "Trips", kind: "year", amount: 24000, active: true }];
+  const b = { ...c.computeBudget(38095, fixed, goals, "2026-10", 25, 50000, true, 0.09, 3, 500, 33), days: 33, buffer_first: true };
+  const saved = c.budgetToSave(b, c.day(2026, 10, 28));
+  assert.deepEqual([saved.salary, saved.fixed, saved.goals, saved.left, saved.free, saved.saved], [38095, 27756, 2000, 10339, 8339, "2026-10-28"]);
+  assert.deepEqual(saved.goal_rows, [["Trips", 2000]]);
+  assert.deepEqual(c.budgetChanges(saved, b), []);
+  assert.deepEqual(c.budgetChanges(saved, { ...b, salary: 40000, fixed: 27000 }), ["the salary", "the fixed costs"]);
+  assert.deepEqual(c.budgetChanges(saved, { ...b, buffer_first: false }), ["the buffer"]);
+  // a plan worked out from the saved numbers, as My plan does
+  const p = c.planForRate({ ...saved, days: 33 }, 25, 500);
+  close(p.spend, 500 * 33 / 7);                     // 25% would leave less than 500 a week
+  close(p.future, 8339 - 500 * 33 / 7);
+  assert.equal(p.capped, true);                     // 25% (9 524) doesn't fit in the 8 339 left after goals
+});

@@ -6,11 +6,11 @@ import {
   fmtRange, shortDate, longDate, mLong, mShort, mIndex, fmtSek, fmtEur, plainNumber, parseNumber, pct, roundTo10,
   weekChunks, summarize, monthFlows, travelFund, expenseApplies, expenseMonthlySek, goalApplies, goalPerMonth,
   goalPlannedBy, fetchSekToEur, CUR, inSweden, localSym, brokersText, hasMoney, rateFromInput, rateShown,
-  usualSpending, loadPlans, isoDay,
+  loadBudgets, budgetToSave, budgetChanges,
 } from "../core.js";
 import { store } from "../store.js";
-import { openExpenseSheet, openGoalSheet, openProfilesSheet } from "./budget-sheets.js";
-import { startPlan, stopPlan, planChanges, paydayMoves, profileName } from "./plan.js";
+import { openExpenseSheet, openGoalSheet } from "./budget-sheets.js";
+import { profileName } from "./plan.js";
 
 const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, GOALS_C = COLORS.teal, BUFFER_C = COLORS.blue, INVEST_C = COLORS.orange;
 
@@ -90,11 +90,42 @@ function periodCard(snap, ctx) {
     }
   });
 
-  const legend = [["fixed", "Fixed costs", FIXED_C], ["goals", "Saving goals", GOALS_C], ["living", "Living money", LIVING_C],
-    ["to_buffer", "Buffer", BUFFER_C], ["invest", "Investing", INVEST_C]].map(([k, text, color]) =>
+  const free = Math.max(snap.free, 0);
+  const legend = [["Fixed costs", snap.fixed, FIXED_C], ["Saving goals", snap.goals, GOALS_C], ["For your saving plan", free, COLORS.green]].map(([text, v, color]) =>
     h("div", { class: "legend-row" }, dot(color, 9), h("span", { class: "legend-name" }, text),
-      h("span", { class: "legend-amount amt" }, fmtSek(snap[k])),
-      h("span", { class: "legend-pct" }, salary > 0 ? `${Math.round(snap[k] / salary * 100)}%` : "")));
+      h("span", { class: "legend-amount amt" }, fmtSek(v)),
+      h("span", { class: "legend-pct" }, salary > 0 ? `${Math.round(v / salary * 100)}%` : "")));
+
+  // save the budget for My plan: the saving plan is picked there, from these numbers
+  const budgets = loadBudgets(ctx.data);
+  const saved = budgets[snap.base] || null;
+  const changes = saved ? budgetChanges(saved, snap) : [];
+  const past = snap.end <= today;
+  const saveIt = () => {
+    const next = { ...budgets, [snap.base]: budgetToSave(snap, today) };
+    for (const k of Object.keys(next).sort().slice(0, -24)) delete next[k];       // the last two years
+    store.setSetting("period_budgets", next);
+    toast(`✓  Saved: ${fmtSek(snap.left)} left to plan`);
+  };
+  const savedOn = saved ? shortDate(new Date(`${saved.saved}T12:00:00`)) : "";
+  const P = snap.plan;
+  let saveBox = null;
+  if (!past && salary > 0) {
+    if (!saved) {
+      saveBox = h("div", { class: "save-box" },
+        h("button", { type: "button", class: "btn primary wide", onclick: saveIt }, "Save for My plan"),
+        h("div", { class: "hint" }, "Saves this pay period's numbers. Then pick your saving plan in My plan: the target button at the top."));
+    } else if (changes.length) {
+      saveBox = h("div", { class: "save-box" },
+        h("div", { class: "warn-note" }, `Changed since you saved it on ${savedOn} (${changes.join(", ")}). Save again so My plan uses the new numbers.`),
+        h("button", { type: "button", class: "btn primary wide", onclick: saveIt }, "Save again"));
+    } else {
+      saveBox = h("div", { class: "save-box saved" },
+        h("div", { class: "cap-row" }, chip(`✓ Saved ${savedOn}`, "up"),
+          h("span", { class: "hint" }, P ? `Your ${profileName(P.profile)} plan is running.` : "Pick your saving plan in My plan.")),
+        h("button", { type: "button", class: "btn tinted small", onclick: () => ctx.go("plan") }, P ? "Open My plan" : "Pick a plan"));
+    }
+  }
 
   return card(
     h("div", { class: "card-head" }, h("div", { class: "cap-row" }, h("span", { class: "caption" }, "PAY PERIOD"), chip(kind, kind === "Now" ? "info" : "flat"))),
@@ -109,7 +140,8 @@ function periodCard(snap, ctx) {
       h("div", { class: "eq-row total" }, h("span", { class: "eq-label" }, h("span", { class: "eq-sign" }, "="), "Left to plan"),
         h("span", { class: `eq-value big amt tone-text-${snap.left > 0 ? "up" : "down"}` }, fmtSek(snap.left))),
       h("div", { class: "eq-note amt" }, snap.left < 0 ? "Fixed costs are higher than the salary" : CUR.single ? null : `≈ ${fmtEur(snap.left * fx)}`)),
-    splitBar([[snap.fixed, FIXED_C], [snap.goals, GOALS_C], [snap.living, LIVING_C], [snap.to_buffer, BUFFER_C], [snap.invest, INVEST_C]], 12),
+    saveBox,
+    splitBar([[snap.fixed, FIXED_C], [snap.goals, GOALS_C], [free, COLORS.green]], 12),
     h("div", { class: "legend-list" }, legend),
     CUR.single ? null : h("div", { class: "hairline" }),
     CUR.single ? null : h("div", { class: "fx-row" }, h("span", { class: "caption" }, "EXCHANGE RATE"), h("span", { class: "fx-eq" }, `1 ${CUR.second} =`), fxInput, h("span", null, CUR.local), fetchBtn),
@@ -118,152 +150,6 @@ function periodCard(snap, ctx) {
 }
 
 // ---------------------------------------------------------------------------
-const rateTone = (r) => (r >= 0.195 ? "up" : r >= 0.095 ? "flat" : "down");
-
-function profilesCard(snap, ctx) {
-  const weeks = weekOf(snap);
-  const left = Math.max(snap.left, 0);
-  // what you really spend a week beyond your fixed costs, from your logs: how far each plan is from it
-  const usual = snap.salary > 0 && snap.fixed > 0 ? usualSpending(snap.entries, snap.fixed) : null;
-  const tiles = PROFILE_DEFS.map(([key, title, tagline]) => {
-    const rate = snap.profiles[key], floor = snap.floors[key];
-    const p = planForRate(snap, rate, floor);
-    const chipEl = p.short ? chip("Doesn't fit", "down")
-      : p.capped ? chip(`Saves ${pct(p.rate)} of salary`, rateTone(p.rate))
-        : chip(`Saves ${rate}% of salary`, rateTone(rate / 100));
-    const why = !snap.salary ? null
-      : p.short ? `Even ${fmtSek(floor)} a week to live on doesn't fit after your fixed costs and goals.`
-        : p.capped ? `${rate}% would leave less than ${fmtSek(floor)} a week to live on, so it saves ${pct(p.rate)}.`
-          : `Never less than ${fmtSek(floor)} a week to live on.`;
-    const diff = usual && snap.salary ? p.spend / weeks - usual.week : null;
-    const vsUsual = diff === null ? null : Math.abs(diff) < 50 ? "About what you usually spend."
-      : `${fmtSek(roundTo10(Math.abs(diff)))} a week ${diff < 0 ? "less" : "more"} than you usually spend.`;
-    const cols = [["spend", "Spend", LIVING_C], ["save", "Save", COLORS.blue], ["invest", "Invest", COLORS.orange]].map(([part, text, color]) =>
-      h("div", { class: "tile-col" }, h("div", { class: "tile-cap" }, dot(color, 7), text),
-        h("div", { class: "tile-amount amt" }, fmtSek(p[part])),
-        h("div", { class: "tile-pct" }, left > 0 ? `${Math.round(p[part] / left * 100)}%` : "")));
-    return h("button", { type: "button", class: `tile ${key === snap.profile ? "selected" : ""}`, "aria-pressed": String(key === snap.profile),
-      onclick: () => { if (key !== snap.profile) store.setSetting("profile", key); } },
-      h("div", { class: "tile-head" }, h("div", null, h("div", { class: "tile-title" }, title), h("div", { class: "hint" }, tagline)), chipEl),
-      h("div", { class: "tile-week" }, h("span", { class: "tile-value amt" }, snap.salary > 0 ? `≈ ${fmtSek(roundTo10(p.spend / weeks))}` : "—"), h("span", { class: "hint" }, " per week to spend")),
-      splitBar([[p.spend, LIVING_C], [p.save, COLORS.blue], [p.invest, COLORS.orange]], 6),
-      h("div", { class: "tile-cols" }, cols),
-      why ? h("div", { class: `tile-why amt-soft ${p.short ? "tone-text-down" : ""}` }, why) : null,
-      vsUsual ? h("div", { class: "tile-why amt-soft" }, vsUsual) : null);
-  });
-  return card(
-    head("How much do you want to save?", "Each profile puts a share of your salary toward your future, but always leaves you a minimum to live on. The rest, after fixed costs and goals, is yours to spend.",
-      h("button", { type: "button", class: "link-btn", onclick: () => openProfilesSheet(ctx, snap) }, "Edit")),
-    h("div", { class: "tiles" }, tiles),
-    usual ? h("div", { class: "hint amt-soft" }, `You usually spend about ${fmtSek(roundTo10(usual.week))} a week beyond your fixed costs: the middle of your last ${usual.months} months of logs, trip months left out.`) : null);
-}
-
-// ---------------------------------------------------------------------------
-function rateMeter(rate, marker) {
-  const MAX = 0.5;
-  const x = (v) => `${Math.min(Math.max(v, 0), MAX) / MAX * 100}%`;
-  const color = rate < 0.10 ? COLORS.red : rate < 0.20 ? COLORS.orange : COLORS.green;
-  return h("div", { class: "meter" },
-    h("div", { class: "meter-track" }, h("div", { class: "meter-fill", style: { width: x(rate), background: color } }),
-      ...[0.1, 0.2, 0.3].map((v) => h("span", { class: "meter-tick", style: { left: x(v) } }))),
-    marker !== null ? h("span", { class: "meter-marker", style: { left: x(marker) }, title: "Your last 12 months" }) : null,
-    h("div", { class: "meter-labels" }, [[0.1, "10%", "minimum"], [0.2, "20%", "50/30/20"], [0.3, "30%", "high"]].map(([v, a, b]) =>
-      h("span", { style: { left: x(v) } }, h("b", null, a), h("br"), b))));
-}
-
-function planCard(snap, ctx) {
-  if (snap.plan) return startedPlanCard(snap, ctx);
-  const { fx, salary } = snap;
-  const weeks = weekOf(snap);
-  const ps = paydayStatus(snap.today);
-  const when = ps.isToday ? "today" : shortDate(ps.next);
-  const sub = salary > 0
-    ? `After ${fmtSek(snap.fixed)} of fixed costs, ${fmtSek(Math.max(snap.left, 0))} is left. Move Save and Invest on payday (${when}), before you start spending.`
-    : "Log a month to see your plan.";
-  let warn = "", note = "";
-  if (salary > 0 && snap.free < 0) warn = "Fixed costs and goals are higher than your salary, so nothing is left for your future or living.";
-  else if (salary > 0 && snap.short) warn = `Even ${fmtSek(snap.floor_week)} a week to live on doesn't fit: after fixed costs and goals, ${fmtSek(Math.max(snap.free, 0))} is left for ${snap.days} days. Pause a goal or trim a fixed cost.`;
-  else if (salary > 0 && snap.capped) note = `${snap.rate_pct}% of your salary would leave less than ${fmtSek(snap.floor_week)} a week to live on, so this plan saves ${pct(snap.save_rate)}: the most that still leaves you that.`;
-
-  const save = snap.goals + snap.to_buffer;
-  const parts = [];
-  if (snap.goal_rows.length) parts.push(`goals ${plainNumber(snap.goals)} (${snap.goal_rows.map(([g, m]) => `${g.name} ${plainNumber(m)}`).join(", ")})`);
-  if (snap.to_buffer > 0) parts.push(`buffer ${plainNumber(snap.to_buffer)}`);
-  let saveText = parts.length ? `To your savings account: ${parts.join(" + ")}.` : "Nothing this period.";
-  if (snap.target > 0 && snap.shortfall <= 0) saveText += " Your buffer is full.";
-  else if (snap.target > 0 && snap.to_buffer <= 0) saveText += " The buffer isn't topped up (switched off below).";
-
-  const block = (title, color, value, subText, hint) => h("div", { class: "alloc" },
-    h("div", { class: "cap-row" }, dot(color, 8), h("span", { class: "caption" }, title)),
-    h("div", { class: "alloc-row" }, h("span", { class: "alloc-value amt" }, value), h("span", { class: "alloc-sub amt" }, subText)),
-    h("div", { class: "hint amt-soft" }, hint));
-
-  const actual = summarize(monthFlows(snap.entries).slice(-12));
-  let rateText = "Log a month to see your savings rate";
-  if (salary > 0) {
-    rateText = `Your future gets ${pct(snap.save_rate)} of your salary (buffer + investing). Goal money is spent later, so it isn't counted.`;
-    if (actual) rateText += ` Over the last 12 months you managed ${pct(actual.rate)} (black mark).`;
-  }
-  const canStart = salary > 0 && snap.end > snap.today && !(snap.free < 0);
-  return card(head("Your plan for this pay period", sub),
-    warn ? h("div", { class: "warn-note" }, warn) : null,
-    note ? h("div", { class: "hint amt-soft plan-note" }, note) : null,
-    block("SPEND", LIVING_C, fmtSek(snap.living), `≈ ${fmtSek(roundTo10(snap.living / weeks))} per week`,
-      "Stays in your everyday account: beers, eating out, small buys. Split week by week below."),
-    h("div", { class: "hairline" }),
-    block("SAVE", COLORS.blue, fmtSek(save), CUR.single ? "" : `≈ ${fmtEur(save * fx)}`, saveText),
-    h("div", { class: "hairline" }),
-    block("INVEST", COLORS.orange, fmtSek(snap.invest), CUR.single ? "" : `≈ ${fmtEur(snap.invest * fx)}`, `To ${brokersText("your investment account")}: long-term money (5+ years).`),
-    h("div", { class: "hairline" }),
-    h("div", { class: "rate-text" }, rateText),
-    rateMeter(snap.save_rate, actual && salary > 0 ? actual.rate : null),
-    canStart ? h("div", { class: "hairline" }) : null,
-    canStart ? h("button", { type: "button", class: "btn primary wide", onclick: () => { startPlan(snap, ctx); toast(`✓  ${profileName(snap.profile)} plan started`); } },
-      `Start the ${profileName(snap.profile)} plan`) : null,
-    canStart ? h("div", { class: "hint" }, `Keeps these numbers for ${fmtRange(snap.start, addDays(snap.end, -1))}, so you can follow them through the month: this week's money, and a tick when you've moved Save and Invest.`) : null);
-}
-
-/** The plan you started: its numbers stay put for the whole pay period. */
-function startedPlanCard(snap, ctx) {
-  const P = snap.plan, today = snap.today;
-  const weeks = snap.days / 7;
-  const now = snap.start <= today && today < snap.end;
-  const past = snap.end <= today;
-  const dayN = daysBetween(snap.start, today) + 1;
-  const chunks = weekChunks(snap.start, snap.end);
-  const wk = now ? chunks.find((w) => w.start <= today && today <= w.end) : null;
-  const k = wk ? chunks.indexOf(wk) : -1;
-  const weekMoney = (w) => roundTo10(P.living * w.days / snap.days);
-  const block = (title, color, value, subText, hint) => h("div", { class: "alloc" },
-    h("div", { class: "cap-row" }, dot(color, 8), h("span", { class: "caption" }, title)),
-    h("div", { class: "alloc-row" }, h("span", { class: "alloc-value amt" }, value), h("span", { class: "alloc-sub amt" }, subText)),
-    hint ? h("div", { class: "hint amt-soft" }, hint) : null);
-
-  // spending: this week's money
-  const spend = wk
-    ? block(wk.days === 7 ? `WEEK ${k + 1} OF ${chunks.length}` : "THE LAST DAYS", LIVING_C, fmtSek(weekMoney(wk)), `to spend, ${fmtRange(wk.start, wk.end)}`,
-      `${fmtSek(P.living)} for the whole pay period, about ${fmtSek(roundTo10(P.living / weeks))} a week.${k + 1 < chunks.length ? ` Next week: ${fmtSek(weekMoney(chunks[k + 1]))}.` : " Payday is next."}`)
-    : block("SPEND", LIVING_C, fmtSek(P.living), `≈ ${fmtSek(roundTo10(P.living / weeks))} per week`, past ? null : "Starts on payday.");
-
-  // the money to move on payday, ticked off when it's done; and has the budget changed since?
-  const m = paydayMoves(snap);
-  const { changed, why } = planChanges(snap);
-  const update = () => { startPlan(snap, ctx, P); toast(`✓  Plan updated: ${profileName(snap.profile)}`); };
-  const status = past ? chip("Done", "flat") : now ? chip(`Day ${dayN} of ${snap.days}`, "info") : chip("Upcoming", "flat");
-  return card(
-    head("Your plan for this pay period", `${profileName(P.profile)}, started ${shortDate(new Date(`${P.started}T12:00:00`))}  ·  saves ${pct(P.save_rate || 0)} of your salary`, status),
-    changed && !past ? h("div", { class: "warn-note" }, `Your budget has changed since you started${why.length ? ` (${why.join(", ")})` : ""}: the plan would now be ${fmtSek(roundTo10(snap.living / weeks))} a week to spend, ${fmtSek(snap.goals + snap.to_buffer)} to save and ${fmtSek(snap.invest)} to invest.`,
-      h("div", { class: "note-actions" }, h("button", { type: "button", class: "btn tinted small", onclick: update }, "Update the plan"))) : null,
-    spend,
-    m.count ? h("div", { class: "hairline" }) : null,
-    m.count ? h("div", { class: "cap-row" }, h("span", { class: "caption" }, "ON PAYDAY, MOVE")) : null,
-    m.count ? h("div", { class: "list" }, m.rows) : null,
-    m.count ? h("div", { class: "hint" }, m.all_done ? "✓ Done. What's left in your everyday account is yours to spend." : "Tick them off when you've moved the money. Standing transfers make it automatic.") : null,
-    h("div", { class: "card-actions" },
-      now ? h("button", { type: "button", class: "btn tinted small", onclick: () => ctx.go("plan") }, "Open my plan") : null,
-      h("button", { type: "button", class: "btn plain small", onclick: () => stopPlan(snap.base) }, "Stop the plan")));
-}
-
 // ---------------------------------------------------------------------------
 function switchRow(content, on, onToggle, label) {
   const sw = toggle(on, (v) => setTimeout(() => onToggle(v), 220), label);
@@ -318,23 +204,6 @@ function goalsCard(snap, ctx) {
 }
 
 // ---------------------------------------------------------------------------
-function weeksCard(snap) {
-  const { start, end, today } = snap;
-  const living = snap.plan ? snap.plan.living : snap.living;
-  const total = daysBetween(start, end);
-  const rows = weekChunks(start, end).map((w, k) => {
-    const now = w.start <= today && today <= w.end;
-    return h("div", { class: "week-row" },
-      h("span", { class: "week-name" }, w.days === 7 ? `Week ${k + 1}` : `Last ${w.days} day${w.days !== 1 ? "s" : ""}`),
-      h("span", { class: "muted week-range" }, fmtRange(w.start, w.end)),
-      now ? chip(w.days === 7 ? "This week" : "Now", "info", "small") : null,
-      h("span", { class: "row-amount amt" }, fmtSek(roundTo10(living * w.days / total))));
-  });
-  return card(head("Living money, week by week", `${total} days from payday ${shortDate(start)} to the day before ${shortDate(end)}`,
-    h("span", { class: "head-value amt" }, `${fmtSek(living)} in total`)), h("div", { class: "list" }, rows));
-}
-
-// ---------------------------------------------------------------------------
 function bufferCard(snap) {
   const { target, shortfall: short, bank, latest } = snap;
   const months = snap.buffer_months;
@@ -345,8 +214,9 @@ function bufferCard(snap) {
     bar = splitBar([[Math.min(bank, target), COLORS.green], [short, "var(--fill)"]], 12);
     const src = latest ? `your ${mLong(latest.month)} log` : "your log";
     text = `${fmtSek(bank)} in the bank (${src}). Target: ${fmtSek(target)}, ${months} months of fixed costs.`;
+    const P = snap.plan;
     if (short > 0 && snap.buffer_first) {
-      tip = `${fmtSek(short)} to go. This period ${fmtSek(snap.to_buffer)} of your future money goes here${snap.invest > 0 ? ", the rest to investing." : "."} ${inSweden() ? "Finansinspektionen suggests" : "A common rule of thumb is"} 2–3 months of necessary costs before long-term investing.`;
+      tip = `${fmtSek(short)} to go. ${P ? `Your ${profileName(P.profile)} plan puts ${fmtSek(P.to_buffer)} here this period${P.invest > 0 ? ", the rest to investing." : "."}` : "Your saving plan puts its future money here first, until it's full."} ${inSweden() ? "Finansinspektionen suggests" : "A common rule of thumb is"} 2–3 months of necessary costs before long-term investing.`;
     } else if (short > 0) tip = `${fmtSek(short)} to go, but with the switch off your future money goes straight to investing.`;
     else if (bank < 2 * target) tip = "Your buffer is full, so all your future money goes to investing. Refill it after you use it.";
     else tip = "You hold more than twice the target in the bank (goal money included). What you won't need for 5+ years could work harder invested.";
@@ -412,14 +282,11 @@ function costsCard(snap, ctx) {
 export function renderBudget(ctx) {
   const snap = budgetSnapshot(ctx.data, ctx.today, offset);
   snap.entries = ctx.entries;
-  return ["Fixed costs and goals first, then your future, and the rest is yours to live on",
+  return ["Your salary, fixed costs, goals and buffer. Save them, then pick your saving plan in My plan.",
     paydayCard(ctx.today),
     periodCard(snap, ctx),
-    profilesCard(snap, ctx),
-    planCard(snap, ctx),
     goalsCard(snap, ctx),
-    weeksCard(snap),
     bufferCard(snap),
     costsCard(snap, ctx),
-    h("div", { class: "hint page-foot" }, `The profiles and the buffer target are rules of thumb (${inSweden() ? "Swedbank, Finansinspektionen, the 50/30/20 rule" : "common guidance and the 50/30/20 rule"}), not financial advice. Change the numbers to fit you.`)];
+    h("div", { class: "hint page-foot" }, `The buffer target is a rule of thumb (${inSweden() ? "Finansinspektionen" : "common guidance"}), not financial advice. Change the numbers to fit you.`)];
 }
