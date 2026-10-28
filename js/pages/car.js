@@ -1,10 +1,12 @@
-// Car monitor pages: Car (odometer, averages, tyres, service, inspection, charts, fuel price, costs,
-// details) and Log (every visit), plus the sheets to add or edit a log and a car.
+// Car monitor pages: Car (odometer, what's due: tyres, service and inspection, averages, consumption, your
+// tyres), Log (every visit), Charts and Garage (every car: specs, fixed costs, purchase), plus the sheets to
+// add or edit a log, a fixed cost and a car.
 import { h, chip, dot, segmented, splitBar, kv, icon, sheet, group, caption, footer, alertBox, toast, saveFile, selectRow, toggle, pickFile } from "../ui.js";
 import { chart } from "../charts.js";
 import {
   COLORS, CUR, MONTHS, WEEKDAYS, localSym, fmtSek, fmtMoney, fmtAxisSek, mLong, mIndex, monthOf, addMonths, isoDay,
   daysBetween, todayDate, weekday, parseNumber, plainNumber, pct, plural, shortNote, mean, inSweden,
+  getSetting, carMonthly, defaultPeriodMonth,
 } from "../core.js";
 import {
   CAR_TYPES, TYPE, NEEDS_KM, TYRE_LOGS, estimateKm, TYRE_SETS, FUELS, FUEL_NAME, carSummary, monthlyKm, monthlyCosts, previousReading, fuelStats,
@@ -439,7 +441,14 @@ function openTyreSheet(ctx, car, t) {
 }
 const WINTER_TREAD = new Set(["studded", "winter"]);
 
-function tyreCard(car, sum, today, ctx) {
+// ---------------------------------------------------------------------------
+// What's due: tyres, service and inspection in one card, the most urgent first. Tap one for its details.
+// ---------------------------------------------------------------------------
+const DUE_CHIP = { down: "Overdue", warn: "Soon", up: "On track" };
+const DUE_RANK = { down: 0, warn: 1, flat: 2, up: 3 };
+const dueOpen = new Set();            // the rows you opened ("car id:kind"), while the app is open
+
+function tyreDue(car, sum, today, ctx) {
   const t = sum.tyres, d = sum.tyre_dates;
   const label = t.tone === "warn" && t.days_left !== null ? `${daysWord(t.days_left)} left` : TONE_CHIP[t.tone];
   // the three dates of the Swedish tyre year; the one for your next change is highlighted
@@ -461,25 +470,24 @@ function tyreCard(car, sum, today, ctx) {
     if (t.km_on !== null) rows.push(kv("Driven on them", fmtKm(t.km_on), { amt: false }));
     if (t.avg_cost !== null) rows.push(kv(`Average change (${plural(t.priced_changes, "time")})`, fmtSek(t.avg_cost)));
   }
-  return card(head("Tyres", t.on ? TYRE_ON[t.on] : null, label ? chip(label, t.tone) : null),
-    h("div", { class: `status-title tone-text-${t.tone}` }, t.title),
-    h("div", { class: "muted" }, t.detail),
-    dates,
-    rows.length ? h("div", { class: "hairline" }) : null,
-    rows.length ? h("div", { class: "kv-list" }, rows) : null,
-    actions(btn("+  Log a tyre change", () => openCarLogSheet(ctx, car, null, { type: "tires", tires: suggestedTyres(t, today) }))));
+  return { kind: "tyres", type: "tires", title: "Tyres", status: t.title, tone: t.tone, chip: label || null,
+    days: t.tone === "down" ? -1 : t.days_left,
+    body: [h("div", { class: "muted" }, t.detail), dates,
+      rows.length ? h("div", { class: "kv-list" }, rows) : null,
+      actions(btn("+  Log a tyre change", () => openCarLogSheet(ctx, car, null, { type: "tires", tires: suggestedTyres(t, today) })))] };
 }
 
-function serviceCard(car, sum, today, ctx) {
+function serviceDue(car, sum, today, ctx) {
   const s = sum.service;
   const buttons = actions(btn("+  Log a service", () => openCarLogSheet(ctx, car, null, { type: "service" })),
     btn(s.set ? "Change interval" : "Set interval", () => openCarSheet(ctx, car), "plain"));
+  const base = { kind: "service", type: "service", title: "Service" };
   if (!s.last) {
-    return card(head("Service"),
-      h("div", { class: "muted" }, s.set
+    return { ...base, status: "Log your last service", tone: "flat", chip: null, days: null,
+      body: [h("div", { class: "muted" }, s.set
         ? "Log your last service and the app works out when the next one is due."
         : "Log your last service, and set how often the car should be serviced (your service book says, e.g. every 15 000 km or 12 months), to see when the next one is due."),
-      buttons);
+      buttons] };
   }
   // whichever limit comes first: the kilometres (at the pace you drive) or the months
   let title, when = null, tone = s.tone;
@@ -498,40 +506,64 @@ function serviceCard(car, sum, today, ctx) {
     kv("Since then", [s.km_since !== null ? fmtKm(s.km_since) : null, monthsOrDays(s.days_since)].filter(Boolean).join("  ·  "), { amt: false }),
     kv("Interval", s.set ? [car.service_km ? fmtKm(car.service_km) : null, car.service_months ? `${car.service_months} months` : null].filter(Boolean).join(" or ") : "not set", { amt: false }),
   ];
-  const chips = { down: "Overdue", warn: "Soon", up: "On track" };
-  return card(head("Service", null, chips[tone] ? chip(chips[tone], tone) : null),
-    h("div", { class: `status-title tone-text-${tone === "up" ? "flat" : tone}` }, title),
-    when ? h("div", { class: "muted" }, when) : null,
-    !s.set ? h("div", { class: "muted" }, "Set how often the car should be serviced to get a reminder.") : null,
-    h("div", { class: "kv-list" }, rows),
-    buttons);
+  const overdue = tone === "down";
+  const days = overdue ? -1 : Math.min(s.days_left ?? Infinity, s.eta ? daysBetween(today, s.eta) : Infinity);
+  return { ...base, status: title, tone, chip: DUE_CHIP[tone] || null, days: Number.isFinite(days) ? days : null,
+    body: [when ? h("div", { class: "muted" }, when) : null,
+      !s.set ? h("div", { class: "muted" }, "Set how often the car should be serviced to get a reminder.") : null,
+      h("div", { class: "kv-list" }, rows),
+      buttons] };
 }
 
-function inspectionCard(car, sum, today, ctx) {
+function inspectionDue(car, sum, today, ctx) {
   const s = sum.inspection;
   const buttons = actions(btn("+  Log an inspection", () => openCarLogSheet(ctx, car, null, { type: "inspection" })),
     !car.first_registered ? btn("Add first registration", () => openCarSheet(ctx, car), "plain") : null);
+  const base = { kind: "inspection", type: "inspection", title: "Inspection" };
   if (!s.known) {
-    return card(head("Inspection"),
-      h("div", { class: "muted" }, s.needs === "last"
+    return { ...base, status: "Log the last inspection", tone: "flat", chip: null, days: null,
+      body: [h("div", { class: "muted" }, s.needs === "last"
         ? "Log the car's last inspection (besiktning) and the app works out when the next one is due."
         : "Log the car's last inspection (besiktning), or add the month it was first registered if it's under 3 years old, to see when the next one is due."),
-      buttons);
+      buttons] };
   }
   const over = s.days_left < 0;
   const rows = [];
   if (s.last) rows.push(kv("Last inspection", `${dayText(s.last.date, today)}${s.last.km !== null ? `  ·  ${fmtKm(s.last.km)}` : ""}`, { amt: false }));
   rows.push(kv("Rule", RULE_TEXT[s.rule], { amt: false }));
   if (s.reg) rows.push(kv("First registered", mLong(s.reg), { amt: false }));
-  const chips = { down: "Overdue", warn: "Soon", up: "On track" };
-  return card(head("Inspection", "Kontrollbesiktning", chip(chips[s.tone], s.tone)),
-    h("div", { class: `status-title tone-text-${s.tone === "up" ? "flat" : s.tone}` },
-      over ? `Overdue since ${dayText(s.due, today)}` : `${s.rule === "first" ? "First inspection" : "Next inspection"} by ${dayText(s.due, today)}`),
-    h("div", { class: "muted" }, over
-      ? "The car isn't allowed on the road (körförbud) until it has been inspected, except to drive it to the inspection or a workshop."
-      : `${monthsOrDays(s.days_left)} left: the last day of ${mLong(s.due_month)}. You can go earlier; the next deadline then counts from that month.`),
+  return { ...base, status: over ? `Overdue since ${dayText(s.due, today)}` : `${s.rule === "first" ? "First inspection" : "Next inspection"} by ${dayText(s.due, today)}`,
+    tone: s.tone, chip: DUE_CHIP[s.tone], days: s.days_left,
+    body: [h("div", { class: "muted" }, over
+      ? "The car isn't allowed on the road (körförbud) until it has been inspected (kontrollbesiktning), except to drive it to the inspection or a workshop."
+      : `Kontrollbesiktning: ${monthsOrDays(s.days_left)} left, until the last day of ${mLong(s.due_month)}. You can go earlier; the next deadline then counts from that month.`),
     h("div", { class: "kv-list" }, rows),
-    buttons);
+    buttons] };
+}
+
+function dueCard(car, sum, today, ctx) {
+  const items = [tyreDue(car, sum, today, ctx), serviceDue(car, sum, today, ctx), inspectionDue(car, sum, today, ctx)]
+    .sort((a, b) => DUE_RANK[a.tone] - DUE_RANK[b.tone] || (a.days ?? Infinity) - (b.days ?? Infinity));
+  const rows = items.map((it) => {
+    const id = `${car.id}:${it.kind}`;
+    const row = h("div", { class: `due-row ${dueOpen.has(id) ? "open" : ""}` });
+    const top = h("button", { type: "button", class: "due-head", "aria-expanded": String(dueOpen.has(id)) },
+      typeBadge(it.type),
+      h("div", { class: "due-main" }, h("div", { class: "due-title" }, it.title),
+        h("div", { class: `due-status tone-text-${it.tone === "up" ? "flat" : it.tone}` }, it.status)),
+      it.chip ? chip(it.chip, it.tone, "small") : null,
+      icon("chevron", 15, "due-chev"));
+    top.addEventListener("click", () => {
+      const open = !row.classList.contains("open");
+      row.classList.toggle("open", open);
+      top.setAttribute("aria-expanded", String(open));
+      if (open) dueOpen.add(id); else dueOpen.delete(id);
+    });
+    row.append(top, h("div", { class: "due-body" }, it.body));
+    return row;
+  });
+  const urgent = items.some((it) => it.tone === "down" || it.tone === "warn");
+  return card(head("What's due", `${urgent ? "Most urgent first." : "Nothing urgent."} Tap one for the details.`), h("div", { class: "due-list" }, rows));
 }
 
 // ---------------------------------------------------------------------------
@@ -907,27 +939,6 @@ function purchaseKmRows(car) {
     latest >= pu.km ? kv("Driven since then", fmtKm(latest - pu.km), { amt: false }) : null];
 }
 
-function detailsCard(car, ctx) {
-  const pu = car.purchase;
-  const makeModel = [car.make, car.model].filter(Boolean).join(" ");
-  const rows = [
-    car.name ? kv("Name", car.name, { amt: false }) : null,
-    kv("Make and model", makeModel || "—", { amt: false }),
-    kv("Model year", car.year ? String(car.year) : "—", { amt: false }),
-    kv("Registration", car.plate || "—", { amt: false }),
-    kv("Runs on", FUEL_NAME[car.fuel], { amt: false }),
-    kv("First registered", car.first_registered ? mLong(car.first_registered) : "—", { amt: false }),
-    kv("Bought", [pu.date ? dayText(pu.date) : null, pu.price ? fmtSek(pu.price) : null].filter(Boolean).join("  ·  ") || "—"),
-    ...purchaseKmRows(car),
-    pu.seller ? kv("Bought from", pu.seller, { amt: false }) : null,
-  ];
-  const missing = !makeModel && !car.plate;
-  return card(head("Car details", missing ? "Add the make, model and registration number." : null),
-    h("div", { class: "kv-list" }, rows.filter(Boolean)),
-    pu.docs.length ? h("div", { class: "papers" }, h("div", { class: "caption" }, "Purchase invoice and papers"), fileGrid(pu.docs, { readOnly: true }).el) : null,
-    actions(btn("Edit details", () => openCarSheet(ctx, car)), btn("+  Add another car", () => openCarSheet(ctx, null), "plain")));
-}
-
 // ---------------------------------------------------------------------------
 // Fixed costs: what you pay every month (insurance, a parking space...), logged by themselves
 // ---------------------------------------------------------------------------
@@ -946,7 +957,19 @@ const DAY_OPTIONS = [...Array.from({ length: 28 }, (_, i) => [String(i + 1), ord
 const fixedName = (f) => f.name || (f.type === "tax" ? "Vehicle tax" : TYPE[f.type].name);
 const fixedLogCount = (car, f) => car.logs.filter((l) => l.id.startsWith(`${f.id}-`) || (f.id === `fc-${f.type}` && l.id.startsWith(`auto-${f.type}-`))).length;
 
-function fixedCard(car, ctx) {
+/** Whether the Budget counts the car (its fixed costs + fuel), and how much. */
+function budgetLine(car, ctx) {
+  const on = (getSetting(ctx.data, "budget_cars", {}) || {})[car.id];
+  if (typeof on !== "boolean") return null;
+  const m = carMonthly(car, defaultPeriodMonth(ctx.today));
+  if (!(m.total > 0)) return null;
+  return h("div", { class: "hint amt-soft garage-budget" }, on
+    ? `In your Budget's fixed costs: ${fmtSek(m.total)} a month${m.fuel > 0 ? `, with ≈ ${fmtSek(m.fuel)} ${m.electric ? "charging" : "fuel"}` : ""}.`
+    : "Left out of your Budget (its switch among the fixed costs).");
+}
+
+/** The car's fixed costs, in its Garage card: tap one to change it. */
+function fixedSection(car, ctx) {
   const today = ctx.today;
   const items = car.fixed || [];
   const total = items.reduce((a, f) => a + f.amount, 0);
@@ -958,10 +981,13 @@ function fixedCard(car, ctx) {
       h("div", { class: "crow-extra" }, `Next log ${dayText(nextFixedDate(f, today), today)}  ·  since ${MONTHS[Number(f.from.slice(5)) - 1].slice(0, 3)} ${f.from.slice(0, 4)}`)),
     h("div", { class: "crow-cost amt" }, fmtSek(f.amount)),
     icon("chevron", 16, "chev")));
-  return card(head("Fixed costs", items.length ? h("span", { class: "amt-soft" }, `${fmtSek(total)} a month, logged by themselves`) : null),
+  return h("div", { class: "garage-sec" },
+    h("div", { class: "cap-row" }, h("span", { class: "caption" }, "FIXED COSTS"),
+      items.length ? h("span", { class: "hint amt-soft" }, `${fmtSek(total)} a month, logged by themselves`) : null),
     items.length ? h("div", { class: "fixed-list" }, rows)
-      : h("div", { class: "muted" }, "Costs you pay every month, like insurance or a parking space you rent. Add them here and the app logs them on their day every month, so you don't have to."),
-    actions(btn("+  Add a fixed cost", () => openFixedSheet(ctx, car, null))));
+      : h("div", { class: "muted garage-none" }, "Costs you pay every month, like insurance or a parking space you rent. Add them here and the app logs them on their day every month, so you don't have to."),
+    budgetLine(car, ctx),
+    h("button", { type: "button", class: "link-btn garage-link", onclick: () => openFixedSheet(ctx, car, null) }, "+  Add a fixed cost"));
 }
 
 export function openFixedSheet(ctx, car, item = null) {
@@ -1042,6 +1068,7 @@ export function openFixedSheet(ctx, car, item = null) {
   return api;
 }
 
+// The car's details, purchase papers and fixed costs are in its Garage card.
 export function renderCar(ctx) {
   const today = ctx.today;
   const car = selectedCar(ctx.data);
@@ -1049,9 +1076,9 @@ export function renderCar(ctx) {
   const sum = carSummary(car, today);
   const subtitle = [carLine(car), sum.n ? `${plural(sum.n, "log")}, latest ${dayText(sum.logs.at(-1).date, today)}` : "no logs yet"].filter(Boolean).join("  ·  ");
   const picker = carPicker(ctx, car);
-  if (!sum.n) return [subtitle, picker, noLogsCard(ctx, car), tyreCard(car, sum, today, ctx), tyresCard(car, ctx), inspectionCard(car, sum, today, ctx), fixedCard(car, ctx), detailsCard(car, ctx)];
-  return [subtitle, picker, odoHero(sum, today), stats(sum, today), consumptionCard(car, sum, today, ctx), tyreCard(car, sum, today, ctx),
-    tyresCard(car, ctx), serviceCard(car, sum, today, ctx), inspectionCard(car, sum, today, ctx), fixedCard(car, ctx), detailsCard(car, ctx)];
+  if (!sum.n) return [subtitle, picker, noLogsCard(ctx, car), dueCard(car, sum, today, ctx), tyresCard(car, ctx)];
+  return [subtitle, picker, odoHero(sum, today), dueCard(car, sum, today, ctx), stats(sum, today), consumptionCard(car, sum, today, ctx),
+    tyresCard(car, ctx)];
 }
 
 // ---------------------------------------------------------------------------
@@ -1085,6 +1112,7 @@ function garageCard(car, ctx, showing) {
           v.per_km !== null ? `${fmtSek(v.per_km * 100)} per 100 km` : "no prices logged", true))
       : sec(kwh ? "ENERGY USE" : "CONSUMPTION", h("div", { class: "muted garage-none" },
         `Shows from the second ${kwh ? "full charge" : "full tank"} logged with the odometer.`)),
+    fixedSection(car, ctx),
     sec("SPECS", h("div", { class: "kv-list" },
       kv("Make and model", makeModel || "—", { amt: false }),
       kv("Model year", car.year ? String(car.year) : "—", { amt: false }),

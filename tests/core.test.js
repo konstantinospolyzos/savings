@@ -283,3 +283,40 @@ test("the budget saved for My plan, and what changed since", () => {
   close(p.future, 8339 - 500 * 33 / 7);
   assert.equal(p.capped, true);                     // 25% (9 524) doesn't fit in the 8 339 left after goals
 });
+
+test("your car in the Budget: its fixed costs and fuel, entered once in the car monitor", () => {
+  const fuel = (date, cost) => ({ id: date, date, type: "fuel", cost, km: null });
+  const year = ["2025-10", "2025-11", "2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"]
+    .map((m) => fuel(`${m}-15`, m === "2026-06" ? 2000 : 1000));
+  const car = { id: "car-1", name: "", make: "Seat", model: "Leon", fuel: "95",
+    fixed: [{ id: "a", amount: 787, from: "2025-09" }, { id: "b", amount: 863, from: "2025-09" }, { id: "c", amount: 300, from: "2026-12" }],
+    logs: [fuel("2025-08-20", 500), fuel("2025-09-20", 600), ...year, fuel("2026-10-05", 900),
+      { id: "s", date: "2026-03-14", type: "service", cost: 4890, km: 46120 }] };
+  // the pay period from October's payday: fuel is the average of Oct 2025 – Sep 2026 (12 full months, the trip in June too)
+  const m = c.carMonthly(car, "2026-10");
+  assert.equal(m.fixed, 1650);                       // the one from December doesn't count yet
+  assert.equal(m.months, 12);
+  assert.equal(m.fuel, 1080);                        // 13 000 / 12 = 1 083, to the nearest 10
+  assert.equal(m.total, 2730);
+  assert.equal(c.carMonthly(car, "2026-12").fixed, 1950);
+  // a newer car: the months since the first refuel; nothing yet in its first month
+  const young = { ...car, fixed: [], logs: [fuel("2026-08-03", 800), fuel("2026-09-01", 700), fuel("2026-09-25", 600)] };
+  assert.deepEqual([c.carMonthly(young, "2026-10").months, c.carMonthly(young, "2026-10").fuel], [2, 1050]);
+  assert.deepEqual([c.carMonthly({ ...young, logs: [fuel("2026-10-02", 700)] }, "2026-10").fuel, c.carMonthly(young, "2026-08").months], [0, 0]);
+
+  // counted (true), left out (false) or not decided yet (offered)
+  const other = { ...young, id: "car-2", name: "Brother's" }, third = { ...young, id: "car-3", make: "Volvo", model: "V60" };
+  const data = { entries: [entry("2026-10", { income_sek: 38095, bank_sek: 50000 })], goals: [],
+    expenses: [{ id: 1, name: "Rent", amount: 27756, per: "month", category: "Home", active: true, position: 0, currency: "SEK" }],
+    settings: { budget_cars: { "car-1": true, "car-2": false } }, cars: [car, other, third] };
+  const lines = c.carBudgetLines(data, "2026-10");
+  assert.deepEqual(lines.map((x) => [x.id, x.name, x.amount, x.active, x.category]),
+    [["car:car-1", "Seat Leon", 2730, true, "Transport"], ["car:car-2", "Brother's", 1050, false, "Transport"]]);
+  assert.deepEqual(c.carsToOffer(data, "2026-10").map((x) => [x.name, x.parts.total]), [["Volvo V60", 1050]]);
+  const snap = c.budgetSnapshot(data, c.day(2026, 10, 28));
+  assert.equal(snap.base, "2026-10");
+  assert.equal(snap.fixed, 27756 + 2730);            // the car counts like any fixed cost; the one left out doesn't
+  assert.deepEqual(snap.active.map((x) => x.name), ["Rent", "Seat Leon"]);
+  assert.equal(snap.expenses.length, 3);
+  assert.equal(snap.target, 3 * (27756 + 2730));     // and in the buffer target
+});

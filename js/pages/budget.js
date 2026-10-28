@@ -1,12 +1,12 @@
 // Budget: fixed costs and goals first, then your future, and the rest is yours to live on.
-import { h, chip, dot, segmented, toggle, icon, splitBar, toast, alertBox } from "../ui.js";
+import { h, chip, dot, segmented, toggle, icon, splitBar, toast, alertBox, sheet, group, caption, footer } from "../ui.js";
 import {
   COLORS, PROFILE_DEFS, CATEGORIES, CATEGORY_COLORS, GOAL_COLORS, BUFFER_MONTH_CHOICES,
   budgetSnapshot, planForRate, paydayStatus, paydayReason, paydayFor, addMonths, monthOf, daysBetween, addDays,
   fmtRange, shortDate, longDate, mLong, mShort, mIndex, fmtSek, fmtEur, plainNumber, parseNumber, pct, roundTo10,
   weekChunks, summarize, monthFlows, travelFund, expenseApplies, expenseMonthlySek, goalApplies, goalPerMonth,
   goalPlannedBy, fetchSekToEur, CUR, inSweden, localSym, brokersText, hasMoney, rateFromInput, rateShown,
-  loadBudgets, budgetToSave, budgetChanges,
+  loadBudgets, budgetToSave, budgetChanges, carsToOffer, getSetting, plural,
 } from "../core.js";
 import { store } from "../store.js";
 import { openExpenseSheet, openGoalSheet } from "./budget-sheets.js";
@@ -15,6 +15,8 @@ import { profileName } from "./plan.js";
 const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, GOALS_C = COLORS.teal, BUFFER_C = COLORS.blue, INVEST_C = COLORS.orange;
 
 let offset = 0;              // pay periods away from the current one
+/** Back to the pay period the Budget opens on (My plan's payday checklist links here). */
+export function showCurrentPeriod() { offset = 0; }
 
 const card = (...children) => h("div", { class: "card" }, children);
 const head = (title, sub = null, right = null) => h("div", { class: "card-head" },
@@ -114,7 +116,7 @@ function periodCard(snap, ctx) {
     if (!saved) {
       saveBox = h("div", { class: "save-box" },
         h("button", { type: "button", class: "btn primary wide", onclick: saveIt }, "Save for My plan"),
-        h("div", { class: "hint" }, "Saves this pay period's numbers. Then pick your saving plan in My plan: the target button at the top."));
+        h("div", { class: "hint" }, "Saves this pay period's numbers. Then pick your saving plan in the My plan tab."));
     } else if (changes.length) {
       saveBox = h("div", { class: "save-box" },
         h("div", { class: "warn-note" }, `Changed since you saved it on ${savedOn} (${changes.join(", ")}). Save again so My plan uses the new numbers.`),
@@ -233,7 +235,72 @@ function bufferCard(snap) {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Your car: its costs come from the car monitor (fixed costs + fuel), so you enter them once
+// ---------------------------------------------------------------------------
+const CAR_RX = /\b(car|cars|vehicle|fuel|petrol|gasoline|diesel|parking|garage)\b|\bbil(?![jl])|bensin|drivmedel|parkering|fordon/i;
+const LOAN_RX = /loan|lån|leasing|instal|avbetal/i;
+
+function setCarInBudget(carId, on) {
+  store.setSetting("budget_cars", { ...(getSetting(store.data, "budget_cars", {}) || {}), [carId]: on });
+}
+
+const carParts = (p) => [p.fixed > 0 ? `${fmtSek(p.fixed)} fixed costs` : null,
+  p.fuel > 0 ? `≈ ${fmtSek(p.fuel)} ${p.electric ? "charging" : "fuel"}` : null].filter(Boolean).join(" + ");
+
+/** The car's line among the fixed costs: tap it for the car, the switch leaves it out. */
+function carRow(x, snap, ctx) {
+  const live = expenseApplies(x, snap.base);
+  const [content, sw] = switchRow(h("div", { class: "row-main" },
+    h("div", { class: `row-title ${live ? "" : "off"}` }, x.name),
+    h("div", { class: "row-sub amt-soft" }, `Car monitor: ${[x.parts.fixed > 0 ? `${fmtSek(x.parts.fixed)} fixed` : null,
+      x.parts.fuel > 0 ? `≈ ${fmtSek(x.parts.fuel)} ${x.parts.electric ? "charging" : "fuel"}` : null].filter(Boolean).join(" + ")}${x.active ? "" : "  ·  left out"}`)),
+  x.active, (on) => setCarInBudget(x.car, on), `Include ${x.name}`);
+  return h("div", { class: "list-row", role: "button", tabindex: "0", onclick: () => { store.setPref("car_id", x.car); ctx.go("car-garage"); } },
+    h("span", { class: `car-dot ${live ? "" : "off"}` }, icon("car", 13)), content,
+    h("span", { class: `row-amount amt ${live ? "" : "off"}` }, fmtSek(x.amount)), sw);
+}
+
+/** Count a car in the Budget; first, the fixed costs that look like the car's already, to switch off. */
+function addCarToBudget(snap, offer) {
+  const { car, name, parts } = offer;
+  const carAmounts = (car.fixed || []).map((f) => f.amount);
+  const candidates = snap.expenses.filter((x) => !x.car && expenseApplies(x, snap.base)).map((x) => {
+    const monthly = expenseMonthlySek(x, snap.fx);
+    const named = CAR_RX.test(x.name);
+    const strong = carAmounts.some((a) => Math.abs(a - monthly) <= 1) || (named && !LOAN_RX.test(x.name));
+    return strong || named || x.category === "Transport" ? { x, monthly, keep: toggle(!strong, () => {}, `Keep ${x.name}`) } : null;
+  }).filter(Boolean);
+  const done = (off) => {
+    for (const x of off) store.saveExpense({ ...x, active: false });
+    setCarInBudget(car.id, true);
+    toast(`✓  ${name} in your fixed costs${off.length ? `  ·  ${plural(off.length, "cost")} switched off` : ""}`);
+  };
+  if (!candidates.length) { done([]); return; }
+  const body = h("div", { class: "form" },
+    footer(`${name} adds ${fmtSek(parts.total)} a month to your fixed costs: ${carParts(parts)}${parts.fuel > 0 ? ` (the average of ${plural(parts.months, "month")})` : ""}. Change them in the car monitor, and the Budget follows.`),
+    caption("ALSO IN YOUR FIXED COSTS"),
+    group(candidates.map((c) => h("label", { class: "form-row switch-row" },
+      h("span", { class: "form-label car-cand" }, h("span", null, c.x.name), h("span", { class: "amt-soft" }, `${fmtSek(c.monthly)} a month`)), c.keep))),
+    footer("Switch off the ones the car now counts, so they don't count twice. They stay in your list, switched off."));
+  sheet({ title: `Add ${name}`, left: { text: "Cancel" }, body,
+    right: { text: "Add", bold: true, onClick: (sh) => { sh.close(); done(candidates.filter((c) => !c.keep.input.checked).map((c) => c.x)); } } });
+}
+
+/** A car whose costs the Budget doesn't count yet: count it here? */
+function carOffer(snap, ctx) {
+  const offer = carsToOffer(ctx.data, snap.base)[0];
+  if (!offer) return null;
+  const { name, parts } = offer;
+  return h("div", { class: "tip-box stack" },
+    h("div", { class: "tip-text amt-soft" }, `${name} costs about ${fmtSek(parts.total)} a month in the car monitor: ${carParts(parts)}. Count it here, so you enter the car's costs only once?`),
+    h("div", { class: "tip-actions" },
+      h("button", { type: "button", class: "btn primary small", onclick: () => addCarToBudget(snap, offer) }, "Add the car"),
+      h("button", { type: "button", class: "btn plain small", onclick: () => setCarInBudget(offer.car.id, false) }, "Leave it out")));
+}
+
 function expenseRow(x, snap, ctx) {
+  if (x.car) return carRow(x, snap, ctx);
   const live = expenseApplies(x, snap.base);
   const subs = [];
   if (x.currency === "EUR" && x.amount) subs.push(`${fmtEur(x.amount, Math.abs(x.amount - Math.round(x.amount)) < 0.005 ? 0 : 2)} per ${x.per === "year" ? "year" : "month"}`);
@@ -274,6 +341,7 @@ function costsCard(snap, ctx) {
     head("Fixed costs", `${fmtSek(snap.fixed)} per month  ·  ${snap.active.length} active${eur ? `  ·  ${eur} in ${CUR.second}` : ""}`,
       addBtn(() => openExpenseSheet(ctx, snap, null))),
     missing ? h("div", { class: "warn-note" }, `${missing} cost${missing !== 1 ? "s are" : " is"} still at ${fmtSek(0)}. Tap a row to set the amount.`) : null,
+    carOffer(snap, ctx),
     blocks.length ? blocks : h("div", { class: "muted list-empty" }, "No fixed costs yet. Tap “+ Add” to add one."),
     h("div", { class: "hint" }, `Tap a cost to edit it (amount, ${CUR.single ? "" : `${CUR.local} or ${CUR.second}, `}monthly or yearly). The switch leaves it out of this budget.`));
 }

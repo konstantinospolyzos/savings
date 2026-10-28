@@ -1,6 +1,6 @@
 // Savings Tracker for phones: app shell (navigation bar, tabs, pages).
 import { store, readDesktopFile, describeData } from "./store.js";
-import { todayDate, budgetSnapshot, investmentStatus, configure, loadPlans, currentPeriod } from "./core.js";
+import { todayDate, budgetSnapshot, investmentStatus, configure } from "./core.js";
 import { h, icon, alertBox, toast, pickFile } from "./ui.js";
 import { renderOverview } from "./pages/overview.js";
 import { renderHistory } from "./pages/history.js";
@@ -15,18 +15,17 @@ import { renderPlan } from "./pages/plan.js";
 
 const TABS = [
   { key: "overview", title: "Overview", icon: "overview", render: renderOverview },
-  { key: "history", title: "History", icon: "history", render: renderHistory },
+  { key: "plan", title: "My plan", icon: "target", render: renderPlan },     // this pay period's saving plan
   { key: "budget", title: "Budget", icon: "budget", render: renderBudget },
+  { key: "history", title: "History", icon: "history", render: renderHistory },
   { key: "insights", title: "Insights", icon: "insights", render: renderInsights },
-  // the saving plan you started: a page of its own, opened with the target button at the top (not a tab)
-  { key: "plan", title: "My plan", icon: "target", render: renderPlan, hidden: true },
 ];
 // The car monitor: its own section, opened with the car button; the € button goes back to the
 // savings tab you were on.
 const CAR_TABS = [
   { key: "car", title: "Car", icon: "car", render: renderCar, heading: carHeading },
   { key: "car-log", title: "Log", icon: "history", render: renderCarLog },
-  { key: "car-insights", title: "Insights", icon: "charts", render: renderCarInsights },
+  { key: "car-insights", title: "Charts", icon: "charts", render: renderCarInsights },
   { key: "car-garage", title: "Garage", icon: "garage", render: renderGarage },
 ];
 const ALL_TABS = [...TABS, ...CAR_TABS.filter((t) => !t.exit)];
@@ -44,7 +43,6 @@ const syncBtn = document.getElementById("sync-btn");
 const tabbar = document.getElementById("tabbar");
 const addBtn = document.getElementById("add-btn");
 const carBtn = document.getElementById("car-btn");
-const planBtn = document.getElementById("plan-btn");
 let statusPill = null;
 
 // ---------------------------------------------------------------------------
@@ -149,7 +147,7 @@ function updateChrome() {
 }
 
 function buildTabbar() {
-  tabbar.replaceChildren(...(inCar() ? CAR_TABS : TABS).filter((t) => !t.hidden).map((t) => {
+  tabbar.replaceChildren(...(inCar() ? CAR_TABS : TABS).map((t) => {
     const b = h("button", { type: "button", class: `tab ${t.key === current ? "on" : ""}`, "aria-label": t.title,
       "aria-current": t.key === current ? "page" : null }, icon(t.icon, 26), h("span", null, t.title));
     b.addEventListener("click", () => (t.key === current ? window.scrollTo({ top: 0, behavior: "smooth" }) : go(t.key)));
@@ -170,15 +168,9 @@ function render() {
   const [subtitle, ...content] = tab.render(ctx);
   const title = tab.heading ? tab.heading(ctx) : tab.title;
   navTitle.textContent = title;
-  addBtn.setAttribute("aria-label", current === "car-garage" ? "Add a car" : inCar() ? "Add a car log" : "Add a month");
   // the car button opens the car monitor; in there it's a € button back to your savings
   carBtn.replaceChildren(icon(inCar() ? "euro" : "car", 25));
   carBtn.setAttribute("aria-label", inCar() ? "Back to Savings" : "Car monitor");
-  // the plan button: a green dot while a plan runs for this pay period; on its page it takes you back
-  const running = Boolean(loadPlans(ctx.data)[currentPeriod(ctx.today).base]);
-  planBtn.replaceChildren(...[icon("target", 24), running ? h("span", { class: "nav-badge" }) : null].filter(Boolean));
-  planBtn.classList.toggle("on", current === "plan");
-  planBtn.setAttribute("aria-label", current === "plan" ? "Back" : running ? "My saving plan" : "Start a saving plan");
   statusPill = h("button", { type: "button", class: "status-pill" });
   statusPill.addEventListener("click", () => (store.mode === "drive" ? store.syncFromTap() : ctx.openSettings()));
   const showPill = current === "overview" || ["signin", "error"].includes(store.status.state);
@@ -187,6 +179,7 @@ function render() {
     h("div", { class: "subtitle" }, subtitle),
     showPill ? statusPill : null,
     ...content.filter(Boolean)));
+  addBtn.setAttribute("aria-label", current === "car-garage" ? "Add a car" : inCar() ? "Add a car log" : checkInput() ? "Check in" : "Add a month");
   buildTabbar();
   updateChrome();
 }
@@ -196,14 +189,16 @@ function render() {
 // ---------------------------------------------------------------------------
 document.getElementById("settings-btn").addEventListener("click", () => store.ready && openSettings(context()));
 carBtn.addEventListener("click", () => store.ready && go(inCar() ? "savings" : store.pref("car_tab", "car")));
-planBtn.addEventListener("click", () => {
-  if (!store.ready) return;
-  if (current === "plan") { go(store.pref("plan_back", "overview")); return; }
-  store.setPref("plan_back", current);
-  go("plan");
-});
-// +: a month; in the car monitor a log for the car shown, or in the Garage a car
-const addNew = () => (current === "car-garage" ? openCarSheet(context(), null) : inCar() ? openNewCarLog(context()) : openMonthSheet(context(), null));
+// +: a month; on My plan, while a plan runs, a check-in; in the car monitor a log for the car shown, or in the Garage a car
+const checkInput = () => (current === "plan" ? main.querySelector(".check-input") : null);
+function addNew() {
+  if (current === "car-garage") return openCarSheet(context(), null);
+  if (inCar()) return openNewCarLog(context());
+  const input = checkInput();
+  if (!input) return openMonthSheet(context(), null);
+  input.scrollIntoView({ block: "center", behavior: "smooth" });
+  input.focus({ preventScroll: true });
+}
 addBtn.addEventListener("click", () => store.ready && addNew());
 privacyBtn.addEventListener("click", () => setPrivacy(!store.pref("privacy", false), true));
 syncBtn.addEventListener("click", () => {

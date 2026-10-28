@@ -92,7 +92,7 @@ export function openExpenseSheet(ctx, snap, original = null) {
     const x = {
       id: original ? original.id : null, name: name.value.trim(), amount: v, per: per === 1 ? "year" : "month",
       category, active: active.input.checked, end_month: hasEnd.input.checked ? endMonth : null,
-      position: original ? original.position : nextPosition(snap.expenses), currency: currency === 1 ? "EUR" : "SEK",
+      position: original ? original.position : nextPosition(snap.expenses.filter((x) => !x.car)), currency: currency === 1 ? "EUR" : "SEK",
     };
     store.saveExpense(x);
     sh.close();

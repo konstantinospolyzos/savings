@@ -1,10 +1,10 @@
-// Insights: what your logs and your budget say, with a personal action plan.
+// Insights: what your logs and your budget say, looking back (your action plan is on My plan).
 import { h, chip, dot, segmented, splitBar, kv, appIcon, toast, icon } from "../ui.js";
 import { chart } from "../charts.js";
 import {
   COLORS, MONTHS, NOTE_TAGS, CUR, CURRENCIES, inSweden, localSym, secondSym, brokersText, hasMoney, CAPITAL_GAINS_TAX, ISK_TAX_FREE, CATEGORY_COLORS,
   monthFlows, summarize, tagAnalysis, quietMonths, tripComparison, travelFund, incomeAnalysis, investmentStatus,
-  buildActions, futureValue, tripStatus, isTrip, mean, mLong, mShort, mNum, fmtSek, fmtEur, fmtAxisSek, pct, toneOf,
+  futureValue, tripStatus, isTrip, mean, mLong, mShort, mNum, fmtSek, fmtEur, fmtAxisSek, pct, toneOf,
   parseNumber, plainNumber, expenseMonthlySek, shortNote, roundTo10, investedSek,
 } from "../core.js";
 import { store } from "../store.js";
@@ -71,15 +71,6 @@ function kpis(snap, summ, inv) {
   } else cards.push(statCard("INVESTED AFTER TAX", COLORS.orange, inv ? fmtEur(inv.value) : "—", "market value, before tax",
     "Add what it cost below", "flat", "v"));
   return h("div", { class: "stats" }, cards);
-}
-
-// ---------------------------------------------------------------------------
-function actionsCard(items) {
-  return card(head("Your action plan", "Personal tips from your logs and your budget, most important first."),
-    items.length ? h("div", { class: "actions" }, items.map(([title, detail, color], k) => h("div", { class: "action" },
-      h("span", { class: "action-badge", style: { background: color } }, String(k + 1)),
-      h("div", { class: "action-text" }, h("div", { class: "action-title amt-soft" }, title), h("div", { class: "muted amt-soft" }, detail)))))
-      : h("div", { class: "muted" }, "Nothing urgent. Keep logging every month and check back."));
 }
 
 // ---------------------------------------------------------------------------
@@ -436,7 +427,6 @@ export function renderInsights(ctx) {
   else { monthly = roundTo10(Math.max(mean(recent.map((f) => f.to_inv)) || 0, 0)); source = "your recent average"; }
   return [`Based on ${mShort(recent[0].month)} – ${mShort(recent.at(-1).month)} and your budget`,
     kpis(snap, summ, inv),
-    foldable("actions", actionsCard(buildActions(snap, summ, tags, fund, inv, recent))),
     foldable("chart", monthChartCard(recent, snap)),
     foldable("trips", tripCard(tripComparison(recent), recent)),
     foldable("notes", notesCard(tags, quietMonths(recent), fund)),

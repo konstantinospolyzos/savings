@@ -707,6 +707,51 @@ export function budgetRate(data, entries) {
 }
 
 /** Everything the Budget, Overview and Insights pages need about the plan. */
+// ---------------------------------------------------------------------------
+// Your car in the Budget: its costs are entered once, in the car monitor
+// ---------------------------------------------------------------------------
+const carName = (c) => c.name || [c.make, c.model].filter(Boolean).join(" ") || "Car";
+
+/**
+ * What a car costs a month in a pay period's budget: its fixed costs (insurance, parking...) and fuel, the
+ * average of the 12 full months before the period's month (or of the months since your first refuel). It only
+ * changes with the pay period, or when you change the fixed costs, so a budget you saved stays saved.
+ */
+export function carMonthly(car, base) {
+  const fixed = sum((car.fixed || []).filter((f) => !f.from || f.from <= base).map((f) => Number(f.amount) || 0));
+  const fuelLogs = (car.logs || []).filter((l) => l.type === "fuel" && l.cost > 0 && typeof l.date === "string");
+  const end = addMonths(base, -1);
+  const first = fuelLogs.reduce((m, l) => (m === null || l.date < m ? l.date : m), null);
+  let fuel = 0, months = 0;
+  if (first && first.slice(0, 7) <= end) {
+    const start = mIndex(first.slice(0, 7)) > mIndex(end) - 12 ? first.slice(0, 7) : addMonths(end, -11);
+    months = mIndex(end) - mIndex(start) + 1;
+    const inWindow = fuelLogs.filter((l) => { const m = l.date.slice(0, 7); return m >= start && m <= end; });
+    fuel = roundTo10(sum(inWindow.map((l) => l.cost)) / months);
+  }
+  return { fixed, fuel, months, total: fixed + fuel, electric: car.fuel === "electric" };
+}
+
+/**
+ * The cars in the Budget, as fixed costs (setting budget_cars: {car id: true to count it, false to leave it
+ * out}; a car you haven't decided on has no line yet). Their ids start with "car:".
+ */
+export function carBudgetLines(data, base) {
+  const chosen = getSetting(data, "budget_cars", {}) || {};
+  return (data.cars || []).filter((c) => typeof chosen[c.id] === "boolean").map((c, k) => {
+    const m = carMonthly(c, base);
+    return { id: `car:${c.id}`, car: c.id, name: carName(c), amount: m.total, per: "month", category: "Transport",
+      active: chosen[c.id], position: 100000 + k, currency: "SEK", end_month: null, parts: m };
+  }).filter((x) => x.amount > 0);
+}
+
+/** Cars with costs that the Budget doesn't count or leave out yet: [{car, parts}] */
+export function carsToOffer(data, base) {
+  const chosen = getSetting(data, "budget_cars", {}) || {};
+  return (data.cars || []).filter((c) => typeof chosen[c.id] !== "boolean")
+    .map((c) => ({ car: c, name: carName(c), parts: carMonthly(c, base) })).filter((x) => x.parts.total > 0);
+}
+
 export function budgetSnapshot(data, today = todayDate(), offset = 0, salaryOverride = null) {
   const entries = data.entries;
   const base = addMonths(defaultPeriodMonth(today), offset);
@@ -717,7 +762,8 @@ export function budgetSnapshot(data, today = todayDate(), offset = 0, salaryOver
   const kept = getSetting(data, "budget_salary");
   const savedSalary = typeof kept === "number" && Number.isFinite(kept) && kept >= 0 ? kept : null;
   const salary = salaryOverride !== null ? salaryOverride : savedSalary !== null ? savedSalary : latest ? latest.income_sek : 0;
-  const expenses = [...data.expenses].sort(byPosition);
+  // your fixed costs, and the cars you count in the Budget (from the car monitor)
+  const expenses = [...data.expenses, ...carBudgetLines(data, base)].sort(byPosition);
   const goals = [...data.goals].sort(byPosition);
   const profiles = loadProfiles(data);
   let key = getSetting(data, "profile", "balanced");
@@ -748,17 +794,7 @@ export function buildActions(snap, summ, tags, fund, inv, flows) {
   }
   const P = snap.plan || snap;          // the plan you started for this pay period, if you did
   const planned = P.future;
-  if (snap.plan_ready && planned + P.goals > 0) {
-    const ps = paydayStatus(snap.today);
-    const when = ps.isToday ? "today" : shortDate(ps.next);
-    const moves = joinAnd([
-      P.invest > 0 ? `${fmtSek(P.invest)} to ${brokersText("your investments")}` : "",
-      P.to_buffer > 0 ? `${fmtSek(P.to_buffer)} to your buffer` : "",
-      P.goals > 0 ? `${fmtSek(P.goals)} to your saving goals` : "",
-    ]);
-    items.push([1, `On payday (${when}), move the money first`,
-      `Send ${moves} as soon as the salary lands. Standing transfers make it automatic, and what's left in the account is yours to spend.`, COLORS.blue]);
-  }
+  // (moving the money on payday is on My plan, with a tick for each transfer)
   if (summ && snap.plan_ready) {
     const planRate = P.save_rate ?? snap.save_rate, actual = summ.rate;
     if (actual < planRate - 0.05)
@@ -801,7 +837,7 @@ export function buildActions(snap, summ, tags, fund, inv, flows) {
         `${brokersAnd("Your broker accounts")} ${/\+| and /.test(CUR.brokers) ? "are regular accounts" : "is a regular account"}: 30% of the gain is taxed when you sell, worked out in kronor. As foreign brokers they usually don't report to Skatteverket, so add sales (K4) and dividends to your tax return yourself.`, COLORS.orange]);
     else if (inv.cost_sek === null)
       items.push([9, "Tell the app what your investments cost",
-        `Type it under Investments below${CUR.single ? "" : `, in ${CURRENCIES[CUR.local][3].toLowerCase()} or ${CURRENCIES[CUR.second][3].toLowerCase()}`}, to see what your holdings are worth after the 30% tax.`, COLORS.orange]);
+        `Type it under Investments on the Insights tab${CUR.single ? "" : `, in ${CURRENCIES[CUR.local][3].toLowerCase()} or ${CURRENCIES[CUR.second][3].toLowerCase()}`}, to see what your holdings are worth after the 30% tax.`, COLORS.orange]);
     if ([2, 3, 4, 5].includes(snap.today.getMonth() + 1))
       items.push([1, `Check your tax return for ${brokersAnd("your foreign brokers")}`,
         "Foreign brokers are usually not pre-filled. Add each sale on K4 (gain worked out in kronor) and your dividends under capital; tax already withheld abroad is credited. The deadline is in early May.", COLORS.orange]);

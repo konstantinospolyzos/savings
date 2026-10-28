@@ -15,10 +15,10 @@ function row(labelText, input, unit = null, extra = null) {
     unit ? h("span", { class: "form-unit" }, unit) : null, extra);
 }
 
-export function openMonthSheet(ctx, original = null) {
+export function openMonthSheet(ctx, original = null, startMonth = null) {
   const entries = ctx.entries;
   const last = entries.at(-1) || null;
-  let month = original ? original.month : defaultNewMonth(entries, ctx.today);
+  let month = original ? original.month : startMonth || defaultNewMonth(entries, ctx.today);
   let fetchInfo = "", fetchError = "";
   let tripTouched = false;
 

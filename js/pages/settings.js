@@ -129,11 +129,9 @@ export function openSettings(ctx) {
   function build() {
     const m = store.meta;
     const parts = [];
-    parts.push(group(ctx.inCar
-      ? actionRow("euro", "Back to Savings", () => { sh?.close(); ctx.go("savings"); })
-      : actionRow("car", "Car monitor", () => { sh?.close(); ctx.go("car"); }, { detail: "Mileage, fuel, services and tyres" }),
-    ctx.inCar ? actionRow("camera", "Reading pump photos", () => { sh?.close(); openPhotoSetup(ctx); },
-      { detail: getKey() ? "Claude API key saved on this device" : "Add a Claude API key" }) : null));
+    // the car button at the top switches between the savings and the car monitor
+    if (ctx.inCar) parts.push(group(actionRow("camera", "Reading pump photos", () => { sh?.close(); openPhotoSetup(ctx); },
+      { detail: getKey() ? "Claude API key saved on this device" : "Add a Claude API key" })));
     parts.push(caption("WHERE YOUR DATA IS SAVED"));
     if (store.mode === "drive") {
       parts.push(group(

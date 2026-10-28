@@ -1,15 +1,19 @@
-// My plan: the saving plan you started for this pay period, day by day (the target button at the top).
-// The plan keeps its numbers until payday; this page shows where you are in it: this week's money, a
-// check-in against what's left, the payday transfers to tick off, what the plan builds, and past plans.
-import { h, chip, dot, splitBar, toggle, toast, alertBox, kv } from "../ui.js";
+// My plan: the saving plan you started for this pay period, day by day (a tab of the savings section).
+// The plan keeps its numbers until payday; this page shows where you are in it: the payday checklist (the
+// first week), this week's money, a check-in against what's left, the payday transfers to tick off, what the
+// plan builds, your action plan, and past plans.
+import { h, chip, dot, splitBar, toggle, toast, alertBox, kv, icon } from "../ui.js";
 import {
   COLORS, PROFILE_DEFS, budgetSnapshot, planForRate, loadPlans, loadBudgets, loadProfiles, loadFloors, budgetChanges, budgetToSave,
   defaultPeriodMonth, paydayFor, addMonths, mIndex, daysBetween, addDays, isoDay, fmtRange, shortDate, fmtSek, fmtEur, pct,
   roundTo10, plainNumber, parseNumber, plural, usualSpending, planProgress, planCheck, currentPeriod, futureValue, investedSek,
-  brokersText, localSym, mLong, getSetting, hasMoney, summarize, monthFlows, CUR, inSweden,
+  brokersText, localSym, mLong, getSetting, hasMoney, summarize, monthFlows, CUR, inSweden, buildActions, tagAnalysis,
+  travelFund, joinAnd,
 } from "../core.js";
 import { store } from "../store.js";
 import { openProfilesSheet } from "./budget-sheets.js";
+import { openMonthSheet } from "./month.js";
+import { showCurrentPeriod } from "./budget.js";
 
 const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, GOALS_C = COLORS.teal, BUFFER_C = COLORS.blue, INVEST_C = COLORS.orange;
 const card = (...children) => h("div", { class: "card" }, children);
@@ -19,6 +23,9 @@ const head = (title, sub = null, right = null) => h("div", { class: "card-head" 
 const asDay = (iso) => new Date(`${iso}T12:00:00`);
 const when = (iso, today) => (iso === isoDay(today) ? "today" : `on ${shortDate(asDay(iso))}`);
 const money = (v) => fmtSek(roundTo10(v));
+/** A card of this page by its class, scrolled to just under the top bar. */
+const scrollToCard = (cls) => document.querySelector(`[data-page="plan"] .${cls}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+const withClass = (el, cls) => { el?.classList.add(cls); return el; };
 
 // ---------------------------------------------------------------------------
 // Shared with the Budget page
@@ -172,9 +179,9 @@ function checkCard(snap, pr) {
 function movesCard(snap) {
   const m = paydayMoves(snap);
   if (!m.count) return null;
-  return card(head("On payday, move", m.all_done ? "✓ Done. What's left in your everyday account is yours to spend." : "As soon as the salary lands, before you start spending."),
+  return withClass(card(head("On payday, move", m.all_done ? "✓ Done. What's left in your everyday account is yours to spend." : "As soon as the salary lands, before you start spending."),
     h("div", { class: "list" }, m.rows),
-    h("div", { class: "hint" }, "Tick them off when you've moved the money. Standing transfers make it automatic."));
+    h("div", { class: "hint" }, "Tick them off when you've moved the money. Standing transfers make it automatic.")), "plan-moves");
 }
 
 /** Where the salary goes in this plan. */
@@ -247,7 +254,7 @@ function detailsCard(snap, ctx, bs) {
   const { changed, why, fields } = planChanges(P, bs);
   const aimed = P.rate !== undefined && P.save_rate < P.rate / 100 - 0.005;
   const update = () => { startPlan(ctx, snap.base, fields, P); toast(`✓  Plan updated: ${profileName(P.profile)}`); };
-  return card(head("The plan", `Started ${shortDate(asDay(P.started))}${P.updated ? `, updated ${shortDate(asDay(P.updated))}` : ""}`),
+  return withClass(card(head("The plan", `Started ${shortDate(asDay(P.started))}${P.updated ? `, updated ${shortDate(asDay(P.updated))}` : ""}`),
     changed ? h("div", { class: "warn-note" }, `You saved a new budget since you started${why.length ? ` (${why.join(", ")})` : ""}: the plan would now be ${money(fields.living / (snap.days / 7))} a week to spend, ${fmtSek(fields.goals + fields.to_buffer)} to save and ${fmtSek(fields.invest)} to invest.`,
       h("div", { class: "note-actions" }, h("button", { type: "button", class: "btn tinted small", onclick: update }, "Update the plan"))) : null,
     h("div", { class: "kv-list" },
@@ -260,7 +267,7 @@ function detailsCard(snap, ctx, bs) {
       kv("Pay period", `${fmtRange(snap.start, addDays(snap.end, -1))}, ${snap.days} days`, { amt: false })),
     h("div", { class: "card-actions" },
       h("button", { type: "button", class: "btn tinted small", onclick: () => ctx.go("budget") }, "Open Budget"),
-      h("button", { type: "button", class: "btn plain small", onclick: () => stopPlan(snap.base) }, "Stop the plan")));
+      h("button", { type: "button", class: "btn plain small", onclick: () => stopPlan(snap.base) }, "Stop the plan"))), "plan-details");
 }
 
 /** The plans of the pay periods before. */
@@ -278,6 +285,75 @@ function pastCard(ctx, base) {
   });
   if (!rows.length) return null;
   return card(head("Your past plans", `${plural(rows.length, "pay period")}`), h("div", { class: "list" }, rows));
+}
+
+/** Your action plan: tips from your logs and your budget, most important first (moving the money is above). */
+function actionsCard(ctx, snap) {
+  const recent = monthFlows(ctx.entries).slice(-12);
+  const items = buildActions(snap, summarize(recent), tagAnalysis(recent), travelFund(recent), ctx.inv, recent);
+  if (!items.length) return null;
+  return card(head("Your action plan", "Tips from your logs and your budget, most important first."),
+    h("div", { class: "actions" }, items.map(([title, detail, color], k) => h("div", { class: "action" },
+      h("span", { class: "action-badge", style: { background: color } }, String(k + 1)),
+      h("div", { class: "action-text" }, h("div", { class: "action-title amt-soft" }, title), h("div", { class: "muted amt-soft" }, detail))))));
+}
+
+// ---------------------------------------------------------------------------
+// The payday checklist: the first week of a pay period, until all four steps are done
+// ---------------------------------------------------------------------------
+const CHECKLIST_DAYS = 7;
+
+/** Payday, step by step: each step ticks itself off, and tapping it takes you to where it's done. */
+function paydaySteps(ctx, live, saved, changes) {
+  const base = live.base, P = live.plan;
+  const entry = ctx.entries.find((e) => e.month === base) || null;
+  const moves = P ? paydayMoves(live) : null;
+  const toSave = P ? P.goals + P.to_buffer : 0;
+  return [
+    { key: "log", done: Boolean(entry), title: `Log ${mLong(base)}`,
+      sub: entry ? `Salary ${fmtSek(entry.income_sek)}, bank ${fmtSek(entry.bank_sek)}` : "The salary that just came in, and your bank and investments today",
+      go: () => (entry ? ctx.openMonth(entry) : openMonthSheet(ctx, null, base)) },
+    { key: "budget", done: Boolean(saved) && !changes.length, title: saved && changes.length ? "Save the budget again" : "Check the salary and save the budget",
+      sub: !saved ? (live.salary > 0 ? `Salary ${fmtSek(live.salary)}, fixed costs ${fmtSek(live.fixed)}: save them on the Budget tab` : "Enter your salary on the Budget tab, then save the budget")
+        : changes.length ? `It changed since you saved it: ${joinAnd(changes)}`
+          : `Saved ${shortDate(asDay(saved.saved))}: ${fmtSek(saved.left)} left after fixed costs`,
+      go: () => { showCurrentPeriod(); ctx.go("budget"); } },
+    { key: "plan", done: Boolean(P), title: "Pick a saving plan and start it",
+      sub: P ? `${profileName(P.profile)}: ≈ ${money(P.living / (live.days / 7))} a week to live on`
+        : saved ? "Below: the three plans, worked out from the budget you saved" : "Once the budget is saved",
+      go: P ? () => scrollToCard("plan-details") : saved ? () => scrollToCard("plan-tiles") : null },
+    { key: "move", done: Boolean(P) && (!moves.count || moves.all_done), title: "Move Save and Invest",
+      sub: !P ? "Once the plan is started" : !moves.count ? "Nothing to move this pay period"
+        : moves.all_done ? "Moved: what's left is yours to spend"
+          : `${joinAnd([toSave > 0 ? `Save ${fmtSek(toSave)}` : "", P.invest > 0 ? `${toSave > 0 ? "invest" : "Invest"} ${fmtSek(P.invest)}` : ""])}, then tick ${moves.count > 1 ? "them" : "it"} off`,
+      go: P && moves.count ? () => scrollToCard("plan-moves") : null },
+  ];
+}
+
+function checklistCard(steps, live, today) {
+  const nDone = steps.filter((s) => s.done).length;
+  const next = steps.findIndex((s) => !s.done);
+  const rows = steps.map((s, k) => {
+    const mark = s.done ? h("span", { class: "step-mark done", "aria-label": "Done" }, icon("check", 15))
+      : h("span", { class: `step-mark ${k === next ? "next" : ""}` }, String(k + 1));
+    const go = s.go ? () => s.go() : null;
+    return h("div", { class: `list-row step-row ${s.done ? "done" : ""} ${go ? "" : "static"}`, role: go ? "button" : null, tabindex: go ? "0" : null,
+      onclick: go, onkeydown: go ? (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); } } : null },
+      mark,
+      h("div", { class: "row-main" }, h("div", { class: "row-title" }, s.title), h("div", { class: "row-sub amt-soft" }, s.sub)),
+      go ? icon("chevron", 15, "chev") : null);
+  });
+  const isToday = isoDay(live.start) === isoDay(today);
+  return withClass(card(head("Payday checklist", `${isToday ? "It's payday" : `Payday was ${shortDate(live.start)}`}: four steps, and this pay period is set.`,
+    chip(`${nDone} of ${steps.length}`, nDone ? "info" : "flat")),
+  h("div", { class: "list" }, rows)), "plan-checklist");
+}
+
+/** The checklist, in the first week of the pay period while a step is still to do. */
+function paydayChecklist(ctx, live, saved, changes) {
+  if (daysBetween(live.start, ctx.today) >= CHECKLIST_DAYS) return null;
+  const steps = paydaySteps(ctx, live, saved, changes);
+  return steps.every((s) => s.done) ? null : checklistCard(steps, live, ctx.today);
 }
 
 // ---------------------------------------------------------------------------
@@ -339,11 +415,11 @@ function tilesCard(bs, ctx) {
       h("div", { class: `tile-why amt-soft ${p.short ? "tone-text-down" : ""}` }, why),
       vsUsual ? h("div", { class: "tile-why amt-soft" }, vsUsual) : null);
   });
-  return card(
+  return withClass(card(
     head("Pick a saving plan", "Each puts a share of your salary toward your future, but always leaves you a minimum to live on.",
       h("button", { type: "button", class: "link-btn", onclick: () => openProfilesSheet(ctx, bs) }, "Edit")),
     h("div", { class: "tiles" }, tiles),
-    usual ? h("div", { class: "hint amt-soft" }, `You usually spend about ${money(usual.week)} a week beyond your fixed costs: the middle of your last ${usual.months} months of logs, trip months left out.`) : null);
+    usual ? h("div", { class: "hint amt-soft" }, `You usually spend about ${money(usual.week)} a week beyond your fixed costs: the middle of your last ${usual.months} months of logs, trip months left out.`) : null), "plan-tiles");
 }
 
 function rateMeter(rate, marker) {
@@ -422,15 +498,20 @@ export function renderPlan(ctx) {
   const nextBase = addMonths(base, 1);
   const next = loadPlans(ctx.data)[nextBase] || null;
   const foot = h("div", { class: "hint page-foot" }, `The plans are rules of thumb (${inSweden() ? "Swedbank, Finansinspektionen, the 50/30/20 rule" : "common guidance and the 50/30/20 rule"}), not financial advice. Change the % and the minimums to fit you.`);
+  const checklist = paydayChecklist(ctx, live, saved, changes);
   if (!live.plan) {
     if (!bs) return [`${fmtRange(live.start, addDays(live.end, -1))}  ·  save your budget first`,
-      saveFirstCard(live, ctx, Boolean(loadBudgets(ctx.data)[nextBase])), pastCard(ctx, base)];
+      checklist || saveFirstCard(live, ctx, Boolean(loadBudgets(ctx.data)[nextBase])),
+      actionsCard(ctx, live),
+      pastCard(ctx, base)];
     const prev = loadPlans(ctx.data)[addMonths(base, -1)] || null;
     return [`${fmtRange(live.start, addDays(live.end, -1))}  ·  pick a saving plan`,
+      checklist,
       budgetCard(bs, changes, ctx),
       tilesCard(bs, ctx),
       prev ? h("div", { class: "card plan-next amt-soft" }, `Last pay period you followed ${profileName(prev.profile)} and saved ${pct(prev.save_rate || 0)}.`) : null,
       previewCard(bs, live, ctx),
+      actionsCard(ctx, live),
       pastCard(ctx, base),
       foot];
   }
@@ -440,7 +521,8 @@ export function renderPlan(ctx) {
   const sw = switching ? (bs || budgetFor(ctx, base, budgetToSave(live, ctx.today), live.start, live.end)) : null;
   const toPayday = daysBetween(snap.today, snap.end);
   return [`${profileName(snap.plan.profile)} plan  ·  ${fmtRange(snap.start, addDays(snap.end, -1))}  ·  ${toPayday === 1 ? "payday tomorrow" : `payday in ${toPayday} days`}`,
-    changes.length && bs ? h("div", { class: "card" }, unsavedNote(changes, ctx, bs)) : null,
+    checklist,
+    changes.length && bs && !checklist ? h("div", { class: "card" }, unsavedNote(changes, ctx, bs)) : null,
     weekCard(snap, pr, ctx),
     sw ? tilesCard(sw, ctx) : null,
     sw ? previewCard(sw, live, ctx, snap.plan) : null,
@@ -449,6 +531,7 @@ export function renderPlan(ctx) {
     next ? h("div", { class: "card plan-next amt-soft" }, `Next pay period: your ${profileName(next.profile)} plan is ready and starts on payday, ${shortDate(snap.end)}.`) : null,
     splitCard(snap),
     buildsCard(snap),
+    actionsCard(ctx, snap),
     weeksCard(snap, pr),
     detailsCard(snap, ctx, bs),
     pastCard(ctx, base)];
