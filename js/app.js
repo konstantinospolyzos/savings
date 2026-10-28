@@ -220,19 +220,21 @@ syncBtn.addEventListener("click", () => {
 // Google Drive: its sign-in lasts an hour, and the browser only lets Google's sign-in window open from a tap.
 // So when it has run out (the orange cloud), the first tap anywhere signs in again and syncs, once; if that
 // doesn't work, the cloud button is there as before.
-// A tap is a touch that lifts where it went down (not a scroll); on a phone it counts even on plain text, which
-// doesn't get a click there.
-let autoSignIn = true, downAt = null;
+// A tap is a touch that lifts where it went down (not a scroll). On an iPhone it has to be the touch itself (Safari
+// lets a sign-in window open from a touch or a click, not from a pointer event), and a tap on plain text makes
+// no click there. If the window was blocked anyway, the next tap tries again.
+let autoSignIn = true, touchAt = null;
 function signInOnTap(ev) {
   if (!autoSignIn || !store.ready || store.mode !== "drive" || store.drive.tokenValid() || !navigator.onLine) return;
   if (!window.google?.accounts?.oauth2) return;                              // Google's sign-in isn't loaded yet
   if (ev.target.closest?.("#sync-btn, input, textarea, select, .sheet-wrap, .alert-wrap")) return;
   autoSignIn = false;
-  store.syncFromTap();
+  store.syncFromTap().then(() => { if (!store.drive.tokenValid() && /blocked/.test(store.status.text || "")) autoSignIn = true; });
 }
-document.addEventListener("pointerdown", (ev) => { downAt = [ev.clientX, ev.clientY]; }, true);
-document.addEventListener("pointerup", (ev) => {
-  if (ev.pointerType !== "mouse" && downAt && Math.hypot(ev.clientX - downAt[0], ev.clientY - downAt[1]) < 10) signInOnTap(ev);
+document.addEventListener("touchstart", (ev) => { const t = ev.touches[0]; touchAt = t ? [t.clientX, t.clientY] : null; }, { capture: true, passive: true });
+document.addEventListener("touchend", (ev) => {
+  const t = ev.changedTouches[0];
+  if (t && touchAt && Math.hypot(t.clientX - touchAt[0], t.clientY - touchAt[1]) < 10) signInOnTap(ev);
 }, true);
 document.addEventListener("click", signInOnTap, true);
 store.on((kind) => { if (kind === "status" && store.drive.tokenValid()) autoSignIn = true; });   // signed in: next time too
