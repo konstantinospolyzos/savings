@@ -8,7 +8,7 @@ import {
   defaultPeriodMonth, paydayFor, addMonths, mIndex, daysBetween, addDays, isoDay, fmtRange, shortDate, fmtSek, fmtEur, pct,
   roundTo10, plainNumber, parseNumber, plural, usualSpending, planProgress, planCheck, currentPeriod, futureValue, investedSek,
   brokersText, localSym, mLong, getSetting, hasMoney, summarize, monthFlows, CUR, inSweden, buildActions, tagAnalysis,
-  travelFund, joinAnd,
+  travelFund, joinAnd, weekChunks, expenseMonthlySek,
 } from "../core.js";
 import { store } from "../store.js";
 import { openProfilesSheet } from "./budget-sheets.js";
@@ -91,11 +91,32 @@ export function planChanges(P, bs) {
   return { changed, why, fields: f };
 }
 
+/**
+ * What goes to Revolut on payday, when you pay fixed costs from Revolut pockets: a pocket for each week of the
+ * pay period (the plan's living money, week by week) and the fixed costs marked Revolut pocket. null without them.
+ */
+export function revolutPockets(snap) {
+  const costs = snap.active.filter((x) => x.pocket && !x.car).map((x) => [x.name, expenseMonthlySek(x, snap.fx)]);
+  if (!costs.length || !snap.plan) return null;
+  const P = snap.plan, weeks = weekChunks(snap.start, snap.end), perDay = P.living / snap.days;
+  let given = 0;
+  const weekRows = weeks.map((w, k) => {
+    const last = k === weeks.length - 1;
+    const amount = last ? Math.max(Math.round(P.living - given), 0) : roundTo10(perDay * w.days);
+    given += amount;
+    return [w.days === 7 ? `Week ${k + 1}` : `Week ${k + 1} (${plural(w.days, "day")})`, amount];
+  });
+  const weeksTotal = weekRows.reduce((a, [, v]) => a + v, 0), costsTotal = costs.reduce((a, [, v]) => a + v, 0);
+  return { weeks: weekRows, costs, weeks_total: weeksTotal, costs_total: costsTotal, total: weeksTotal + costsTotal };
+}
+
 /** The money to move on payday, each ticked off when it's done. */
 export function paydayMoves(snap) {
   const P = snap.plan, done = P.done || {};
   const save = P.goals + P.to_buffer;
+  const rv = revolutPockets(snap);
   const moves = [
+    rv ? ["revolut", `To Revolut ${fmtSek(rv.total)}`, `Weeks ${fmtSek(rv.weeks_total)} + ${rv.costs.length === 1 ? rv.costs[0][0] : "other pockets"} ${fmtSek(rv.costs_total)}`, LIVING_C] : null,
     save > 0 ? ["save", `Save ${fmtSek(save)}`, `To your savings account${P.goals > 0 && P.to_buffer > 0 ? `: goals ${fmtSek(P.goals)} + buffer ${fmtSek(P.to_buffer)}` : P.goals > 0 ? ": your saving goals" : ": your buffer"}`, BUFFER_C] : null,
     P.invest > 0 ? ["invest", `Invest ${fmtSek(P.invest)}`, `To ${brokersText("your investment account")}`, INVEST_C] : null,
   ].filter(Boolean);
@@ -104,7 +125,16 @@ export function paydayMoves(snap) {
     return h("label", { class: "list-row move-row" }, dot(color, 10),
       h("div", { class: "row-main" }, h("div", { class: `row-title amt ${done[key] ? "moved" : ""}` }, title), h("div", { class: "row-sub amt-soft" }, subText)), sw);
   });
-  return { rows, count: moves.length, all_done: moves.length > 0 && moves.every(([key]) => done[key]) };
+  return { rows, count: moves.length, all_done: moves.length > 0 && moves.every(([key]) => done[key]), revolut: rv };
+}
+
+/** Pocket by pocket: what to put in each one. */
+function pocketsList(rv) {
+  const line = (name, v) => h("div", { class: "kv" }, h("span", { class: "kv-label" }, name), h("span", { class: "kv-value amt" }, fmtSek(v)));
+  return h("div", { class: "pockets" },
+    h("div", { class: "caption" }, "INTO YOUR REVOLUT POCKETS"),
+    h("div", { class: "kv-list" }, rv.weeks.map(([n, v]) => line(n, v)), rv.costs.map(([n, v]) => line(n, v)),
+      h("div", { class: "kv pockets-total" }, h("span", { class: "kv-label" }, "Total to Revolut"), h("span", { class: "kv-value amt" }, fmtSek(rv.total)))));
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +218,7 @@ function movesCard(snap) {
   if (!m.count) return null;
   return withClass(card(head("On payday, move", m.all_done ? "✓ Done. What's left in your everyday account is yours to spend." : "As soon as the salary lands, before you start spending."),
     h("div", { class: "list" }, m.rows),
+    m.revolut ? pocketsList(m.revolut) : null,
     h("div", { class: "hint" }, "Tick them off when you've moved the money. Standing transfers make it automatic.")), "plan-moves");
 }
 
@@ -316,6 +347,7 @@ function paydaySteps(ctx, live, saved, changes) {
   const entry = ctx.entries.find((e) => e.month === base) || null;
   const moves = P ? paydayMoves(live) : null;
   const toSave = P ? P.goals + P.to_buffer : 0;
+  const rv = moves?.revolut || null;
   return [
     { key: "log", done: Boolean(entry), title: `Log ${mLong(base)}`,
       sub: entry ? `Salary ${fmtSek(entry.income_sek)}, bank ${fmtSek(entry.bank_sek)}` : "The salary that just came in, and your bank and investments today",
@@ -329,10 +361,10 @@ function paydaySteps(ctx, live, saved, changes) {
       sub: P ? `${profileName(P.profile)}: ≈ ${money(P.living / (live.days / 7))} a week to live on`
         : saved ? "Below: the three plans, worked out from the budget you saved" : "Once the budget is saved",
       go: P ? () => scrollToCard("plan-details") : saved ? () => scrollToCard("plan-tiles") : null },
-    { key: "move", done: Boolean(P) && (!moves.count || moves.all_done), title: "Move Save and Invest",
+    { key: "move", done: Boolean(P) && (!moves.count || moves.all_done), title: rv ? "Move the money" : "Move Save and Invest",
       sub: !P ? "Once the plan is started" : !moves.count ? "Nothing to move this pay period"
         : moves.all_done ? "Moved: what's left is yours to spend"
-          : `${joinAnd([toSave > 0 ? `Save ${fmtSek(toSave)}` : "", P.invest > 0 ? `${toSave > 0 ? "invest" : "Invest"} ${fmtSek(P.invest)}` : ""])}, then tick ${moves.count > 1 ? "them" : "it"} off`,
+          : `${joinAnd([rv ? `Revolut ${fmtSek(rv.total)}` : "", toSave > 0 ? `save ${fmtSek(toSave)}` : "", P.invest > 0 ? `invest ${fmtSek(P.invest)}` : ""]).replace(/^./, (c) => c.toUpperCase())}, then tick ${moves.count > 1 ? "them" : "it"} off`,
       go: P && moves.count ? () => scrollToCard("plan-moves") : null },
   ];
 }
@@ -466,7 +498,8 @@ function previewCard(bs, live, ctx, running = null) {
   return card(head(`The ${profileName(f.profile)} plan`, `For ${fmtRange(bs.start, addDays(bs.end, -1))}: move Save and Invest on payday, before you start spending.`),
     warn ? h("div", { class: "warn-note" }, warn) : null,
     note ? h("div", { class: "hint amt-soft plan-note" }, note) : null,
-    block("SPEND", LIVING_C, fmtSek(f.living), `≈ ${money(f.living / weeks)} per week`, "Stays in your everyday account: beers, eating out, small buys."),
+    block("SPEND", LIVING_C, fmtSek(f.living), `≈ ${money(f.living / weeks)} per week`, live.active.some((x) => x.pocket)
+      ? "Goes to your Revolut week pockets: beers, eating out, small buys." : "Stays in your everyday account: beers, eating out, small buys."),
     h("div", { class: "hairline" }),
     block("SAVE", BUFFER_C, fmtSek(save), CUR.single ? "" : `≈ ${fmtEur(save * fx)}`, saveText),
     h("div", { class: "hairline" }),

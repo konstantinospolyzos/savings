@@ -53,6 +53,7 @@ export function openExpenseSheet(ctx, snap, original = null) {
   const curSeg = CUR.single ? null : segmented([CUR.local, CUR.second], currency, (i) => { currency = i; validate(); }, "small");
   const perSeg = segmented(["Per month", "Per year"], per, (i) => { per = i; validate(); }, "small");
   const active = toggle(original ? original.active : true, () => {}, "Include in budget");
+  const pocket = toggle(Boolean(original?.pocket), () => {}, "Revolut pocket");
   const stepper = monthStepper(() => endMonth, (m) => { endMonth = m; });
   const hasEnd = toggle(Boolean(original?.end_month), (on) => { stepper.style.visibility = on ? "" : "hidden"; }, "Last month");
   stepper.style.visibility = hasEnd.input.checked ? "" : "hidden";
@@ -93,6 +94,7 @@ export function openExpenseSheet(ctx, snap, original = null) {
       id: original ? original.id : null, name: name.value.trim(), amount: v, per: per === 1 ? "year" : "month",
       category, active: active.input.checked, end_month: hasEnd.input.checked ? endMonth : null,
       position: original ? original.position : nextPosition(snap.expenses.filter((x) => !x.car)), currency: currency === 1 ? "EUR" : "SEK",
+      ...(pocket.input.checked ? { pocket: true } : {}),
     };
     store.saveExpense(x);
     sh.close();
@@ -114,6 +116,9 @@ export function openExpenseSheet(ctx, snap, original = null) {
     caption("BUDGET"),
     group(switchRow("Include in budget", active), switchRow("Last month", hasEnd, stepper)),
     footer("For instalments: turn on “Last month” and pick the final payment. After that month the cost drops out of the budget by itself."),
+    caption("PAID FROM"),
+    group(switchRow("Revolut pocket", pocket)),
+    footer("For what you pay from a Revolut pocket (groceries, fuel…): My plan adds it to the money to move to Revolut on payday, with your week pockets."),
     original ? h("button", { type: "button", class: "btn destructive-row", onclick: remove }, "Delete Fixed Cost") : null);
   api = sheet({ title: original ? "Edit Fixed Cost" : "New Fixed Cost", left: { text: "Cancel" },
     right: { text: "Save", bold: true, onClick: save }, body });

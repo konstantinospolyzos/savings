@@ -498,6 +498,10 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
 .save-box { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 16px; }
 .save-box .warn-note { margin-bottom: 0; }
 .save-box.saved { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.pockets { margin-top: 10px; padding-top: 12px; border-top: 0.5px solid var(--sep); }
+.pockets .kv-list { margin-top: 8px; }
+.pockets-total { padding-top: 7px; border-top: 0.5px solid var(--sep); font-weight: 700; }
+.pockets-total .kv-label { color: var(--label); }
 .move-row .row-title.moved { text-decoration: line-through; color: var(--gray); }
 
 .alloc { display: flex; flex-direction: column; gap: 3px; }

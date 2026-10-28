@@ -309,6 +309,7 @@ function expenseRow(x, snap, ctx) {
     if (snap.base > x.end_month) subs.push(`ended ${mShort(x.end_month)}`);
     else { const n = mIndex(x.end_month) - mIndex(snap.base) + 1; subs.push(`until ${mShort(x.end_month)} · ${n} payment${n !== 1 ? "s" : ""} left`); }
   }
+  if (x.pocket) subs.push("Revolut pocket");
   if (!x.active) subs.push("paused");
   const amount = x.amount === 0 ? h("span", { class: "row-amount missing" }, "Set amount")
     : h("span", { class: `row-amount amt ${live ? "" : "off"}` }, fmtSek(expenseMonthlySek(x, snap.fx)));

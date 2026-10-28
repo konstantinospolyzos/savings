@@ -68,6 +68,7 @@ export function normalize(raw) {
     id: takeId(x.id), name: String(x.name), amount: num(x.amount), per: x.per === "year" ? "year" : "month",
     category: String(x.category || "Other"), active: x.active !== false && x.active !== 0, end_month: optMonth(x.end_month),
     position: Number.isInteger(x.position) ? x.position : i, currency: x.currency === "EUR" ? "EUR" : "SEK",
+    ...(x.pocket ? { pocket: true } : {}),         // paid from a Revolut pocket, filled on payday
   })).sort(byPosition);
   ids.clear(); nextId = 1;
   const goals = (Array.isArray(raw.goals) ? raw.goals : []).filter((g) => g && g.name).map((g, i) => ({
