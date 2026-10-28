@@ -16,7 +16,10 @@ import { openMonthSheet } from "./month.js";
 import { showCurrentPeriod } from "./budget.js";
 import { makeFoldable } from "./fold.js";
 
-const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, GOALS_C = COLORS.teal, BUFFER_C = COLORS.blue, INVEST_C = COLORS.orange;
+const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, GOALS_C = COLORS.teal, BUFFER_C = COLORS.blue, INVEST_C = COLORS.orange,
+  SAVINGS_C = COLORS.indigo;
+const kept = (P) => P.to_savings || 0;                  // what goes to savings after the buffer is full
+const saveOf = (P) => P.goals + P.to_buffer + kept(P);    // all that goes to your savings account
 const card = (...children) => h("div", { class: "card" }, children);
 const head = (title, sub = null, right = null) => h("div", { class: "card-head" },
   h("div", { class: "card-head-text" }, h("div", { class: "card-title" }, title),
@@ -56,7 +59,7 @@ export function planFields(bs, key) {
   const rate = bs.profiles[key], floor = bs.floors[key];
   const p = planForRate(bs, rate, floor);
   return { profile: key, rate, floor_week: floor, salary: bs.salary, fixed: bs.fixed, goals: bs.goals, living: p.spend,
-    to_buffer: p.to_buffer, invest: p.invest, future: p.future, save_rate: p.rate, days: bs.days,
+    to_buffer: p.to_buffer, to_savings: p.to_savings, invest: p.invest, future: p.future, save_rate: p.rate, days: bs.days,
     capped: p.capped, short: p.short, by_floor: p.by_floor };
 }
 
@@ -85,9 +88,11 @@ export function planChanges(P, bs) {
   if (!bs) return { changed: false, why: [], fields: null };
   const f = planFields(bs, P.profile);
   const changed = Math.abs(f.living - P.living) > 50 || Math.abs(f.future - P.future) > 50 || Math.abs(f.goals - P.goals) > 50
+    || Math.abs(kept(f) - kept(P)) > 50
     || Math.abs(f.salary - P.salary) > 0.5 || Math.abs(f.fixed - P.fixed) > 0.5;
   const why = [Math.abs(f.salary - P.salary) > 0.5 ? "the salary" : null, Math.abs(f.fixed - P.fixed) > 0.5 ? "the fixed costs" : null,
-    Math.abs(f.goals - P.goals) > 0.5 ? "the goals" : null, Math.abs(f.to_buffer - P.to_buffer) > 50 ? "the buffer" : null].filter(Boolean);
+    Math.abs(f.goals - P.goals) > 0.5 ? "the goals" : null, Math.abs(f.to_buffer - P.to_buffer) > 50 ? "the buffer" : null,
+    Math.abs(kept(f) - kept(P)) > 50 ? "what's kept in savings" : null].filter(Boolean);
   return { changed, why, fields: f };
 }
 
@@ -113,11 +118,13 @@ export function revolutPockets(snap) {
 /** The money to move on payday, each ticked off when it's done. */
 export function paydayMoves(snap) {
   const P = snap.plan, done = P.done || {};
-  const save = P.goals + P.to_buffer;
+  const save = saveOf(P);
+  const into = [P.goals > 0 ? `goals ${fmtSek(P.goals)}` : null, P.to_buffer > 0 ? `buffer ${fmtSek(P.to_buffer)}` : null,
+    kept(P) > 0 ? `savings ${fmtSek(kept(P))}` : null].filter(Boolean);
   const rv = revolutPockets(snap);
   const moves = [
     rv ? ["revolut", `To Revolut ${fmtSek(rv.total)}`, `Weeks ${fmtSek(rv.weeks_total)} + ${rv.costs.length === 1 ? rv.costs[0][0] : "other pockets"} ${fmtSek(rv.costs_total)}`, LIVING_C] : null,
-    save > 0 ? ["save", `Save ${fmtSek(save)}`, `To your savings account${P.goals > 0 && P.to_buffer > 0 ? `: goals ${fmtSek(P.goals)} + buffer ${fmtSek(P.to_buffer)}` : P.goals > 0 ? ": your saving goals" : ": your buffer"}`, BUFFER_C] : null,
+    save > 0 ? ["save", `Save ${fmtSek(save)}`, `To your savings account${into.length > 1 ? `: ${into.join(" + ")}` : P.goals > 0 ? ": your saving goals" : P.to_buffer > 0 ? ": your buffer" : ""}`, BUFFER_C] : null,
     P.invest > 0 ? ["invest", `Invest ${fmtSek(P.invest)}`, `To ${brokersText("your investment account")}`, INVEST_C] : null,
   ].filter(Boolean);
   const rows = moves.map(([key, title, subText, color]) => {
@@ -226,13 +233,13 @@ function movesCard(snap) {
 function splitCard(snap) {
   const P = snap.plan;
   const parts = [["Fixed costs", P.fixed, FIXED_C], ["Saving goals", P.goals, GOALS_C], ["Buffer", P.to_buffer, BUFFER_C],
-    ["Investing", P.invest, INVEST_C], ["Living money", P.living, LIVING_C]].filter(([, v]) => v > 0.5);
+    ["Savings", kept(P), SAVINGS_C], ["Investing", P.invest, INVEST_C], ["Living money", P.living, LIVING_C]].filter(([, v]) => v > 0.5);
   const aimed = P.rate !== undefined && P.save_rate < P.rate / 100 - 0.005;
   return card(head("Where the salary goes", `${fmtSek(P.salary)} this pay period`),
     splitBar(parts.map(([, v, c]) => [v, c]), 12),
     h("div", { class: "legend-list" }, parts.map(([name, v, c]) => h("div", { class: "legend-row" }, dot(c, 9), h("span", { class: "legend-name" }, name),
       h("span", { class: "legend-amount amt" }, fmtSek(v)), h("span", { class: "legend-pct" }, P.salary > 0 ? `${Math.round(v / P.salary * 100)}%` : "")))),
-    h("div", { class: "hint amt-soft" }, `Your future gets ${pct(P.save_rate || 0)} of your salary (buffer + investing).`
+    h("div", { class: "hint amt-soft" }, `Your future gets ${pct(P.save_rate || 0)} of your salary (buffer${kept(P) > 0 ? " + savings" : ""} + investing).`
       + (aimed ? ` You aimed for ${P.rate}%, but that would have left less than ${fmtSek(P.floor_week)} a week to live on.` : "")));
 }
 
@@ -247,7 +254,7 @@ function buildsCard(snap) {
     const after = snap.bank + P.to_buffer;
     const short = Math.max(snap.target - after, 0);
     const months = P.to_buffer > 0 && short > 0 ? Math.ceil(short / P.to_buffer) : null;
-    const text = snap.bank >= snap.target ? "Full: all of this plan's future money can go to investing."
+    const text = snap.bank >= snap.target ? (kept(P) > 0 ? `Full. ${fmtSek(kept(P))} still goes to your savings account this period, the rest to investing.` : "Full: all of this plan's future money can go to investing.")
       : P.to_buffer > 0 ? `This period adds ${fmtSek(P.to_buffer)}: ${pct(Math.min(after / snap.target, 1))} full after it${months ? `, and full in about ${plural(months, "more pay period")} at this pace` : ""}.`
         : "This plan doesn't add to it: its future money goes to investing.";
     parts.push(section("EMERGENCY BUFFER", BUFFER_C, `${fmtSek(snap.bank)} of ${fmtSek(snap.target)}`,
@@ -266,7 +273,7 @@ function buildsCard(snap) {
     const names = snap.goal_rows.map(([g, m]) => `${g.name} ${fmtSek(m)}`).join(", ");
     parts.push(section("SAVING GOALS", GOALS_C, `${fmtSek(P.goals)} this period`, names ? h("div", { class: "hint amt-soft" }, names) : null));
   }
-  const year = (P.goals + P.to_buffer + P.invest) * 12;
+  const year = (saveOf(P) + P.invest) * 12;
   if (!parts.length) return null;
   return card(head("What this plan builds", year > 0 ? `Keep it up for a year and you put aside about ${fmtSek(roundTo10(year, 2))}.` : null), parts);
 }
@@ -293,7 +300,7 @@ function detailsCard(snap, ctx, bs) {
   const aimed = P.rate !== undefined && P.save_rate < P.rate / 100 - 0.005;
   const update = () => { startPlan(ctx, snap.base, fields, P); toast(`✓  Plan updated: ${profileName(P.profile)}`); };
   return withClass(card(head("The plan", `Started ${shortDate(asDay(P.started))}${P.updated ? `, updated ${shortDate(asDay(P.updated))}` : ""}`),
-    changed ? h("div", { class: "warn-note" }, `You saved a new budget since you started${why.length ? ` (${why.join(", ")})` : ""}: the plan would now be ${money(fields.living / (snap.days / 7))} a week to spend, ${fmtSek(fields.goals + fields.to_buffer)} to save and ${fmtSek(fields.invest)} to invest.`,
+    changed ? h("div", { class: "warn-note" }, `You saved a new budget since you started${why.length ? ` (${why.join(", ")})` : ""}: the plan would now be ${money(fields.living / (snap.days / 7))} a week to spend, ${fmtSek(saveOf(fields))} to save and ${fmtSek(fields.invest)} to invest.`,
       h("div", { class: "note-actions" }, h("button", { type: "button", class: "btn tinted small", onclick: update }, "Update the plan"))) : null,
     h("div", { class: "kv-list" },
       kv("Profile", profileName(P.profile), { amt: false }),
@@ -314,11 +321,11 @@ function pastCard(ctx, base) {
   const rows = Object.keys(plans).filter((k) => k < base).sort().reverse().slice(0, 12).map((k) => {
     const P = plans[k];
     const start = paydayFor(k), end = paydayFor(addMonths(k, 1));
-    const moves = [P.goals + P.to_buffer > 0 ? "save" : null, P.invest > 0 ? "invest" : null].filter(Boolean);
+    const moves = [saveOf(P) > 0 ? "save" : null, P.invest > 0 ? "invest" : null].filter(Boolean);
     const moved = moves.length && moves.every((m) => P.done?.[m]);
     return h("div", { class: "past-plan" },
       h("div", { class: "row-main" }, h("div", { class: "row-title" }, `${profileName(P.profile)}, ${fmtRange(start, addDays(end, -1))}`),
-        h("div", { class: "row-sub amt-soft" }, `Saved ${pct(P.save_rate || 0)}: ${fmtSek(P.goals + P.to_buffer + P.invest)} put aside, ${fmtSek(P.living)} to live on`)),
+        h("div", { class: "row-sub amt-soft" }, `Saved ${pct(P.save_rate || 0)}: ${fmtSek(saveOf(P) + P.invest)} put aside, ${fmtSek(P.living)} to live on`)),
       moves.length ? chip(moved ? "✓ Moved" : "Not ticked", moved ? "up" : "flat", "small") : null);
   });
   if (!rows.length) return null;
@@ -346,7 +353,7 @@ function paydaySteps(ctx, live, saved, changes) {
   const base = live.base, P = live.plan;
   const entry = ctx.entries.find((e) => e.month === base) || null;
   const moves = P ? paydayMoves(live) : null;
-  const toSave = P ? P.goals + P.to_buffer : 0;
+  const toSave = P ? saveOf(P) : 0;
   const rv = moves?.revolut || null;
   return [
     { key: "log", done: Boolean(entry), title: `Log ${mLong(base)}`,
@@ -482,12 +489,13 @@ function previewCard(bs, live, ctx, running = null) {
   if (bs.free < 0) warn = "Fixed costs and goals are higher than your salary, so nothing is left for your future or living.";
   else if (f.short) warn = `Even ${fmtSek(f.floor_week)} a week to live on doesn't fit: after fixed costs and goals, ${fmtSek(Math.max(bs.free, 0))} is left for ${bs.days} days. Pause a goal or trim a fixed cost on the Budget tab.`;
   else if (f.capped) note = `${f.rate}% of your salary would leave less than ${fmtSek(f.floor_week)} a week to live on, so this plan saves ${pct(f.save_rate)}: the most that still leaves you that.`;
-  const save = f.goals + f.to_buffer;
+  const save = saveOf(f);
   const parts = [];
   if (bs.goal_rows.length) parts.push(`goals ${plainNumber(f.goals)} (${bs.goal_rows.map(([n, m]) => `${n} ${plainNumber(m)}`).join(", ")})`);
   if (f.to_buffer > 0) parts.push(`buffer ${plainNumber(f.to_buffer)}`);
-  let saveText = parts.length ? `To your savings account: ${parts.join(" + ")}.` : "Nothing this period.";
-  if (bs.target > 0 && bs.shortfall <= 0) saveText += " Your buffer is full.";
+  if (kept(f) > 0) parts.push(`savings ${plainNumber(kept(f))}`);
+  let saveText = parts.length > 1 || (parts.length && !kept(f)) ? `To your savings account: ${parts.join(" + ")}.` : parts.length ? "To your savings account." : "Nothing this period.";
+  if (bs.target > 0 && bs.shortfall <= 0) saveText += kept(f) > 0 ? ` Your buffer is full, so ${pct(bs.keep_share || 0)} of your future money stays in savings, the rest is invested.` : " Your buffer is full.";
   else if (bs.target > 0 && f.to_buffer <= 0) saveText += " The buffer isn't topped up (switched off on the Budget tab).";
   const block = (title, color, value, subText, hint) => h("div", { class: "alloc" },
     h("div", { class: "cap-row" }, dot(color, 8), h("span", { class: "caption" }, title)),

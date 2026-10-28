@@ -320,3 +320,21 @@ test("your car in the Budget: its fixed costs and fuel, entered once in the car 
   assert.equal(snap.expenses.length, 3);
   assert.equal(snap.target, 3 * (27756 + 2730));     // and in the buffer target
 });
+
+test("once the buffer is full, a share of the future money still goes to savings", () => {
+  const fixed = [{ amount: 20000, per: "month", active: true, currency: "SEK" }];
+  // 40 000 salary, 20% to the future = 8 000; the bank holds 100 000 > 3 × 20 000, so the buffer is full
+  const none = c.computeBudget(40000, fixed, [], "2026-10", 20, 100000, true, 0.09, 3, 0, 30);
+  assert.deepEqual([none.to_buffer, none.to_savings, none.invest], [0, 0, 8000]);
+  const kept = c.computeBudget(40000, fixed, [], "2026-10", 20, 100000, true, 0.09, 3, 0, 30, 0.25);
+  assert.deepEqual([kept.to_buffer, kept.to_savings, kept.invest, kept.savings], [0, 2000, 6000, 2000]);
+  // not full: the buffer first (50 000 short), then a quarter of what's left (nothing is left here)
+  const short = c.computeBudget(40000, fixed, [], "2026-10", 20, 10000, true, 0.09, 3, 0, 30, 0.25);
+  assert.deepEqual([short.to_buffer, short.to_savings, short.invest], [8000, 0, 0]);
+  // a plan from a saved budget does the same, and a share you change counts as a change to the budget
+  const p = c.planForRate({ ...kept, days: 30 }, 20);
+  assert.deepEqual([p.save, p.to_savings, p.invest], [2000, 2000, 6000]);
+  const saved = c.budgetToSave({ ...kept, goal_rows: [], days: 30, buffer_first: true }, c.day(2026, 10, 28));
+  assert.equal(saved.keep_share, 0.25);
+  assert.deepEqual(c.budgetChanges(saved, { ...kept, keep_share: 0.5, buffer_first: true }), ["the share kept in savings"]);
+});

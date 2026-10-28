@@ -128,6 +128,14 @@ export function fromSek(sek) {
   return Math.max(step, Math.round(v / step) * step);
 }
 export const BUFFER_MONTH_CHOICES = [2, 3, 4, 6];
+/** The share of your future money that keeps going to your savings account once the buffer is full. */
+export const KEEP_SAVING_CHOICES = [0, 0.1, 0.25, 0.5];
+export function loadKeepSaving(data) {
+  const v = getSetting(data, "keep_saving", 0.25);
+  return KEEP_SAVING_CHOICES.includes(v) ? v : 0.25;
+}
+/** Of the future money left after the buffer: what still goes to savings, and the rest to investing. */
+const keepSplit = (rest, share) => { const save = share > 0 ? Math.min(rest, roundTo10(rest * share)) : 0; return [save, rest - save]; };
 export const GOAL_CATEGORIES = [
   ["Travel", COLORS.cyan], ["Gifts & events", COLORS.pink], ["Bigger buys", COLORS.purple],
   ["Car & home", COLORS.orange], ["Health", COLORS.red], ["Other", COLORS.gray],
@@ -554,7 +562,7 @@ export function planSplit(free, salary, ratePct, floorTotal = 0) {
     by_floor: capped && floorTotal > 0 && free >= wanted - 0.5 };       // the % fits, but would leave too little
 }
 
-export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, bufferFirst, fx, bufferMonths = 3, floorWeek = 0, days = 0) {
+export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, bufferFirst, fx, bufferMonths = 3, floorWeek = 0, days = 0, keepShare = 0) {
   const fixed = sum(expenses.filter((e) => expenseApplies(e, base)).map((e) => expenseMonthlySek(e, fx)));
   const goalRows = goals.filter((g) => goalApplies(g, base)).map((g) => [g, goalPerMonth(g)]);
   const goalsTotal = sum(goalRows.map(([, m]) => m));
@@ -567,24 +575,25 @@ export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, b
   let shortfall = Math.max(target - bankSek, 0);
   if (shortfall < 500) shortfall = 0;           // a few hundred kronor short counts as full
   const toBuffer = bufferFirst ? Math.min(future, shortfall) : 0;
-  const invest = future - toBuffer;
+  const [toSavings, invest] = keepSplit(future - toBuffer, keepShare);
   return {
     salary, fixed, left, goals: goalsTotal, goal_rows: goalRows, free, wanted, future,
     capped: split.capped, short: split.short, by_floor: split.by_floor, floor_week: floorWeek, floor_total: floorTotal,
-    living, to_buffer: toBuffer, invest, savings: goalsTotal + toBuffer,
+    living, to_buffer: toBuffer, to_savings: toSavings, invest, savings: goalsTotal + toBuffer + toSavings, keep_share: keepShare,
     save_rate: salary > 0 ? future / salary : 0, rate_pct: ratePct,
     max_rate: salary > 0 ? Math.max(free, 0) / salary : 0,
     target, shortfall, bank: bankSek, buffer_months: bufferMonths,
   };
 }
 
-/** What a profile would do this pay period: spend, save (goals + buffer), invest, and why it saves less. */
+/** What a profile would do this pay period: spend, save (goals + buffer + savings), invest, and why it saves less. */
 export function planForRate(snap, ratePct, floorWeek = 0) {
   const salary = snap.salary;
   const floorTotal = floorWeek > 0 ? floorWeek * snap.days / 7 : 0;
   const s = planSplit(snap.free, salary, ratePct, floorTotal);
   const toBuffer = snap.buffer_first ? Math.min(s.future, snap.shortfall) : 0;
-  return { spend: s.living, save: snap.goals + toBuffer, invest: s.future - toBuffer, to_buffer: toBuffer, future: s.future,
+  const [toSavings, invest] = keepSplit(s.future - toBuffer, snap.keep_share || 0);
+  return { spend: s.living, save: snap.goals + toBuffer + toSavings, invest, to_buffer: toBuffer, to_savings: toSavings, future: s.future,
     rate: salary > 0 ? s.future / salary : 0, capped: salary > 0 && s.capped, short: salary > 0 && s.short, by_floor: s.by_floor,
     floor_week: floorWeek, floor_total: floorTotal };
 }
@@ -668,7 +677,7 @@ export function budgetToSave(snap, today) {
   return {
     salary: snap.salary, fixed: snap.fixed, goals: snap.goals, goal_rows: snap.goal_rows.map(([g, m]) => [g.name, m]),
     left: snap.left, free: snap.free, bank: snap.bank, target: snap.target, shortfall: snap.shortfall,
-    buffer_first: snap.buffer_first, buffer_months: snap.buffer_months, days: snap.days, saved: isoDay(today),
+    buffer_first: snap.buffer_first, buffer_months: snap.buffer_months, keep_share: snap.keep_share || 0, days: snap.days, saved: isoDay(today),
   };
 }
 
@@ -679,6 +688,7 @@ export function budgetChanges(saved, snap) {
   if (Math.abs(saved.fixed - snap.fixed) > 0.5) out.push("the fixed costs");
   if (Math.abs(saved.goals - snap.goals) > 0.5) out.push("the saving goals");
   if (Math.abs((saved.shortfall || 0) - snap.shortfall) > 0.5 || Boolean(saved.buffer_first) !== Boolean(snap.buffer_first)) out.push("the buffer");
+  if ((saved.keep_share || 0) !== (snap.keep_share || 0)) out.push("the share kept in savings");
   return out;
 }
 
@@ -773,7 +783,7 @@ export function budgetSnapshot(data, today = todayDate(), offset = 0, salaryOver
   let months = getSetting(data, "buffer_months", 3);
   if (!BUFFER_MONTH_CHOICES.includes(months)) months = 3;
   const b = computeBudget(salary, expenses, goals, base, profiles[key], latest ? latest.bank_sek : 0,
-    bufferFirst, fx, months, floors[key], daysBetween(start, end));
+    bufferFirst, fx, months, floors[key], daysBetween(start, end), loadKeepSaving(data));
   const plan = loadPlans(data)[base] || null;
   const active = expenses.filter((e) => expenseApplies(e, base));
   const missing = active.filter((e) => e.amount === 0);

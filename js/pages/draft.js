@@ -37,7 +37,7 @@ function totals(d, snap) {
   const left = d.salary - fixed, free = left - goals;
   let shortfall = Math.max(snap.buffer_months * fixed - snap.bank, 0);
   if (shortfall < 500) shortfall = 0;
-  const like = { salary: d.salary, free, goals, days: snap.days, buffer_first: snap.buffer_first, shortfall };
+  const like = { salary: d.salary, free, goals, days: snap.days, buffer_first: snap.buffer_first, shortfall, keep_share: snap.keep_share };
   const plans = PROFILE_DEFS.map(([key, name]) => ({ key, name, ...planForRate(like, snap.profiles[key], snap.floors[key]) }));
   return { fixed, goals, left, free, plans };
 }

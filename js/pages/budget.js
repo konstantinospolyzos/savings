@@ -1,7 +1,7 @@
 // Budget: fixed costs and goals first, then your future, and the rest is yours to live on.
 import { h, chip, dot, segmented, toggle, icon, splitBar, toast, alertBox, sheet, group, caption, footer } from "../ui.js";
 import {
-  COLORS, PROFILE_DEFS, CATEGORIES, CATEGORY_COLORS, GOAL_COLORS, BUFFER_MONTH_CHOICES,
+  COLORS, PROFILE_DEFS, CATEGORIES, CATEGORY_COLORS, GOAL_COLORS, BUFFER_MONTH_CHOICES, KEEP_SAVING_CHOICES,
   budgetSnapshot, planForRate, paydayStatus, paydayReason, paydayFor, addMonths, monthOf, daysBetween, addDays,
   fmtRange, shortDate, longDate, mLong, mShort, mIndex, fmtSek, fmtEur, plainNumber, parseNumber, pct, roundTo10,
   weekChunks, summarize, monthFlows, travelFund, expenseApplies, expenseMonthlySek, goalApplies, goalPerMonth,
@@ -220,6 +220,7 @@ function bufferCard(snap) {
     if (short > 0 && snap.buffer_first) {
       tip = `${fmtSek(short)} to go. ${P ? `Your ${profileName(P.profile)} plan puts ${fmtSek(P.to_buffer)} here this period${P.invest > 0 ? ", the rest to investing." : "."}` : "Your saving plan puts its future money here first, until it's full."} ${inSweden() ? "Finansinspektionen suggests" : "A common rule of thumb is"} 2–3 months of necessary costs before long-term investing.`;
     } else if (short > 0) tip = `${fmtSek(short)} to go, but with the switch off your future money goes straight to investing.`;
+    else if (snap.keep_share > 0) tip = `Your buffer is full: ${pct(snap.keep_share)} of your future money still goes to your savings account, the rest to investing.`;
     else if (bank < 2 * target) tip = "Your buffer is full, so all your future money goes to investing. Refill it after you use it.";
     else tip = "You hold more than twice the target in the bank (goal money included). What you won't need for 5+ years could work harder invested.";
   }
@@ -231,6 +232,10 @@ function bufferCard(snap) {
       h("span", null, "months of fixed costs")),
     h("label", { class: "switch-line" }, h("span", null, "Fill the buffer before investing"),
       toggle(snap.buffer_first, (on) => setTimeout(() => store.setSetting("buffer_first", on), 220), "Fill the buffer before investing")),
+    h("div", { class: "buffer-target keep-saving" }, h("span", null, "When it's full, keep saving"),
+      segmented(KEEP_SAVING_CHOICES.map((v) => `${Math.round(v * 100)}%`), Math.max(KEEP_SAVING_CHOICES.indexOf(snap.keep_share), 0),
+        (i) => store.setSetting("keep_saving", KEEP_SAVING_CHOICES[i]), "small"),
+      h("span", null, "of your future money")),
     tip ? h("div", { class: "hint amt-soft" }, tip) : null);
 }
 
