@@ -1,5 +1,5 @@
 // Insights: what your logs and your budget say, looking back (your action plan is on My plan).
-import { h, chip, dot, segmented, splitBar, kv, appIcon, toast, icon } from "../ui.js";
+import { h, chip, dot, segmented, splitBar, kv, appIcon, toast } from "../ui.js";
 import { chart } from "../charts.js";
 import {
   COLORS, MONTHS, NOTE_TAGS, CUR, CURRENCIES, inSweden, localSym, secondSym, brokersText, hasMoney, CAPITAL_GAINS_TAX, ISK_TAX_FREE, CATEGORY_COLORS,
@@ -9,6 +9,7 @@ import {
 } from "../core.js";
 import { store } from "../store.js";
 import { statCard } from "./overview.js";
+import { makeFoldable } from "./fold.js";
 
 const LIVING_C = COLORS.purple;
 const card = (...children) => h("div", { class: "card" }, children);
@@ -19,27 +20,7 @@ const signedPct = (x, d = 0) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFi
 const syncNow = () => { if (store.mode === "drive" && !store.drive.tokenValid()) store.syncFromTap(); };
 
 /** Tap a card's title to fold it down to just the title. Remembered per card on this device. */
-const FOLDED_BY_DEFAULT = new Set(["notes", "costs", "growth", "months"]);
-function foldable(key, el) {
-  if (!el) return el;
-  const top = el.firstElementChild;
-  const saved = store.pref("insights_folded", {}) || {};
-  let folded = key in saved ? Boolean(saved[key]) : FOLDED_BY_DEFAULT.has(key);
-  const set = () => { el.classList.toggle("folded", folded); top.setAttribute("aria-expanded", String(!folded)); };
-  const flip = () => {
-    folded = !folded;
-    set();
-    store.setPref("insights_folded", { ...(store.pref("insights_folded", {}) || {}), [key]: folded });
-  };
-  el.classList.add("foldable");
-  top.append(icon("chevron", 16, "fold-chev"));
-  top.setAttribute("role", "button");
-  top.setAttribute("tabindex", "0");
-  top.addEventListener("click", (ev) => { if (!ev.target.closest("button, input, a")) flip(); });
-  top.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); flip(); } });
-  set();
-  return el;
-}
+const foldable = makeFoldable("insights_folded", new Set(["notes", "costs", "growth", "months"]));
 
 // ---------------------------------------------------------------------------
 function kpis(snap, summ, inv) {

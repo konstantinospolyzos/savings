@@ -14,6 +14,7 @@ import { store } from "../store.js";
 import { openProfilesSheet } from "./budget-sheets.js";
 import { openMonthSheet } from "./month.js";
 import { showCurrentPeriod } from "./budget.js";
+import { makeFoldable } from "./fold.js";
 
 const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, GOALS_C = COLORS.teal, BUFFER_C = COLORS.blue, INVEST_C = COLORS.orange;
 const card = (...children) => h("div", { class: "card" }, children);
@@ -23,8 +24,14 @@ const head = (title, sub = null, right = null) => h("div", { class: "card-head" 
 const asDay = (iso) => new Date(`${iso}T12:00:00`);
 const when = (iso, today) => (iso === isoDay(today) ? "today" : `on ${shortDate(asDay(iso))}`);
 const money = (v) => fmtSek(roundTo10(v));
-/** A card of this page by its class, scrolled to just under the top bar. */
-const scrollToCard = (cls) => document.querySelector(`[data-page="plan"] .${cls}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+/** A card of this page by its class, opened if it's folded and scrolled to just under the top bar. */
+function scrollToCard(cls) {
+  const el = document.querySelector(`[data-page="plan"] .${cls}`);
+  el?.unfold?.();
+  el?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+/** The cards further down fold to their title (tap it); these start folded. */
+const foldable = makeFoldable("plan_folded", new Set(["weeks", "details", "past"]));
 const withClass = (el, cls) => { el?.classList.add(cls); return el; };
 
 // ---------------------------------------------------------------------------
@@ -502,8 +509,8 @@ export function renderPlan(ctx) {
   if (!live.plan) {
     if (!bs) return [`${fmtRange(live.start, addDays(live.end, -1))}  ·  save your budget first`,
       checklist || saveFirstCard(live, ctx, Boolean(loadBudgets(ctx.data)[nextBase])),
-      actionsCard(ctx, live),
-      pastCard(ctx, base)];
+      foldable("actions", actionsCard(ctx, live)),
+      foldable("past", pastCard(ctx, base))];
     const prev = loadPlans(ctx.data)[addMonths(base, -1)] || null;
     return [`${fmtRange(live.start, addDays(live.end, -1))}  ·  pick a saving plan`,
       checklist,
@@ -511,8 +518,8 @@ export function renderPlan(ctx) {
       tilesCard(bs, ctx),
       prev ? h("div", { class: "card plan-next amt-soft" }, `Last pay period you followed ${profileName(prev.profile)} and saved ${pct(prev.save_rate || 0)}.`) : null,
       previewCard(bs, live, ctx),
-      actionsCard(ctx, live),
-      pastCard(ctx, base),
+      foldable("actions", actionsCard(ctx, live)),
+      foldable("past", pastCard(ctx, base)),
       foot];
   }
   const snap = live;
@@ -529,10 +536,10 @@ export function renderPlan(ctx) {
     checkCard(snap, pr),
     movesCard(snap),
     next ? h("div", { class: "card plan-next amt-soft" }, `Next pay period: your ${profileName(next.profile)} plan is ready and starts on payday, ${shortDate(snap.end)}.`) : null,
-    splitCard(snap),
-    buildsCard(snap),
-    actionsCard(ctx, snap),
-    weeksCard(snap, pr),
-    detailsCard(snap, ctx, bs),
-    pastCard(ctx, base)];
+    foldable("split", splitCard(snap)),
+    foldable("builds", buildsCard(snap)),
+    foldable("actions", actionsCard(ctx, snap)),
+    foldable("weeks", weeksCard(snap, pr)),
+    foldable("details", detailsCard(snap, ctx, bs), planChanges(snap.plan, bs).changed),     // open when it offers an update
+    foldable("past", pastCard(ctx, base))];
 }
