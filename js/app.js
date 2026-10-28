@@ -12,6 +12,7 @@ import { openSettings } from "./pages/settings.js";
 import { renderCar, renderCarLog, renderCarInsights, renderGarage, openNewCarLog, openCarSheet, carHeading, addFixedCostLogs } from "./pages/car.js";
 import { uploadPending } from "./photos.js";
 import { renderPlan } from "./pages/plan.js";
+import { renderDraft } from "./pages/draft.js";
 
 const TABS = [
   { key: "overview", title: "Overview", icon: "overview", render: renderOverview },
@@ -19,6 +20,8 @@ const TABS = [
   { key: "budget", title: "Budget", icon: "budget", render: renderBudget },
   { key: "history", title: "History", icon: "history", render: renderHistory },
   { key: "insights", title: "Insights", icon: "insights", render: renderInsights },
+  // a copy of the budget to try changes on, from a button on the Budget page (not in the tab bar)
+  { key: "draft", title: "Draft budget", icon: "budget", render: renderDraft, hidden: true, parent: "budget" },
 ];
 // The car monitor: its own section, opened with the car button; the € button goes back to the
 // savings tab you were on.
@@ -147,9 +150,10 @@ function updateChrome() {
 }
 
 function buildTabbar() {
-  tabbar.replaceChildren(...(inCar() ? CAR_TABS : TABS).map((t) => {
-    const b = h("button", { type: "button", class: `tab ${t.key === current ? "on" : ""}`, "aria-label": t.title,
-      "aria-current": t.key === current ? "page" : null }, icon(t.icon, 26), h("span", null, t.title));
+  const shown = ALL_TABS.find((t) => t.key === current)?.parent || current;     // the draft shows under Budget
+  tabbar.replaceChildren(...(inCar() ? CAR_TABS : TABS).filter((t) => !t.hidden).map((t) => {
+    const b = h("button", { type: "button", class: `tab ${t.key === shown ? "on" : ""}`, "aria-label": t.title,
+      "aria-current": t.key === shown ? "page" : null }, icon(t.icon, 26), h("span", null, t.title));
     b.addEventListener("click", () => (t.key === current ? window.scrollTo({ top: 0, behavior: "smooth" }) : go(t.key)));
     return b;
   }));
@@ -179,7 +183,8 @@ function render() {
     h("div", { class: "subtitle" }, subtitle),
     showPill ? statusPill : null,
     ...content.filter(Boolean)));
-  addBtn.setAttribute("aria-label", current === "car-garage" ? "Add a car" : inCar() ? "Add a car log" : checkInput() ? "Check in" : "Add a month");
+  addBtn.setAttribute("aria-label", current === "car-garage" ? "Add a car" : inCar() ? "Add a car log" : current === "draft" ? "Add a cost to the draft"
+    : checkInput() ? "Check in" : "Add a month");
   buildTabbar();
   updateChrome();
 }
@@ -194,6 +199,12 @@ const checkInput = () => (current === "plan" ? main.querySelector(".check-input"
 function addNew() {
   if (current === "car-garage") return openCarSheet(context(), null);
   if (inCar()) return openNewCarLog(context());
+  if (current === "draft") {
+    const name = main.querySelector(".draft-add-name");
+    name?.scrollIntoView({ block: "center", behavior: "smooth" });
+    name?.focus({ preventScroll: true });
+    return;
+  }
   const input = checkInput();
   if (!input) return openMonthSheet(context(), null);
   input.scrollIntoView({ block: "center", behavior: "smooth" });

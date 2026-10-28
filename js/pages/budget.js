@@ -357,5 +357,8 @@ export function renderBudget(ctx) {
     goalsCard(snap, ctx),
     bufferCard(snap),
     costsCard(snap, ctx),
+    h("div", { class: "draft-open" },
+      h("button", { type: "button", class: "btn tinted wide", onclick: () => ctx.go("draft") }, "Try changes in a draft budget"),
+      h("div", { class: "hint" }, "A copy of this budget to play with: turn costs off, change amounts, see what's left. Nothing there changes your budget.")),
     h("div", { class: "hint page-foot" }, `The buffer target is a rule of thumb (${inSweden() ? "Finansinspektionen" : "common guidance"}), not financial advice. Change the numbers to fit you.`)];
 }
