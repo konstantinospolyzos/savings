@@ -3,7 +3,7 @@
 // check-in against what's left, the payday transfers to tick off, what the plan builds, and past plans.
 import { h, chip, dot, splitBar, toggle, toast, alertBox, kv } from "../ui.js";
 import {
-  COLORS, PROFILE_DEFS, budgetSnapshot, planForRate, loadPlans, loadBudgets, loadProfiles, loadFloors, budgetChanges,
+  COLORS, PROFILE_DEFS, budgetSnapshot, planForRate, loadPlans, loadBudgets, loadProfiles, loadFloors, budgetChanges, budgetToSave,
   defaultPeriodMonth, paydayFor, addMonths, mIndex, daysBetween, addDays, isoDay, fmtRange, shortDate, fmtSek, fmtEur, pct,
   roundTo10, plainNumber, parseNumber, plural, usualSpending, planProgress, planCheck, currentPeriod, futureValue, investedSek,
   brokersText, localSym, mLong, getSetting, hasMoney, summarize, monthFlows, CUR, inSweden,
@@ -106,7 +106,9 @@ function periodSnapshot(ctx) {
 }
 
 /** This week: the money, the day of the pay period and how long to payday. */
-function weekCard(snap, pr) {
+let switching = false;        // the saving plans show only after you tap Switch plan
+
+function weekCard(snap, pr, ctx) {
   const P = snap.plan;
   const toPayday = daysBetween(snap.today, snap.end);
   const w = pr.week;
@@ -121,7 +123,9 @@ function weekCard(snap, pr) {
     h("div", { class: "plan-progress-labels" }, h("span", null, `Payday ${shortDate(snap.start)}`),
       h("span", null, toPayday === 1 ? "Payday tomorrow" : `${toPayday} days to payday, ${shortDate(snap.end)}`)),
     h("div", { class: "hint amt-soft" }, `${profileName(P.profile)} plan: ${fmtSek(P.living)} to live on for the whole pay period, about ${money(pr.per_week)} a week.`
-      + (pr.week_index + 1 < pr.weeks.length ? ` Next week: ${money(pr.per_day * pr.weeks[pr.week_index + 1].days)}.` : " Next up: payday.")));
+      + (pr.week_index + 1 < pr.weeks.length ? ` Next week: ${money(pr.per_day * pr.weeks[pr.week_index + 1].days)}.` : " Next up: payday.")),
+    h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn tinted small",
+      onclick: () => { switching = !switching; ctx.refresh(); } }, switching ? "Cancel switching" : "Switch plan")));
 }
 
 /** How's it going: what's left of the living money, against what the plan has left for the days to come. */
@@ -355,7 +359,7 @@ function rateMeter(rate, marker) {
 }
 
 /** The plan you picked, as it would run: spend, save, invest, and Start. */
-function previewCard(bs, live, ctx) {
+function previewCard(bs, live, ctx, running = null) {
   const f = planFields(bs, bs.profile);
   const weeks = bs.days / 7;
   const fx = live.fx;
@@ -388,9 +392,14 @@ function previewCard(bs, live, ctx) {
     h("div", { class: "rate-text" }, `Your future gets ${pct(f.save_rate)} of your salary (buffer + investing). Goal money is spent later, so it isn't counted.${actual ? ` Over the last 12 months you managed ${pct(actual.rate)} (black mark).` : ""}`),
     rateMeter(f.save_rate, actual ? actual.rate : null),
     canStart ? h("div", { class: "hairline" }) : null,
-    canStart ? h("button", { type: "button", class: "btn primary wide", onclick: () => { startPlan(ctx, bs.base, f); toast(`✓  ${profileName(f.profile)} plan started`); } },
+    canStart && running ? h("button", { type: "button", class: "btn primary wide", disabled: running.profile === f.profile && Math.abs(running.living - f.living) < 1,
+      onclick: () => { switching = false; startPlan(ctx, bs.base, f, running); toast(`✓  Switched to ${profileName(f.profile)}`); window.scrollTo({ top: 0, behavior: "smooth" }); } },
+    running.profile === f.profile ? `${profileName(f.profile)} is your plan now` : `Switch to the ${profileName(f.profile)} plan`) : null,
+    canStart && !running ? h("button", { type: "button", class: "btn primary wide", onclick: () => { startPlan(ctx, bs.base, f); toast(`✓  ${profileName(f.profile)} plan started`); } },
       `Start the ${profileName(f.profile)} plan`) : null,
-    canStart ? h("div", { class: "hint" }, "Keeps these numbers until payday, so you can follow them through the month: this week's money, check-ins, and a tick when you've moved Save and Invest.") : null);
+    canStart ? h("div", { class: "hint" }, running
+      ? `Same pay period, from payday ${shortDate(bs.start)} to the day before payday ${shortDate(bs.end)}. Your check-ins and ticks stay.`
+      : "Keeps these numbers until payday, so you can follow them through the month: this week's money, check-ins, and a tick when you've moved Save and Invest.") : null);
 }
 
 /** No saved budget for this pay period yet: save it on the Budget tab first. */
@@ -427,10 +436,14 @@ export function renderPlan(ctx) {
   }
   const snap = live;
   const pr = planProgress(snap.plan, snap.start, snap.end, snap.today);
+  // switching: the plans from the saved budget (or the budget as it is, if you haven't saved one)
+  const sw = switching ? (bs || budgetFor(ctx, base, budgetToSave(live, ctx.today), live.start, live.end)) : null;
   const toPayday = daysBetween(snap.today, snap.end);
   return [`${profileName(snap.plan.profile)} plan  ·  ${fmtRange(snap.start, addDays(snap.end, -1))}  ·  ${toPayday === 1 ? "payday tomorrow" : `payday in ${toPayday} days`}`,
     changes.length && bs ? h("div", { class: "card" }, unsavedNote(changes, ctx, bs)) : null,
-    weekCard(snap, pr),
+    weekCard(snap, pr, ctx),
+    sw ? tilesCard(sw, ctx) : null,
+    sw ? previewCard(sw, live, ctx, snap.plan) : null,
     checkCard(snap, pr),
     movesCard(snap),
     next ? h("div", { class: "card plan-next amt-soft" }, `Next pay period: your ${profileName(next.profile)} plan is ready and starts on payday, ${shortDate(snap.end)}.`) : null,
