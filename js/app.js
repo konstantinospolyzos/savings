@@ -206,6 +206,18 @@ syncBtn.addEventListener("click", () => {
   if (store.mode === "drive") store.syncFromTap().then(() => toast(store.status.text));
   else openSettings(context());
 });
+// Google Drive: its sign-in lasts an hour, and the browser only lets Google's sign-in window open from a tap.
+// So when it has run out (the orange cloud), the first tap anywhere signs in again and syncs, once; if that
+// doesn't work, the cloud button is there as before.
+let autoSignIn = true;
+document.addEventListener("click", (ev) => {
+  if (!autoSignIn || !store.ready || store.mode !== "drive" || store.drive.tokenValid() || !navigator.onLine) return;
+  if (!window.google?.accounts?.oauth2) return;                              // Google's sign-in isn't loaded yet
+  if (ev.target.closest("#sync-btn, input, textarea, select, .sheet-wrap, .alert-wrap")) return;
+  autoSignIn = false;
+  store.syncFromTap();
+}, true);
+store.on((kind) => { if (kind === "status" && store.drive.tokenValid()) autoSignIn = true; });   // signed in: next time too
 window.addEventListener("scroll", () => navbar.classList.toggle("scrolled", window.scrollY > 38), { passive: true });
 window.addEventListener("hashchange", () => { const k = location.hash.slice(1); if (k !== current && tabKeys.includes(k)) go(k); });
 document.addEventListener("keydown", (ev) => {
