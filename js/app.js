@@ -209,14 +209,21 @@ syncBtn.addEventListener("click", () => {
 // Google Drive: its sign-in lasts an hour, and the browser only lets Google's sign-in window open from a tap.
 // So when it has run out (the orange cloud), the first tap anywhere signs in again and syncs, once; if that
 // doesn't work, the cloud button is there as before.
-let autoSignIn = true;
-document.addEventListener("click", (ev) => {
+// A tap is a touch that lifts where it went down (not a scroll); on a phone it counts even on plain text, which
+// doesn't get a click there.
+let autoSignIn = true, downAt = null;
+function signInOnTap(ev) {
   if (!autoSignIn || !store.ready || store.mode !== "drive" || store.drive.tokenValid() || !navigator.onLine) return;
   if (!window.google?.accounts?.oauth2) return;                              // Google's sign-in isn't loaded yet
-  if (ev.target.closest("#sync-btn, input, textarea, select, .sheet-wrap, .alert-wrap")) return;
+  if (ev.target.closest?.("#sync-btn, input, textarea, select, .sheet-wrap, .alert-wrap")) return;
   autoSignIn = false;
   store.syncFromTap();
+}
+document.addEventListener("pointerdown", (ev) => { downAt = [ev.clientX, ev.clientY]; }, true);
+document.addEventListener("pointerup", (ev) => {
+  if (ev.pointerType !== "mouse" && downAt && Math.hypot(ev.clientX - downAt[0], ev.clientY - downAt[1]) < 10) signInOnTap(ev);
 }, true);
+document.addEventListener("click", signInOnTap, true);
 store.on((kind) => { if (kind === "status" && store.drive.tokenValid()) autoSignIn = true; });   // signed in: next time too
 window.addEventListener("scroll", () => navbar.classList.toggle("scrolled", window.scrollY > 38), { passive: true });
 window.addEventListener("hashchange", () => { const k = location.hash.slice(1); if (k !== current && tabKeys.includes(k)) go(k); });
