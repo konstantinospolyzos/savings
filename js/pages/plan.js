@@ -199,11 +199,11 @@ function checkCard(snap, pr) {
   let result = null;
   if (last) {
     const r = planCheck(P, snap.start, snap.end, last);
-    const diffText = Math.abs(r.diff) < 10 ? "exactly what the plan has" : `${money(Math.abs(r.diff))} ${r.diff > 0 ? "more" : "less"} than the plan has`;
+    const diffText = Math.abs(r.diff) < 10 ? "just what the plan has for them" : `${money(Math.abs(r.diff))} ${r.diff > 0 ? "more" : "less"} than the plan has for them (${money(r.expected)})`;
     const age = daysBetween(asDay(last.date), today);
     result = h("div", { class: "check-result" },
       h("div", { class: "cap-row" }, chip(r.status, r.tone), h("span", { class: "hint" }, `${fmtSek(last.left)} left ${when(last.date, today)}`)),
-      h("div", { class: "check-line amt-soft" }, `The plan has ${money(r.expected)} for the ${plural(r.days_left, "day")} from ${last.date === isoDay(today) ? "today" : "then"} to payday: that's ${diffText}.`),
+      h("div", { class: "check-line amt-soft" }, `You have ${fmtSek(last.left)} for the ${plural(r.days_left, "day")} ${last.date === isoDay(today) ? "from today" : "from then"} to payday: ${diffText}.`),
       h("div", { class: "check-now amt" }, `To make it last: ≈ ${money(r.per_day_now)} a day, ${money(r.per_week_now)} a week.`),
       age >= 3 ? h("div", { class: "hint" }, `That was ${plural(age, "day")} ago: check in again to keep this right.`) : null);
   }
@@ -217,7 +217,8 @@ function checkCard(snap, pr) {
     h("div", { class: "check-row" }, h("span", { class: "check-label" }, "Living money left now"), input, h("span", { class: "check-unit" }, localSym()),
       h("button", { type: "button", class: "btn tinted small", onclick: save }, "Check")),
     h("div", { class: "hint" }, "Look at your everyday account and take off what you still have to pay this period: bills, and the transfers below if you haven't made them. What's left is your living money."),
-    older.length ? h("div", { class: "check-history" }, older) : null);
+    older.length ? h("div", { class: "check-history" }, h("div", { class: "caption" }, "EARLIER CHECK-INS"), older,
+      h("div", { class: "hint" }, "How each one compared with the plan on that day.")) : null);
 }
 
 function movesCard(snap) {
