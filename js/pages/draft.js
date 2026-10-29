@@ -38,7 +38,7 @@ function totals(d, snap) {
   let shortfall = Math.max(snap.buffer_months * fixed - snap.bank, 0);
   if (shortfall < 500) shortfall = 0;
   const like = { salary: d.salary, free, goals, days: snap.days, buffer_first: snap.buffer_first, shortfall, keep_share: snap.keep_share };
-  const plans = PROFILE_DEFS.map(([key, name]) => ({ key, name, ...planForRate(like, snap.profiles[key], snap.floors[key]) }));
+  const plans = PROFILE_DEFS.map(([key, name]) => ({ key, name, ...planForRate(like, snap.profiles[key], snap.floors[key], snap.trip ? 0 : snap.maxes[key]) }));
   return { fixed, goals, left, free, plans };
 }
 
@@ -77,7 +77,7 @@ function resultCard(d, t, snap) {
     t.free < 0 ? h("div", { class: "warn-note draft-warn" }, "Fixed costs and goals are more than the salary.") : null,
     h("div", { class: "caption draft-cap" }, "THE SAVING PLANS WOULD GIVE"),
     h("div", { class: "draft-plans" }, plans),
-    h("div", { class: "hint" }, `Spending money a week, and what goes to savings (goals + buffer) and investing each pay period of ${snap.days} days, with your plans' % and minimums.`));
+    h("div", { class: "hint" }, `Spending money a week, and what goes to savings (goals, buffer, savings) and investing each pay period of ${snap.days} days, with your plans' %, and the least and most to live on${snap.trip ? " (no most: a trip this pay period)" : ""}.`));
 }
 
 function salaryCard(d, update) {

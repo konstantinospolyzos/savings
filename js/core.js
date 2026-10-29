@@ -109,11 +109,11 @@ export const DEFAULT_EXPENSES = [
   ["Transport", "Transport"], ["Insurance", "Insurance"], ["Phone", "Subscriptions"],
   ["Streaming & apps", "Subscriptions"], ["Gym", "Health & fitness"],
 ];
-// [key, name, tagline, % of salary to your future, the least to live on a week (in SEK)]
+// [key, name, tagline, % of salary to your future, the least and the most to live on a week (in SEK)]
 export const PROFILE_DEFS = [
-  ["light", "Light saving", "More room to enjoy now", 10, 800],
-  ["balanced", "Balanced", "Steady, with room to live", 20, 500],
-  ["high", "High saving", "Live lean, grow fast", 30, 300],
+  ["light", "Light saving", "More room to enjoy now", 10, 800, 850],
+  ["balanced", "Balanced", "Steady, with room to live", 20, 500, 700],
+  ["high", "High saving", "Live lean, grow fast", 30, 300, 500],
 ];
 /** Nobody lives on less than about 300 kr a week, so no plan goes below it. */
 export const MIN_FLOOR_SEK = 300;
@@ -551,25 +551,30 @@ export function weekChunks(start, end) {
  * How a plan splits what's free (after fixed costs and goals) between your future and living money. It
  * wants ratePct of the salary for your future, but always leaves at least floorTotal to live on: when
  * the % doesn't fit, it saves less instead (capped); when even the minimum doesn't fit, nothing (short).
+ * And it never leaves more than maxTotal to live on (0: no most): what's above it goes to your future too
+ * (by_max), so the plan saves more than its %.
  */
-export function planSplit(free, salary, ratePct, floorTotal = 0) {
+export function planSplit(free, salary, ratePct, floorTotal = 0, maxTotal = 0) {
   const wanted = (Math.max(ratePct, 0) / 100) * salary;
   const room = Math.max(free - Math.max(floorTotal, 0), 0);
-  const future = Math.max(0, Math.min(wanted, room));
+  let future = Math.max(0, Math.min(wanted, room));
   const capped = wanted > future + 0.5;
-  return { wanted, future, living: Math.max(free - future, 0), capped,
+  const most = maxTotal > 0 ? Math.max(maxTotal, floorTotal) : 0;
+  const byMax = most > 0 && free - future > most + 0.5;
+  if (byMax) future = free - most;
+  return { wanted, future, living: Math.max(free - future, 0), capped, by_max: byMax,
     short: floorTotal > 0 && free < floorTotal - 0.5,                     // even the minimum to live on doesn't fit
     by_floor: capped && floorTotal > 0 && free >= wanted - 0.5 };       // the % fits, but would leave too little
 }
 
-export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, bufferFirst, fx, bufferMonths = 3, floorWeek = 0, days = 0, keepShare = 0) {
+export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, bufferFirst, fx, bufferMonths = 3, floorWeek = 0, days = 0, keepShare = 0, maxWeek = 0) {
   const fixed = sum(expenses.filter((e) => expenseApplies(e, base)).map((e) => expenseMonthlySek(e, fx)));
   const goalRows = goals.filter((g) => goalApplies(g, base)).map((g) => [g, goalPerMonth(g)]);
   const goalsTotal = sum(goalRows.map(([, m]) => m));
   const left = salary - fixed;
   const free = left - goalsTotal;
   const floorTotal = floorWeek > 0 && days > 0 ? floorWeek * days / 7 : 0;
-  const split = planSplit(free, salary, ratePct, floorTotal);
+  const split = planSplit(free, salary, ratePct, floorTotal, maxWeek > 0 && days > 0 ? maxWeek * days / 7 : 0);
   const { wanted, future, living } = split;
   const target = bufferMonths * fixed;
   let shortfall = Math.max(target - bankSek, 0);
@@ -578,8 +583,8 @@ export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, b
   const [toSavings, invest] = keepSplit(future - toBuffer, keepShare);
   return {
     salary, fixed, left, goals: goalsTotal, goal_rows: goalRows, free, wanted, future,
-    capped: split.capped, short: split.short, by_floor: split.by_floor, floor_week: floorWeek, floor_total: floorTotal,
-    living, to_buffer: toBuffer, to_savings: toSavings, invest, savings: goalsTotal + toBuffer + toSavings, keep_share: keepShare,
+    capped: split.capped, short: split.short, by_floor: split.by_floor, by_max: split.by_max, floor_week: floorWeek, floor_total: floorTotal,
+    max_week: maxWeek, living, to_buffer: toBuffer, to_savings: toSavings, invest, savings: goalsTotal + toBuffer + toSavings, keep_share: keepShare,
     save_rate: salary > 0 ? future / salary : 0, rate_pct: ratePct,
     max_rate: salary > 0 ? Math.max(free, 0) / salary : 0,
     target, shortfall, bank: bankSek, buffer_months: bufferMonths,
@@ -587,18 +592,35 @@ export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, b
 }
 
 /** What a profile would do this pay period: spend, save (goals + buffer + savings), invest, and why it saves less. */
-export function planForRate(snap, ratePct, floorWeek = 0) {
+export function planForRate(snap, ratePct, floorWeek = 0, maxWeek = 0) {
   const salary = snap.salary;
   const floorTotal = floorWeek > 0 ? floorWeek * snap.days / 7 : 0;
-  const s = planSplit(snap.free, salary, ratePct, floorTotal);
+  const s = planSplit(snap.free, salary, ratePct, floorTotal, maxWeek > 0 ? maxWeek * snap.days / 7 : 0);
   const toBuffer = snap.buffer_first ? Math.min(s.future, snap.shortfall) : 0;
   const [toSavings, invest] = keepSplit(s.future - toBuffer, snap.keep_share || 0);
   return { spend: s.living, save: snap.goals + toBuffer + toSavings, invest, to_buffer: toBuffer, to_savings: toSavings, future: s.future,
     rate: salary > 0 ? s.future / salary : 0, capped: salary > 0 && s.capped, short: salary > 0 && s.short, by_floor: s.by_floor,
-    floor_week: floorWeek, floor_total: floorTotal };
+    by_max: salary > 0 && s.by_max, floor_week: floorWeek, floor_total: floorTotal, max_week: maxWeek };
 }
 
 /** The least each profile lives on a week, in your currency (yours, or the suggested ones). */
+/** The most each profile lives on a week (0: no most), in your currency (yours, or the suggested ones). */
+export function loadMaxes(data) {
+  const stored = getSetting(data, "profile_maxes", {}) || {};
+  const out = {};
+  for (const [key, , , , , def] of PROFILE_DEFS) {
+    const val = typeof stored === "object" ? stored[key] : null;
+    out[key] = typeof val === "number" && val >= 0 && val < 1e9 ? val : fromSek(def);
+  }
+  return out;
+}
+
+/** Pay periods with a trip: no most to live on then ({"2026-12": true}). */
+export function loadTrips(data) {
+  const t = getSetting(data, "trip_periods", {});
+  return t && typeof t === "object" ? t : {};
+}
+
 export function loadFloors(data) {
   const stored = getSetting(data, "profile_floors", {}) || {};
   const out = {};
@@ -779,17 +801,19 @@ export function budgetSnapshot(data, today = todayDate(), offset = 0, salaryOver
   let key = getSetting(data, "profile", "balanced");
   if (!(key in profiles)) key = "balanced";
   const floors = loadFloors(data);
+  const maxes = loadMaxes(data);
+  const trip = Boolean(loadTrips(data)[base]);
   const bufferFirst = Boolean(getSetting(data, "buffer_first", true));
   let months = getSetting(data, "buffer_months", 3);
   if (!BUFFER_MONTH_CHOICES.includes(months)) months = 3;
   const b = computeBudget(salary, expenses, goals, base, profiles[key], latest ? latest.bank_sek : 0,
-    bufferFirst, fx, months, floors[key], daysBetween(start, end), loadKeepSaving(data));
+    bufferFirst, fx, months, floors[key], daysBetween(start, end), loadKeepSaving(data), trip ? 0 : maxes[key]);
   const plan = loadPlans(data)[base] || null;
   const active = expenses.filter((e) => expenseApplies(e, base));
   const missing = active.filter((e) => e.amount === 0);
   return Object.assign(b, {
     today, base, start, end, days: daysBetween(start, end), fx, fx_src: fxSrc, fx_override: fxOverride,
-    expenses, active, profiles, floors, plan, profile: key, goals_list: goals, latest, salary_kept: salaryOverride === null && savedSalary !== null, buffer_first: bufferFirst, missing,
+    expenses, active, profiles, floors, maxes, trip, plan, profile: key, goals_list: goals, latest, salary_kept: salaryOverride === null && savedSalary !== null, buffer_first: bufferFirst, missing,
     plan_ready: salary > 0 && b.fixed > 0 && missing.length <= 2,
   });
 }

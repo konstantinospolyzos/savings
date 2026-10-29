@@ -229,7 +229,7 @@ export function openGoalSheet(ctx, snap, original = null) {
 
 // ---------------------------------------------------------------------------
 export function openProfilesSheet(ctx, snap) {
-  const fields = {}, floorFields = {};
+  const fields = {}, floorFields = {}, maxFields = {};
   const minFloor = fromSek(MIN_FLOOR_SEK);
   const pctField = (key, title) => {
     const f = h("input", { class: "form-input pct-input", type: "text", inputmode: "decimal", autocomplete: "off",
@@ -245,31 +245,44 @@ export function openProfilesSheet(ctx, snap) {
     f.addEventListener("input", validate);
     return row(title, f, `${localSym()} a week`);
   };
+  const maxField = (key, title) => {
+    const f = h("input", { class: "form-input pct-input", type: "text", inputmode: "numeric", autocomplete: "off", placeholder: "no most",
+      value: snap.maxes?.[key] ? plainNumber(snap.maxes[key]) : "", "aria-label": `${title}: at most, per week` });
+    maxFields[key] = f;
+    f.addEventListener("input", validate);
+    return row(title, f, `${localSym()} a week`);
+  };
   const rows = PROFILE_DEFS.map(([key, title]) => pctField(key, title));
   const floorRows = PROFILE_DEFS.map(([key, title]) => floorField(key, title));
+  const maxRows = PROFILE_DEFS.map(([key, title]) => maxField(key, title));
   const note = footer("");
   const values = () => Object.fromEntries(Object.entries(fields).map(([k, f]) => [k, parseNumber(f.value, true)]));
   const floors = () => Object.fromEntries(Object.entries(floorFields).map(([k, f]) => [k, parseNumber(f.value)]));
+  const maxes = () => Object.fromEntries(Object.entries(maxFields).map(([k, f]) => [k, f.value.trim() ? parseNumber(f.value) : 0]));
   let api = null;
   function validate() {
-    const v = values(), fl = floors();
+    const v = values(), fl = floors(), mx = maxes();
     const bad = Object.keys(v).filter((k) => v[k] === null || v[k] < 0 || v[k] > 90);
     const badFloor = Object.keys(fl).filter((k) => fl[k] === null || fl[k] < minFloor || fl[k] > 1e8);
+    const badMax = Object.keys(mx).filter((k) => mx[k] === null || (mx[k] > 0 && (mx[k] < (fl[k] || 0) || mx[k] > 1e8)));
     for (const [k, f] of Object.entries(fields)) f.classList.toggle("invalid", bad.includes(k));
     for (const [k, f] of Object.entries(floorFields)) f.classList.toggle("invalid", badFloor.includes(k));
+    for (const [k, f] of Object.entries(maxFields)) f.classList.toggle("invalid", badMax.includes(k));
     if (bad.length) { note.textContent = "Use percentages from 0 to 90."; note.className = "section-footer tone-text-down"; }
     else if (badFloor.length) { note.textContent = `At least ${fmtSek(minFloor)} a week for every plan: living on less isn't realistic.`; note.className = "section-footer tone-text-down"; }
+    else if (badMax.length) { note.textContent = "The most to live on can't be less than the least."; note.className = "section-footer tone-text-down"; }
     else if (!(v.light <= v.balanced && v.balanced <= v.high)) { note.textContent = "Tip: keep Light ≤ Balanced ≤ High so the names still fit."; note.className = "section-footer tone-text-warn"; }
     else if (!(fl.light >= fl.balanced && fl.balanced >= fl.high)) { note.textContent = "Tip: give Light the most to live on and High the least."; note.className = "section-footer tone-text-warn"; }
     else { note.textContent = ""; note.className = "section-footer"; }
     note.style.display = note.textContent ? "" : "none";
-    api?.setRight({ disabled: bad.length > 0 || badFloor.length > 0 });
-    return !bad.length && !badFloor.length;
+    api?.setRight({ disabled: bad.length > 0 || badFloor.length > 0 || badMax.length > 0 });
+    return !bad.length && !badFloor.length && !badMax.length;
   }
   function save(sh) {
     if (!validate()) return;
     store.setSetting("profile_rates", values());
     store.setSetting("profile_floors", floors());
+    store.setSetting("profile_maxes", maxes());
     sh.close();
     toast("✓  Profiles updated");
     syncNow();
@@ -282,9 +295,14 @@ export function openProfilesSheet(ctx, snap) {
     caption("LIVE ON AT LEAST"),
     group(floorRows),
     footer(`Living money is what you spend beyond your fixed costs: eating out, fun, small buys. A plan never leaves you less than this a week: when its % doesn't fit, it saves less instead. At least ${fmtSek(minFloor)} a week.`),
+    caption("LIVE ON AT MOST"),
+    group(maxRows),
+    footer("A plan never leaves you more than this a week: when its % would, the rest goes to your future (savings and investing) too. Leave it empty for no most. In a pay period with a trip, turn on the trip switch in My plan and there's no most."),
     note,
     h("button", { type: "button", class: "link-btn center", onclick: () => {
-      for (const [key, , , def, floorDef] of PROFILE_DEFS) { fields[key].value = String(def); floorFields[key].value = plainNumber(fromSek(floorDef)); }
+      for (const [key, , , def, floorDef, maxDef] of PROFILE_DEFS) {
+        fields[key].value = String(def); floorFields[key].value = plainNumber(fromSek(floorDef)); maxFields[key].value = plainNumber(fromSek(maxDef));
+      }
       validate();
     } }, "Reset to suggested"));
   api = sheet({ title: "Saving Profiles", left: { text: "Cancel" }, right: { text: "Save", bold: true, onClick: save }, body });
