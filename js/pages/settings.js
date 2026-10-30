@@ -1,7 +1,7 @@
 import { h, sheet, group, caption, footer, icon, alertBox, toast, saveFile, pickFile, toggle, selectRow } from "../ui.js";
 import {
   APP_NAME, APP_VERSION, toCsv, COUNTRIES, CURRENCIES, currencySettings, configure, convertSecond, fetchMonthlyRates,
-  getSetting, DEFAULT_BROKERS, symOf,
+  getSetting, DEFAULT_BROKERS, symOf, mLong, addMonths,
 } from "../core.js";
 import { store, FILE_NAME, FOLDER_NAME, describeData, readBackupFile } from "../store.js";
 import { getKey } from "../pump.js";
@@ -123,6 +123,36 @@ function backupNote() {
   return `${base} Your data is only on this device, so save one now and then. Last saved: ${m.lastManualBackup ? dayText(m.lastManualBackup) : "never"}.`;
 }
 
+/**
+ * What a logged month means. Paid on the 25th, the log you make on payday (and correct at the start of the
+ * next month, after the bills) is the month that ends: moving every log back one month says so.
+ */
+function monthsSection() {
+  const es = store.data.entries;
+  const end = getSetting(store.data, "log_months") === "end";
+  if (!es.length && !end) return [];
+  const latest = es.at(-1)?.month;
+  const move = async (by) => {
+    const back = by < 0;
+    const ok = await alertBox({ title: back ? "Move every month back by one?" : "Move every month forward again?",
+      message: back
+        ? `${es.length} logged months move back one month, with their notes and trip marks: ${latest ? `${mLong(latest)} becomes ${mLong(addMonths(latest, -1))}, and so on. ` : ""}A month then means its salary (paid on the 25th) and what you have at the end of it.`
+        : `${es.length} logged months move forward one month again, as they were before.`,
+      buttons: [{ text: "Cancel", value: false, style: "cancel" }, { text: back ? "Move them back" : "Move them forward", value: true, style: "bold" }] });
+    if (!ok) return;
+    store.shiftMonths(by, back ? "end" : null);
+    toast(back ? "✓  Every month moved back by one" : "✓  Every month moved forward again");
+    if (store.mode === "drive" && !store.drive.tokenValid()) store.syncFromTap();
+  };
+  return [caption("YOUR MONTHS"),
+    end ? group(infoRow("A month is", "its salary and the money at the end of it")) : null,
+    group(end ? actionRow("history", "Move every month forward again", () => move(1), { detail: "Undo: as the months were before" })
+      : actionRow("history", "Move every month back by one", () => move(-1), { detail: "When your log made on payday means the month that ends" })),
+    footer(end
+      ? "Each logged month is its salary (paid on the 25th) and what you have at the end of it, after the bills: the log you make on payday 25 October is “End of October”. If you import from the desktop app again, move the months back again."
+      : "Paid on the 25th? If the month you log on payday (and correct after the bills) is really the month that ends, move every month back by one: the log you made on 25 October then becomes October, notes and trip marks included.")];
+}
+
 export function openSettings(ctx) {
   const body = h("div", { class: "form" });
 
@@ -167,6 +197,8 @@ export function openSettings(ctx) {
       h("span", { class: "form-label" }, icon("eyeOff", 18, "inline-icon"), "Hide amounts"),
       toggle(ctx.privacy(), (on) => ctx.setPrivacy(on), "Hide amounts"))));
     parts.push(footer("Blurs balances, salaries, changes and notes so you can show the app to others. Only on this device. The eye button at the top switches it too."));
+
+    if (!ctx.inCar) parts.push(...monthsSection());
 
     parts.push(caption("IMPORT AND BACKUP"));
     parts.push(group(

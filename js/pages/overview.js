@@ -1,7 +1,7 @@
 import { h, chip, dot, segmented, toggle, appIcon, icon } from "../ui.js";
 import { chart, linearFit } from "../charts.js";
 import {
-  COLORS, SERIES, MONTHS, fmtEur, fmtSek, fmtAxisEur, mLong, mShort, mIndex, mNum, nMonths, pct, toneOf, mean,
+  COLORS, SERIES, MONTHS, fmtEur, fmtSek, fmtAxisEur, mLong, mShort, logName, mIndex, mNum, nMonths, pct, toneOf, mean,
   monthFlows, summarize, paydayStatus, paydayReason, shortDate, longDate, daysBetween,
   bankEur, incomeEur, totalEur, investedSek, CUR,
 } from "../core.js";
@@ -129,7 +129,7 @@ function chartCard(es) {
       else if (!series.length) body.replaceChildren(h("div", { class: "chart-empty" }, "Pick at least one line above"));
       else body.replaceChildren(chart({
         months: vis.map((e) => e.month), kind: "line", series, format: fmtAxisEur, zeroBased: true, label: "Your money in euro",
-        tooltip: (i) => ({ title: mLong(vis[i].month), rows: series.map((ser) => [ser.label, fmtEur(ser.values[i]), ser.color]) }),
+        tooltip: (i) => ({ title: logName(vis[i].month), rows: series.map((ser) => [ser.label, fmtEur(ser.values[i]), ser.color]) }),
       }));
     } else {
       const visibleSet = new Set(vis.map((e) => e.month));
@@ -150,7 +150,7 @@ function chartCard(es) {
           const out = [["Saved in bank", CUR.single ? fmtSek(bankSek, true) : `${fmtEur(bankE[i], 0, true)} (${fmtSek(bankSek, true)})`, COLORS.blue],
             ["Invested change", fmtEur(dInv, 0, true), COLORS.orange]];
           if (e.added_eur !== null && e.added_eur !== undefined) out.push(["of which you added", fmtEur(e.added_eur), null]);
-          return { title: mLong(e.month), rows: out };
+          return { title: logName(e.month), rows: out };
         },
       }));
     }
@@ -174,13 +174,13 @@ function noteCard(es) {
   const noted = [...es].reverse().find((e) => e.comment);
   if (!noted) return null;
   return h("div", { class: "card note-card" },
-    h("div", { class: "caption" }, `LATEST NOTE  ·  ${mLong(noted.month).toUpperCase()}`),
+    h("div", { class: "caption" }, `LATEST NOTE  ·  ${logName(noted.month).toUpperCase()}`),
     h("div", { class: "note-text" }, noted.comment));
 }
 
 export function renderOverview(ctx) {
   const es = ctx.entries;
-  const subtitle = es.length ? `${nMonths(es.length)} logged  ·  latest: ${mLong(es.at(-1).month)}` : "Nothing logged yet";
+  const subtitle = es.length ? `${nMonths(es.length)} logged  ·  latest: ${CUR.end_months ? `end of ${mLong(es.at(-1).month)}` : mLong(es.at(-1).month)}` : "Nothing logged yet";
   if (!es.length) return [subtitle, emptyState(ctx)];
   return [subtitle, balanceHero(es, ctx.inv), stats(es, ctx.snap), chartCard(es), noteCard(es)];
 }

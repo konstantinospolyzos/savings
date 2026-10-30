@@ -374,7 +374,9 @@ function paydaySteps(ctx, live, saved, changes) {
   const rv = moves?.revolut || null;
   return [
     { key: "log", done: Boolean(entry), title: `Log ${mLong(base)}`,
-      sub: entry ? `Salary ${fmtSek(entry.income_sek)}, bank ${fmtSek(entry.bank_sek)}` : "The salary that just came in, and your bank and investments today",
+      sub: entry ? `Salary ${fmtSek(entry.income_sek)}, bank ${fmtSek(entry.bank_sek)}`
+        : CUR.end_months ? "The salary that just came in and your money now; correct it at the end of the month, after the bills"
+          : "The salary that just came in, and your bank and investments today",
       go: () => (entry ? ctx.openMonth(entry) : openMonthSheet(ctx, null, base)) },
     { key: "budget", done: Boolean(saved) && !changes.length, title: saved && changes.length ? "Save the budget again" : "Check the salary and save the budget",
       sub: !saved ? (live.salary > 0 ? `Salary ${fmtSek(live.salary)}, fixed costs ${fmtSek(live.fixed)}: save them on the Budget tab` : "Enter your salary on the Budget tab, then save the budget")

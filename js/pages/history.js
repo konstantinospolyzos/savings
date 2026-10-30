@@ -1,6 +1,6 @@
 import { h, chip, icon, segmented, toast } from "../ui.js";
 import {
-  computeRows, monthFlows, tripStatus, isTrip, mLong, mYear, fmtSek, fmtEur, nMonths, pct, toneOf,
+  computeRows, monthFlows, tripStatus, isTrip, mLong, mYear, logName, fmtSek, fmtEur, nMonths, pct, toneOf,
   incomeEur, bankEur, toCsv, CUR, localSym, secondSym,
 } from "../core.js";
 import { store } from "../store.js";
@@ -36,7 +36,7 @@ function yearSummary(group, rows, flows) {
 function monthCell(e, row, flow, q, ctx) {
   const [trip, flagged] = tripStatus(e);
   const head = h("div", { class: "hrow-head" },
-    h("div", { class: "hrow-title" }, highlight(mLong(e.month), q),
+    h("div", { class: "hrow-title" }, highlight(logName(e.month), q),
       trip ? h("span", { class: `trip-badge ${flagged ? "" : "guessed"}`, title: flagged ? "Trip month" : "Trip month, guessed from the note" }, icon("plane", 11), "Trip") : null),
     flow ? h("div", { class: `hrow-rate tone-text-${flow.rate >= 0.10 ? "up" : flow.rate < 0 ? "down" : "flat"}` },
       pct(flow.rate), h("span", { class: "hrow-rate-sub" }, fmtSek(flow.saved, true))) : h("div", { class: "hrow-rate muted" }, "—"),

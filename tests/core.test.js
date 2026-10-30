@@ -367,3 +367,25 @@ test("a plan never leaves more than its most to live on, unless there's a trip",
   assert.equal(p.by_max, true);
   close(p.rate, (23120 - 850 * weeks) / 40000);
 });
+
+test("months that mean the month that ended: moving every log back by one", () => {
+  const data = { entries: [entry("2026-09", { trip: true, comment: "Crete" }), entry("2026-10"), entry("2026-11", { income_sek: 41000 })],
+    settings: { inv_basis: { amount: 50000, currency: "SEK", as_of: "2026-11" } } };
+  const back = c.shiftEntryMonths(data, -1);
+  assert.deepEqual(back.entries.map((e) => e.month), ["2026-08", "2026-09", "2026-10"]);
+  assert.deepEqual([back.entries[0].trip, back.entries[0].comment, back.entries[2].income_sek], [true, "Crete", 41000]);
+  assert.equal(back.settings.inv_basis.as_of, "2026-10");
+  assert.deepEqual(data.entries.map((e) => e.month), ["2026-09", "2026-10", "2026-11"]);      // the original stays as it was
+  assert.deepEqual(c.shiftEntryMonths(back, 1).entries.map((e) => e.month), ["2026-09", "2026-10", "2026-11"]);
+  // a new log is for the month of the last payday (paid 23 Oct, the 25th being a Sunday): October until November's payday
+  const es = [entry("2026-09")];
+  assert.equal(c.defaultNewMonth(es, c.day(2026, 10, 30), true), "2026-10");
+  assert.equal(c.defaultNewMonth(es, c.day(2026, 11, 2), true), "2026-10");
+  assert.equal(c.defaultNewMonth(es, c.day(2026, 11, 25), true), "2026-11");
+  assert.equal(c.defaultNewMonth(es, c.day(2026, 11, 2), false), "2026-11");          // before: the month you're in
+  // its name
+  c.configure({ settings: { log_months: "end" } });
+  assert.equal(c.logName("2026-10"), "End of October 2026");
+  c.configure({ settings: {} });
+  assert.equal(c.logName("2026-10"), "October 2026");
+});

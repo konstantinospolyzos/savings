@@ -84,6 +84,7 @@ export function configure(data) {
   CUR.country = c.country; CUR.local = c.local; CUR.second = c.second || c.local; CUR.single = !c.second;
   const b = getSetting(data, "brokers");
   CUR.brokers = typeof b === "string" ? b.trim() : DEFAULT_BROKERS;
+  CUR.end_months = getSetting(data, "log_months") === "end";
   return CUR;
 }
 export const inSweden = () => CUR.country === "SE";
@@ -155,6 +156,20 @@ export const mYear = (month) => Number(month.slice(0, 4));
 export const mNum = (month) => Number(month.slice(5, 7));
 export const mLong = (month) => `${MONTHS[mNum(month) - 1]} ${mYear(month)}`;
 export const mShort = (month) => `${MONTHS[mNum(month) - 1].slice(0, 3)} ${mYear(month)}`;
+/** A logged month by name: "End of October 2026" once your months mean the end of them (setting log_months). */
+export const logName = (month) => (CUR.end_months ? `End of ${mLong(month)}` : mLong(month));
+
+/**
+ * Every logged month moved by some months (-1: the log called November becomes October), with its notes and
+ * trip mark, and the month your investment cost is from. For when your logs mean the month that ended.
+ */
+export function shiftEntryMonths(data, by) {
+  const d = structuredClone(data);
+  d.entries = d.entries.map((e) => ({ ...e, month: addMonths(e.month, by) }));
+  const basis = d.settings?.inv_basis;
+  if (basis && typeof basis === "object" && typeof basis.as_of === "string") basis.as_of = addMonths(basis.as_of.slice(0, 7), by);
+  return d;
+}
 export const mAbbr = (month) => MONTHS[mNum(month) - 1].slice(0, 3);
 
 export const day = (y, m, d) => new Date(y, m - 1, d, 12);
@@ -175,8 +190,9 @@ export function fmtRange(a, b) {
   return `${a.getDate()} ${MONTHS[a.getMonth()].slice(0, 3)} – ${b.getDate()} ${MONTHS[b.getMonth()].slice(0, 3)}`;
 }
 
-export function defaultNewMonth(entries, today = todayDate()) {
-  const current = monthOf(today);
+export function defaultNewMonth(entries, today = todayDate(), endMonths = CUR.end_months) {
+  // a month is its salary (paid around the 25th) and your money at the end of it: the month of the last payday
+  const current = endMonths ? monthOf(paydayStatus(today).prev) : monthOf(today);
   const logged = new Set(entries.map((e) => e.month));
   if (!logged.has(current)) return current;
   return addMonths([...logged].sort().at(-1), 1);

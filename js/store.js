@@ -5,7 +5,7 @@
 // each other's months.
 
 import { CONFIG } from "./config.js";
-import { APP_NAME, DATA_VERSION, DEFAULT_EXPENSES, DEFAULT_GOALS, byPosition, mLong } from "./core.js";
+import { APP_NAME, DATA_VERSION, DEFAULT_EXPENSES, DEFAULT_GOALS, byPosition, mLong, shiftEntryMonths } from "./core.js";
 import { emptyCar, normalizeCar, normalizeCars, normalizeFixed, normalizeTyreInfo, describeCars, byDateKm, LEGACY_CAR_ID } from "./car.js";
 
 const KEY_DATA = "savingsTracker.data";
@@ -198,6 +198,11 @@ export function applyOp(data, op) {
     case "setCar":                // from the first version of the car monitor (one car)
       Object.assign(carFor(d, null), op.fields);
       break;
+    case "shiftMonths": {     // every logged month moved (-1: a log means the month that ended), and what the months mean
+      const out = shiftEntryMonths(d, op.by);
+      out.settings.log_months = op.label || null;
+      return out;
+    }
     case "replaceAll":
       return normalize(op.data);
     default:
@@ -487,6 +492,7 @@ class Store {
   addFixedLogs(carId, entries, done, backfill = false) { this.commit({ type: "addFixedLogs", carId, entries, done, backfill }); }
   deleteCarLog(carId, id) { this.commit({ type: "deleteCarLog", carId, id }); }
   replaceAll(data) { this.commit({ type: "replaceAll", data: normalize(data) }); }
+  shiftMonths(by, label) { this.commit({ type: "shiftMonths", by, label }); }
 
   // -- syncing with Drive -------------------------------------------------------
   syncSoon(ms = 1200) {

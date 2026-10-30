@@ -1,6 +1,6 @@
 import { h, sheet, group, caption, footer, toggle, alertBox, toast, icon } from "../ui.js";
 import {
-  CUR, localSym, secondSym, brokersText, rateShown, rateFromInput, TRAVEL_RX, addMonths, defaultNewMonth, mLong, mShort,
+  CUR, localSym, secondSym, brokersText, rateShown, rateFromInput, TRAVEL_RX, addMonths, defaultNewMonth, mLong, mShort, logName, paydayFor, shortDate,
   parseNumber, plainNumber, fmtEur, fmtSek, toneOf, fetchSekToEur,
 } from "../core.js";
 import { store } from "../store.js";
@@ -33,6 +33,7 @@ export function openMonthSheet(ctx, original = null, startMonth = null) {
 
   const monthLabel = h("div", { class: "month-label" });
   const monthNote = footer("", "warn");
+  const monthMeans = footer("");
   const convFooter = footer("");
   convFooter.classList.add("amt");
   const rateFooter = footer("");
@@ -106,10 +107,12 @@ export function openMonthSheet(ctx, original = null, startMonth = null) {
   }
 
   function updateMonth() {
-    monthLabel.textContent = mLong(month);
+    monthLabel.textContent = logName(month);
+    monthMeans.textContent = CUR.end_months ? `${mLong(month).split(" ")[0]}'s salary (paid ${shortDate(paydayFor(month))}) and what you have at the end of the month, after the bills. Log it on payday, and correct it at the end of the month.` : "";
+    monthMeans.style.display = CUR.end_months ? "" : "none";
     fetchInfo = ""; fetchError = "";
     const clash = entries.some((e) => e.month === month) && !(original && original.month === month);
-    monthNote.textContent = clash ? `${mLong(month)} is already logged. Saving will replace it.` : "";
+    monthNote.textContent = clash ? `${logName(month)} is already logged. Saving will replace it.` : "";
     monthNote.style.display = clash ? "" : "none";
     api?.setRight({ text: clash ? "Replace" : "Save" });
     validate();
@@ -140,7 +143,7 @@ export function openMonthSheet(ctx, original = null, startMonth = null) {
     h("button", { type: "button", class: "stepper", "aria-label": "Next month", onclick: () => { month = addMonths(month, 1); updateMonth(); } }, icon("chevron", 18)));
 
   const body = h("div", { class: "form" },
-    caption("MONTH"), group(stepper), monthNote,
+    caption("MONTH"), group(stepper), monthNote, monthMeans,
     caption("AMOUNTS"),
     group(row("Income (salary)", income, localSym()), row("Bank savings", bank, localSym()),
       row(CUR.brokers ? `Invested (${CUR.brokers})` : "Invested", invested, secondSym())),
@@ -178,18 +181,18 @@ export function openMonthSheet(ctx, original = null, startMonth = null) {
       comment: note.value.trim(), added_eur: add, trip: tripSwitch.input.checked };
     store.saveEntry(entry, original && original.month !== month ? original.month : null);
     sh.close();
-    toast(`✓  Saved ${mLong(month)}`);
+    toast(`✓  Saved ${logName(month)}`);
     if (store.mode === "drive" && !store.drive.tokenValid()) store.syncFromTap();   // sign-in needs this tap
   }
 
   async function remove() {
-    const ok = await alertBox({ title: `Delete ${mLong(original.month)}?`,
+    const ok = await alertBox({ title: `Delete ${logName(original.month)}?`,
       message: "This month will be removed from your history. This can't be undone.",
       buttons: [{ text: "Cancel", value: false, style: "cancel" }, { text: "Delete", value: true, style: "destructive" }] });
     if (!ok) return;
     store.deleteEntry(original.month);
     api.close();
-    toast(`Deleted ${mLong(original.month)}`);
+    toast(`Deleted ${logName(original.month)}`);
     if (store.mode === "drive" && !store.drive.tokenValid()) store.syncFromTap();
   }
 
