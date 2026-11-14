@@ -1,7 +1,7 @@
 import { h, chip, icon, segmented, toast } from "../ui.js";
 import {
   computeRows, monthFlows, tripStatus, isTrip, mLong, mYear, logName, fmtSek, fmtEur, nMonths, pct, toneOf,
-  incomeEur, bankEur, toCsv, CUR, localSym, secondSym,
+  incomeEur, bankEur, toCsv, CUR, localSym, secondSym, oneTimeByLog,
 } from "../core.js";
 import { store } from "../store.js";
 import { saveFile } from "../ui.js";
@@ -33,7 +33,14 @@ function yearSummary(group, rows, flows) {
   return parts.join("  ·  ");
 }
 
-function monthCell(e, row, flow, q, ctx) {
+/** The one-time expenses that lowered a month's savings: their total, and what they were. */
+function onceLine(list, q) {
+  if (!list?.length) return null;
+  return h("div", { class: "hrow-once" }, `One-time expense${list.length > 1 ? "s" : ""} `,
+    h("span", { class: "amt" }, fmtSek(list.reduce((a, x) => a + x.amount, 0))), ": ", highlight(list.map((x) => x.name).join(", "), q));
+}
+
+function monthCell(e, row, flow, q, ctx, once) {
   const [trip, flagged] = tripStatus(e);
   const head = h("div", { class: "hrow-head" },
     h("div", { class: "hrow-title" }, highlight(logName(e.month), q),
@@ -62,6 +69,7 @@ function monthCell(e, row, flow, q, ctx) {
     head, grid,
     h("div", { class: "hrow-foot" },
       e.comment ? h("div", { class: "hrow-note" }, highlight(e.comment, q)) : null,
+      onceLine(once, q),
       CUR.single ? null : h("div", { class: "hrow-rate-line" }, `1 ${secondSym()} = ${(1 / e.sek_to_eur).toFixed(2)} ${localSym()}`)));
 }
 
@@ -70,6 +78,7 @@ export function renderHistory(ctx) {
   const view = { filter: 0, order: 0, ...(store.pref("history_view", {}) || {}) };
   const rows = new Map(computeRows(es).map((r) => [r.entry.month, r]));
   const flows = new Map(monthFlows(es).map((f) => [f.month, f]));
+  const once = oneTimeByLog(ctx.data);         // the one-time expenses that lowered each month's savings
   const subtitle = h("span");
   const list = h("div", { class: "history-list" });
 
@@ -78,7 +87,8 @@ export function renderHistory(ctx) {
     const ql = q.toLowerCase();
     let shown = es.filter((e) => {
       if ((view.filter === 1 && !isTrip(e)) || (view.filter === 2 && isTrip(e))) return false;
-      if (ql && !(e.comment || "").toLowerCase().includes(ql) && !mLong(e.month).toLowerCase().includes(ql)) return false;
+      if (ql && !(e.comment || "").toLowerCase().includes(ql) && !mLong(e.month).toLowerCase().includes(ql)
+        && !(once.get(e.month) || []).some((x) => x.name.toLowerCase().includes(ql))) return false;
       return true;
     });
     if (view.order === 0) shown = shown.reverse();
@@ -101,7 +111,7 @@ export function renderHistory(ctx) {
     for (const [year, group] of groups) {
       list.append(h("div", { class: "year-head" }, h("div", { class: "year-title" }, String(year)),
         h("div", { class: "year-sum" }, yearSummary(group, rows, flows))));
-      list.append(h("div", { class: "hgroup" }, group.map((e) => monthCell(e, rows.get(e.month), flows.get(e.month), q, ctx))));
+      list.append(h("div", { class: "hgroup" }, group.map((e) => monthCell(e, rows.get(e.month), flows.get(e.month), q, ctx, once.get(e.month)))));
     }
   }
 

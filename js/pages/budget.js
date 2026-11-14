@@ -14,7 +14,6 @@ import { oneTimeCard } from "./onetime.js";
 import { profileName } from "./plan.js";
 
 const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, GOALS_C = COLORS.teal, BUFFER_C = COLORS.blue, INVEST_C = COLORS.orange;
-const ONCE_C = COLORS.pink;
 
 let offset = 0;              // pay periods away from the current one
 /** Back to the pay period the Budget opens on (My plan's payday checklist links here). */
@@ -95,9 +94,7 @@ function periodCard(snap, ctx) {
   });
 
   const free = Math.max(snap.free, 0);
-  const once = snap.oneoff || 0;                       // this pay period's one-time expenses
-  const legend = [["Fixed costs", snap.fixed, FIXED_C], ["One-time expenses", once, ONCE_C], ["Saving goals", snap.goals, GOALS_C], ["For your saving plan", free, COLORS.green]]
-    .filter(([text, v]) => v > 0 || text !== "One-time expenses").map(([text, v, color]) =>
+  const legend = [["Fixed costs", snap.fixed, FIXED_C], ["Saving goals", snap.goals, GOALS_C], ["For your saving plan", free, COLORS.green]].map(([text, v, color]) =>
     h("div", { class: "legend-row" }, dot(color, 9), h("span", { class: "legend-name" }, text),
       h("span", { class: "legend-amount amt" }, fmtSek(v)),
       h("span", { class: "legend-pct" }, salary > 0 ? `${Math.round(v / salary * 100)}%` : "")));
@@ -143,14 +140,11 @@ function periodCard(snap, ctx) {
       h("div", { class: "eq-row" }, h("span", { class: "eq-label" }, h("span", { class: "eq-sign" }, "−"), "Fixed costs"),
         h("span", { class: "eq-value amt" }, fmtSek(snap.fixed))),
       h("div", { class: "eq-note" }, `${snap.active.length} active costs`),
-      once > 0 ? h("div", { class: "eq-row" }, h("span", { class: "eq-label" }, h("span", { class: "eq-sign" }, "−"), "One-time expenses"),
-        h("span", { class: "eq-value amt" }, fmtSek(once))) : null,
-      once > 0 ? h("div", { class: "eq-note" }, `${plural(snap.oneoffs.length, "expense")}, this pay period only`) : null,
       h("div", { class: "eq-row total" }, h("span", { class: "eq-label" }, h("span", { class: "eq-sign" }, "="), "Left to plan"),
         h("span", { class: `eq-value big amt tone-text-${snap.left > 0 ? "up" : "down"}` }, fmtSek(snap.left))),
-      h("div", { class: "eq-note amt" }, snap.left < 0 ? `Fixed costs ${once > 0 ? "and one-time expenses " : ""}are higher than the salary` : CUR.single ? null : `≈ ${fmtEur(snap.left * fx)}`)),
+      h("div", { class: "eq-note amt" }, snap.left < 0 ? "Fixed costs are higher than the salary" : CUR.single ? null : `≈ ${fmtEur(snap.left * fx)}`)),
     saveBox,
-    splitBar([[snap.fixed, FIXED_C], [once, ONCE_C], [snap.goals, GOALS_C], [free, COLORS.green]], 12),
+    splitBar([[snap.fixed, FIXED_C], [snap.goals, GOALS_C], [free, COLORS.green]], 12),
     h("div", { class: "legend-list" }, legend),
     CUR.single ? null : h("div", { class: "hairline" }),
     CUR.single ? null : h("div", { class: "fx-row" }, h("span", { class: "caption" }, "EXCHANGE RATE"), h("span", { class: "fx-eq" }, `1 ${CUR.second} =`), fxInput, h("span", null, CUR.local), fetchBtn),

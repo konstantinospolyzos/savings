@@ -619,35 +619,28 @@ export function weekChunks(start, end) {
  * the % doesn't fit, it saves less instead (capped); when even the minimum doesn't fit, nothing (short).
  * And it never leaves more than maxTotal to live on (0: no most): what's above it goes to your future too
  * (by_max), so the plan saves more than its %.
- * One-time expenses of the pay period (oneoff, already taken off `free`) come out of what goes to your future:
- * the living money stays what it would be without them. What they cost beyond that (oneoff_over) comes out of
- * your buffer.
  */
-export function planSplit(free, salary, ratePct, floorTotal = 0, maxTotal = 0, oneoff = 0) {
-  const once = Math.max(oneoff, 0);
-  const all = free + once;                 // what there is to split before the one-time expenses
+export function planSplit(free, salary, ratePct, floorTotal = 0, maxTotal = 0) {
   const wanted = (Math.max(ratePct, 0) / 100) * salary;
-  const room = Math.max(all - Math.max(floorTotal, 0), 0);
+  const room = Math.max(free - Math.max(floorTotal, 0), 0);
   let future = Math.max(0, Math.min(wanted, room));
   const capped = wanted > future + 0.5;
   const most = maxTotal > 0 ? Math.max(maxTotal, floorTotal) : 0;
-  const byMax = most > 0 && all - future > most + 0.5;
-  if (byMax) future = all - most;
-  const living = Math.max(all - future, 0);
-  const taken = Math.min(once, future);
-  return { wanted, future: future - taken, living, capped, by_max: byMax, oneoff_over: once - taken,
-    short: floorTotal > 0 && all < floorTotal - 0.5,                      // even the minimum to live on doesn't fit
-    by_floor: capped && floorTotal > 0 && all >= wanted - 0.5 };        // the % fits, but would leave too little
+  const byMax = most > 0 && free - future > most + 0.5;
+  if (byMax) future = free - most;
+  return { wanted, future, living: Math.max(free - future, 0), capped, by_max: byMax,
+    short: floorTotal > 0 && free < floorTotal - 0.5,                     // even the minimum to live on doesn't fit
+    by_floor: capped && floorTotal > 0 && free >= wanted - 0.5 };       // the % fits, but would leave too little
 }
 
-export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, bufferFirst, fx, bufferMonths = 3, floorWeek = 0, days = 0, keepShare = 0, maxWeek = 0, oneoff = 0) {
+export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, bufferFirst, fx, bufferMonths = 3, floorWeek = 0, days = 0, keepShare = 0, maxWeek = 0) {
   const fixed = sum(expenses.filter((e) => expenseApplies(e, base)).map((e) => expenseMonthlySek(e, fx)));
   const goalRows = goals.filter((g) => goalApplies(g, base)).map((g) => [g, goalPerMonth(g)]);
   const goalsTotal = sum(goalRows.map(([, m]) => m));
-  const left = salary - fixed - oneoff;                // after the fixed costs and this period's one-time expenses
+  const left = salary - fixed;
   const free = left - goalsTotal;
   const floorTotal = floorWeek > 0 && days > 0 ? floorWeek * days / 7 : 0;
-  const split = planSplit(free, salary, ratePct, floorTotal, maxWeek > 0 && days > 0 ? maxWeek * days / 7 : 0, oneoff);
+  const split = planSplit(free, salary, ratePct, floorTotal, maxWeek > 0 && days > 0 ? maxWeek * days / 7 : 0);
   const { wanted, future, living } = split;
   const target = bufferMonths * fixed;
   let shortfall = Math.max(target - bankSek, 0);
@@ -658,10 +651,7 @@ export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, b
     salary, fixed, left, goals: goalsTotal, goal_rows: goalRows, free, wanted, future,
     capped: split.capped, short: split.short, by_floor: split.by_floor, by_max: split.by_max, floor_week: floorWeek, floor_total: floorTotal,
     max_week: maxWeek, living, to_buffer: toBuffer, to_savings: toSavings, invest, savings: goalsTotal + toBuffer + toSavings, keep_share: keepShare,
-    oneoff, oneoff_over: split.oneoff_over,
     save_rate: salary > 0 ? future / salary : 0, rate_pct: ratePct,
-    // what the plan puts aside in a pay period without one-time expenses: what your months are compared with
-    usual_future: future + oneoff - split.oneoff_over, usual_rate: salary > 0 ? (future + oneoff - split.oneoff_over) / salary : 0,
     max_rate: salary > 0 ? Math.max(free, 0) / salary : 0,
     target, shortfall, bank: bankSek, buffer_months: bufferMonths,
   };
@@ -671,18 +661,18 @@ export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, b
 export function planForRate(snap, ratePct, floorWeek = 0, maxWeek = 0) {
   const salary = snap.salary;
   const floorTotal = floorWeek > 0 ? floorWeek * snap.days / 7 : 0;
-  const s = planSplit(snap.free, salary, ratePct, floorTotal, maxWeek > 0 ? maxWeek * snap.days / 7 : 0, snap.oneoff || 0);
+  const s = planSplit(snap.free, salary, ratePct, floorTotal, maxWeek > 0 ? maxWeek * snap.days / 7 : 0);
   const toBuffer = snap.buffer_first ? Math.min(s.future, snap.shortfall) : 0;
   const [toSavings, invest] = keepSplit(s.future - toBuffer, snap.keep_share || 0);
   return { spend: s.living, save: snap.goals + toBuffer + toSavings, invest, to_buffer: toBuffer, to_savings: toSavings, future: s.future,
     rate: salary > 0 ? s.future / salary : 0, capped: salary > 0 && s.capped, short: salary > 0 && s.short, by_floor: s.by_floor,
-    by_max: salary > 0 && s.by_max, floor_week: floorWeek, floor_total: floorTotal, max_week: maxWeek,
-    oneoff: snap.oneoff || 0, oneoff_over: s.oneoff_over };
+    by_max: salary > 0 && s.by_max, floor_week: floorWeek, floor_total: floorTotal, max_week: maxWeek };
 }
 
 // ---------------------------------------------------------------------------
-// One-time expenses: something you buy once (an air fryer, a flight pass). Each counts in the pay period of its
-// date only. Kept in the settings (one_time), so every version of the app passes them on.
+// One-time expenses: something bought once (an air fryer, a flight pass), paid from what you already have.
+// They don't change any budget or plan: they show as less saved in the month you bought them, and History
+// lists them with that month. Kept in the settings (one_time), so every version of the app passes them on.
 // ---------------------------------------------------------------------------
 const DAY_RX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -696,10 +686,35 @@ export function loadOneTime(data) {
     .sort((a, b) => (a.date === b.date ? (a.id < b.id ? -1 : 1) : a.date < b.date ? -1 : 1));
 }
 
-/** The one-time expenses of a pay period: from its payday up to the day before the next one. */
-export function oneTimeIn(data, start, end) {
-  const a = isoDay(start), b = isoDay(end);
-  return loadOneTime(data).filter((x) => x.date >= a && x.date < b);
+/**
+ * The logged month whose savings a purchase on this day lowers. Your money is logged around the 1st, after the
+ * payday bills: the log of the month it's in (End of November), or the next one while your logs still carry the
+ * name of the month after (December, see log_months).
+ */
+export const logMonthOf = (iso, endMonths = CUR.end_months) => (endMonths ? iso.slice(0, 7) : addMonths(iso.slice(0, 7), 1));
+
+/** The one-time expenses of each logged month: Map(month → [expenses]). */
+export function oneTimeByLog(data, endMonths = CUR.end_months) {
+  const out = new Map();
+  for (const x of loadOneTime(data)) {
+    const m = logMonthOf(x.date, endMonths);
+    if (!out.has(m)) out.set(m, []);
+    out.get(m).push(x);
+  }
+  return out;
+}
+
+/** The one-time expenses of the months a pay period touches, by month: [[month, [expenses]], …], oldest first. */
+export function oneTimeMonths(data, start, end) {
+  const first = monthOf(start), last = monthOf(addDays(end, -1));
+  const out = [];
+  for (const x of loadOneTime(data)) {
+    const m = x.date.slice(0, 7);
+    if (m < first || m > last) continue;
+    if (!out.length || out.at(-1)[0] !== m) out.push([m, []]);
+    out.at(-1)[1].push(x);
+  }
+  return out;
 }
 
 /** The least each profile lives on a week, in your currency (yours, or the suggested ones). */
@@ -790,7 +805,39 @@ export function planCheck(plan, start, end, check) {
 /** The budgets you saved on the Budget page for pay periods: {"2026-10": budget}. My plan works from them. */
 export function loadBudgets(data) {
   const b = getSetting(data, "period_budgets", {});
-  return b && typeof b === "object" ? b : {};
+  if (!b || typeof b !== "object") return {};
+  return Object.fromEntries(Object.entries(b).map(([k, v]) => [k, budgetWithoutOneOff(v)]));
+}
+
+/*
+ * For a few hours (14 Nov 2026) one-time expenses came out of the pay period's budget and the plan's Save and
+ * Invest. They're paid from what you already have, so they don't any more: a budget or plan saved then (with
+ * `oneoff`) is read as it would be without them. The next time it's saved, it's written that way too.
+ */
+function budgetWithoutOneOff(b) {
+  if (!b || typeof b !== "object" || !("oneoff" in b)) return b;
+  const { oneoff, ...rest } = b;
+  const once = typeof oneoff === "number" && oneoff > 0 ? oneoff : 0;
+  return once ? { ...rest, left: (rest.left || 0) + once, free: (rest.free || 0) + once } : rest;
+}
+function planWithoutOneOff(p, budget) {
+  if (!p || typeof p !== "object" || !("oneoff" in p || "oneoff_over" in p)) return p;
+  const { oneoff, oneoff_over: over, ...rest } = p;
+  const taken = Math.max((Number(oneoff) || 0) - (Number(over) || 0), 0);     // what came out of Save and Invest
+  if (taken < 0.5) return rest;
+  const future = (rest.future || 0) + taken;
+  let toBuffer, share;
+  if (budget && typeof budget === "object") {           // the budget the plan was worked out from
+    toBuffer = Math.min(future, Math.max(budget.buffer_first ? budget.shortfall || 0 : 0, rest.to_buffer || 0));
+    share = budget.keep_share || 0;
+  } else {
+    toBuffer = rest.to_buffer || 0;
+    const both = (rest.to_savings || 0) + (rest.invest || 0);
+    share = both > 0 ? (rest.to_savings || 0) / both : 0;
+  }
+  const [toSavings, invest] = keepSplit(future - toBuffer, share);
+  return { ...rest, future, to_buffer: toBuffer, to_savings: toSavings, invest,
+    save_rate: rest.salary > 0 ? future / rest.salary : rest.save_rate };
 }
 
 /** What the Budget page saves for My plan: the numbers a saving plan is worked out from. */
@@ -799,7 +846,6 @@ export function budgetToSave(snap, today) {
     salary: snap.salary, fixed: snap.fixed, goals: snap.goals, goal_rows: snap.goal_rows.map(([g, m]) => [g.name, m]),
     left: snap.left, free: snap.free, bank: snap.bank, target: snap.target, shortfall: snap.shortfall,
     buffer_first: snap.buffer_first, buffer_months: snap.buffer_months, keep_share: snap.keep_share || 0, days: snap.days, saved: isoDay(today),
-    oneoff: snap.oneoff || 0,
   };
 }
 
@@ -811,14 +857,15 @@ export function budgetChanges(saved, snap) {
   if (Math.abs(saved.goals - snap.goals) > 0.5) out.push("the saving goals");
   if (Math.abs((saved.shortfall || 0) - snap.shortfall) > 0.5 || Boolean(saved.buffer_first) !== Boolean(snap.buffer_first)) out.push("the buffer");
   if ((saved.keep_share || 0) !== (snap.keep_share || 0)) out.push("the share kept in savings");
-  if (Math.abs((saved.oneoff || 0) - (snap.oneoff || 0)) > 0.5) out.push("the one-time expenses");
   return out;
 }
 
 /** The plans you started for pay periods: {"2026-10": plan}. A plan keeps its numbers for the whole period. */
 export function loadPlans(data) {
   const p = getSetting(data, "period_plans", {});
-  return p && typeof p === "object" ? p : {};
+  if (!p || typeof p !== "object") return {};
+  const budgets = getSetting(data, "period_budgets", {}) || {};
+  return Object.fromEntries(Object.entries(p).map(([k, v]) => [k, planWithoutOneOff(v, budgets[k])]));
 }
 
 export function loadProfiles(data) {
@@ -907,15 +954,14 @@ export function budgetSnapshot(data, today = todayDate(), offset = 0, salaryOver
   const bufferFirst = Boolean(getSetting(data, "buffer_first", true));
   let months = getSetting(data, "buffer_months", 3);
   if (!BUFFER_MONTH_CHOICES.includes(months)) months = 3;
-  const oneoffs = oneTimeIn(data, start, end);
   const b = computeBudget(salary, expenses, goals, base, profiles[key], latest ? latest.bank_sek : 0,
-    bufferFirst, fx, months, floors[key], daysBetween(start, end), loadKeepSaving(data), trip ? 0 : maxes[key], sum(oneoffs.map((x) => x.amount)));
+    bufferFirst, fx, months, floors[key], daysBetween(start, end), loadKeepSaving(data), trip ? 0 : maxes[key]);
   const plan = loadPlans(data)[base] || null;
   const active = expenses.filter((e) => expenseApplies(e, base));
   const missing = active.filter((e) => e.amount === 0);
   return Object.assign(b, {
     today, base, start, end, days: daysBetween(start, end), fx, fx_src: fxSrc, fx_override: fxOverride,
-    expenses, active, oneoffs, profiles, floors, maxes, trip, plan, profile: key, goals_list: goals, latest, salary_kept: salaryOverride === null && savedSalary !== null, buffer_first: bufferFirst, missing,
+    expenses, active, profiles, floors, maxes, trip, plan, profile: key, goals_list: goals, latest, salary_kept: salaryOverride === null && savedSalary !== null, buffer_first: bufferFirst, missing,
     plan_ready: salary > 0 && b.fixed > 0 && missing.length <= 2,
   });
 }
@@ -929,11 +975,10 @@ export function buildActions(snap, summ, tags, fund, inv, flows) {
       "The plan, the buffer target and several insights compare against your fixed costs, so they get sharper once every cost has its amount.", COLORS.orange]);
   }
   const P = snap.plan || snap;          // the plan you started for this pay period, if you did
-  // what the plan puts aside in a pay period without one-time expenses (this period's came out of it)
-  const planned = P.future + Math.max((P.oneoff || 0) - (P.oneoff_over || 0), 0);
+  const planned = P.future;
   // (moving the money on payday is on My plan, with a tick for each transfer)
   if (summ && snap.plan_ready) {
-    const planRate = P.salary > 0 ? planned / P.salary : P.save_rate ?? snap.save_rate, actual = summ.rate;
+    const planRate = P.save_rate ?? snap.save_rate, actual = summ.rate;
     if (actual < planRate - 0.05)
       items.push([2, `You save ${pct(actual)} of your income, the plan says ${pct(planRate)}`,
         `Over the last ${summ.n} months you put aside ${fmtSek(summ.saved)} a month on average, the plan puts aside ${fmtSek(planned)}. That's about ${fmtSek(planned - summ.saved)} a month to find.`, COLORS.orange]);

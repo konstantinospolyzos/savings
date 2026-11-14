@@ -27,7 +27,7 @@ function kpis(snap, summ, inv) {
   const cards = [];
   let chipText = "", tone = "flat";
   if (snap.plan_ready) {
-    const plan = snap.usual_rate ?? snap.save_rate;        // not lowered by this pay period's one-time expenses
+    const plan = snap.save_rate;
     chipText = `Plan ${pct(plan)}`;
     tone = summ.rate >= plan - 0.02 ? "up" : summ.rate < plan - 0.10 ? "down" : "flat";
   }
@@ -68,7 +68,7 @@ function monthChartCard(flows, snap) {
     if (view === 0) {
       values = flows.map((f) => f.saved);
       colors = values.map((v) => (v >= 0 ? COLORS.green : COLORS.red));
-      const planned = snap.usual_future ?? snap.future;
+      const planned = snap.future;
       if (snap.plan_ready && planned > 0) lines.push({ value: planned, color: COLORS.blue, label: `Plan ${fmtSek(planned)}` });
       if (values.length) { const avg = mean(values); lines.push({ value: avg, color: COLORS.gray, dotted: true, label: `Your average ${fmtSek(avg)}` }); }
       tooltip = (i) => {
