@@ -1,8 +1,9 @@
 // Sheets for the Budget page: a fixed cost, a saving goal, the saving profiles.
 import { h, sheet, group, caption, footer, toggle, segmented, selectRow, alertBox, toast, icon } from "../ui.js";
 import {
-  CATEGORIES, GOAL_CATEGORIES, PROFILE_DEFS, addMonths, mShort, mIndex, parseNumber, plainNumber, fmtSek,
+  CATEGORIES, GOAL_CATEGORIES, PROFILE_DEFS, addMonths, mShort, mIndex, parseNumber, plainNumber, fmtSek, fmtEur,
   goalPlannedBy, roundTo10, CUR, CURRENCIES, inSweden, localSym, rateShown, fromSek, MIN_FLOOR_SEK,
+  currentPeriod, paydayFor, daysBetween, shortDate, dayMonth, loadBudgets, expenseAmountFor, withAmountFrom, expenseSteps,
 } from "../core.js";
 import { store } from "../store.js";
 
@@ -37,8 +38,24 @@ async function confirmDelete(name, what) {
 }
 
 // ---------------------------------------------------------------------------
-export function openExpenseSheet(ctx, snap, original = null) {
+/**
+ * Add or change a fixed cost. A new amount counts from the pay period you're in, or from the next payday: for an
+ * invoice that came in and that you pay with your next salary, so the running period and its plan stay as they are.
+ */
+export function openExpenseSheet(ctx, snap, shownCost = null) {
   const fx = snap.fx || 0;
+  // the Budget shows a cost as it is in one pay period; the stored cost has its amounts for every period
+  const original = shownCost ? store.data.expenses.find((x) => x.id === shownCost.id) || null : null;
+  const cur = currentPeriod(snap.today).base, nxt = addMonths(cur, 1);
+  const nextPayday = paydayFor(nxt);
+  const waiting = Boolean(original?.start_month && original.start_month > cur);      // it doesn't count yet
+  const budgetSaved = Boolean(loadBudgets(store.data)[cur]);
+  // 0: the pay period you're in, 1: from the next payday. Once this period's budget is saved and its first week
+  // (when the bills are paid) is over, a new amount is most likely an invoice for the next payday.
+  let when = snap.start > snap.today || waiting || (budgetSaved && daysBetween(paydayFor(cur), snap.today) >= 7) ? 1 : 0;
+  let typed = false;
+  const amountOf = (i) => expenseAmountFor(original, i ? nxt : cur);
+  const shown = (a) => (a ? plainNumber(a, a === Math.round(a) ? 0 : 2) : "");
   let endMonth = original?.end_month || addMonths(snap.base, 11);
   const name = field("e.g. Netflix", "text");
   const amount = field("0");
@@ -48,6 +65,13 @@ export function openExpenseSheet(ctx, snap, original = null) {
   let category = original && names.includes(original.category) ? original.category : original ? names.at(-1) : names[0];
   const amountFooter = footer("");
   amountFooter.classList.add("amt");
+  const whenFooter = footer("");
+  whenFooter.classList.add("amt");
+  const whenSeg = segmented(["This pay period", `Payday ${dayMonth(nextPayday)}`], when, (i) => {
+    when = i;
+    if (original && !typed) amount.value = shown(amountOf(i));        // what it is then, until you type another
+    validate();
+  }, "full");
 
   if (CUR.single) currency = 0;
   const curSeg = CUR.single ? null : segmented([CUR.local, CUR.second], currency, (i) => { currency = i; validate(); }, "small");
@@ -64,7 +88,38 @@ export function openExpenseSheet(ctx, snap, original = null) {
 
   if (original) {
     name.value = original.name;
-    if (original.amount) amount.value = plainNumber(original.amount, original.amount === Math.round(original.amount) ? 0 : 2);
+    amount.value = shown(amountOf(when));
+  }
+
+  /** An amount in the cost's unit, as picked in the sheet. */
+  const own = (v) => `${currency === 1 ? fmtEur(v, v === Math.round(v) ? 0 : 2) : fmtSek(v)}${per === 1 ? " a year" : ""}`;
+  const newUnit = () => Boolean(original) && ((per === 1 ? "year" : "month") !== original.per || (currency === 1 ? "EUR" : "SEK") !== original.currency);
+  /** The amounts it has had, by the payday each one started at (newest first): the record of your invoices. */
+  function amountRows() {
+    const steps = original && !waiting ? expenseSteps(original) : [];
+    if (steps.length < 2) return null;
+    const unit = (v) => `${original.currency === "EUR" ? fmtEur(v, v === Math.round(v) ? 0 : 2) : fmtSek(v)}${original.per === "year" ? " a year" : ""}`;
+    const rows = steps.map(([from, a]) => h("div", { class: "form-row" },
+      h("span", { class: "form-label" }, from ? `From ${dayMonth(paydayFor(from))} ${from.slice(0, 4)}` : "Before that"),
+      h("span", { class: "form-value amt" }, unit(a)))).reverse();
+    const MAX = 12;
+    return rows.length > MAX ? [...rows.slice(0, MAX), h("div", { class: "form-row" }, h("span", { class: "form-label muted" }, `and ${rows.length - MAX} earlier`))] : rows;
+  }
+
+  /** What the choice of pay period does with the amount typed. */
+  function whenText(v) {
+    const pay = `payday ${shortDate(nextPayday)}`;
+    const again = budgetSaved ? ": the Budget will ask you to save it again" : "";
+    if (!original || waiting) return when ? `It counts from ${pay}. The pay period you're in stays as it is.` : `It counts in the pay period you're in${again}.`;
+    if (newUnit()) return "Paid or billed differently now: this amount counts for every pay period.";
+    const now = amountOf(0), next = amountOf(1), ok = v !== null && v >= 0;
+    if (when) {
+      if (ok && v !== now) return `${own(v)} from ${pay}. The pay period you're in keeps ${own(now)}: its budget and your plan stay as they are.`;
+      if (ok && next !== now) return `Back to ${own(now)}: the ${own(next)} set for ${pay} is taken away.`;
+      return `An invoice came in that you'll pay with your next salary? Type its amount: it counts from ${pay}, and the pay period you're in stays as it is.`;
+    }
+    const first = ok && v !== now ? `Changes the pay period you're in${again}.` : "The amount in the pay period you're in.";
+    return next !== now && !(ok && v === next) ? `${first} From ${pay} it's ${own(next)}, as you set.` : first;
   }
 
   let api = null;
@@ -82,23 +137,37 @@ export function openExpenseSheet(ctx, snap, original = null) {
       else t = `That's ${fmtSek(v * 12)} a year.`;
     }
     amountFooter.textContent = t;
+    whenFooter.textContent = whenText(v);
     api?.setRight({ disabled: !(name.value.trim() && v !== null && v >= 0) });
   }
   name.addEventListener("input", validate);
-  amount.addEventListener("input", validate);
+  amount.addEventListener("input", () => { typed = true; validate(); });
 
   function save(sh) {
     const v = parseNumber(amount.value);
     if (!name.value.trim() || v === null || v < 0) return;
-    const x = {
-      id: original ? original.id : null, name: name.value.trim(), amount: v, per: per === 1 ? "year" : "month",
+    const fields = {
+      id: original ? original.id : null, name: name.value.trim(), per: per === 1 ? "year" : "month",
       category, active: active.input.checked, end_month: hasEnd.input.checked ? endMonth : null,
       position: original ? original.position : nextPosition(snap.expenses.filter((x) => !x.car)), currency: currency === 1 ? "EUR" : "SEK",
       ...(pocket.input.checked ? { pocket: true } : {}),
     };
+    const started = original?.start_month ? { start_month: original.start_month } : {};
+    let x, note = "";
+    if (!original || waiting) {
+      // a new cost, or one that hasn't started: from now, or from the next payday
+      x = { ...fields, amount: v, ...(when ? { start_month: nxt } : {}) };
+      if (when) note = `from payday ${dayMonth(nextPayday)}`;
+    } else if (newUnit()) {
+      x = { ...fields, amount: v, ...started };          // its earlier amounts were in another unit
+    } else {
+      const dated = withAmountFrom(original, when ? nxt : cur, v);
+      x = { ...fields, amount: dated.amount, ...(dated.history ? { history: dated.history } : {}), ...started };
+      if (when && v !== amountOf(0)) note = `${own(v)} from payday ${dayMonth(nextPayday)}`;
+    }
     store.saveExpense(x);
     sh.close();
-    toast(`✓  ${original ? "Saved" : "Added"} ${x.name}`);
+    toast(`✓  ${original ? "Saved" : "Added"} ${x.name}${note ? `: ${note}` : ""}`);
     syncNow();
   }
   async function remove() {
@@ -109,10 +178,16 @@ export function openExpenseSheet(ctx, snap, original = null) {
     syncNow();
   }
 
+  const earlier = amountRows();
   const body = h("div", { class: "form" },
     caption("DETAILS"),
     group(row("Name", name), row("Amount", amount, CUR.single ? localSym() : null, curSeg), plainRow("Paid", perSeg), catRow),
     amountFooter,
+    caption(original && !waiting ? "THE AMOUNT COUNTS FROM" : "COUNTS FROM"),
+    group(h("div", { class: "form-row" }, whenSeg)),
+    whenFooter,
+    earlier ? caption("AMOUNTS BY PAYDAY") : null,
+    earlier ? group(earlier) : null,
     caption("BUDGET"),
     group(switchRow("Include in budget", active), switchRow("Last month", hasEnd, stepper)),
     footer("For instalments: turn on “Last month” and pick the final payment. After that month the cost drops out of the budget by itself."),

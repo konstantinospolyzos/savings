@@ -184,6 +184,7 @@ export const isoDay = (d) => `${monthOf(d)}-${String(d.getDate()).padStart(2, "0
 
 export const shortDate = (d) => `${WEEKDAYS[weekday(d)].slice(0, 3)} ${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)}`;
 export const longDate = (d) => `${WEEKDAYS[weekday(d)]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+export const dayMonth = (d) => `${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)}`;
 export function fmtRange(a, b) {
   if (a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth())
     return `${a.getDate()} – ${b.getDate()} ${MONTHS[b.getMonth()].slice(0, 3)}`;
@@ -295,7 +296,56 @@ export const totalEur = (e) => bankEur(e) + e.invested_eur;
 export const expensePerMonth = (x) => (x.per === "month" ? x.amount : x.amount / 12);
 export const expenseMonthlySek = (x, fx) =>
   x.currency === "EUR" ? (fx ? expensePerMonth(x) / fx : 0) : expensePerMonth(x);
-export const expenseApplies = (x, month) => x.active && (!x.end_month || month <= x.end_month);
+/** Does a fixed cost count in a pay period? Not before it starts (start_month) or after its last month. */
+export const expenseApplies = (x, month) => x.active && (!x.start_month || month >= x.start_month) && (!x.end_month || month <= x.end_month);
+
+// ---------------------------------------------------------------------------
+// A fixed cost's amount can change from a payday on: an invoice that came in for the next one. `amount` is the
+// newest amount, and `history` [{until, amount}] (oldest first) what it was up to and including a pay period.
+// ---------------------------------------------------------------------------
+const MAX_COST_STEPS = 36;
+
+/** What a fixed cost is in a pay period (in its own unit: a month or a year, in its currency). */
+export function expenseAmountFor(x, base) {
+  for (const h of x.history || []) if (base <= h.until) return h.amount;
+  return x.amount;
+}
+
+/** Its amounts as steps [first pay period, amount], oldest first; the first one has no start (null). */
+export function expenseSteps(x) {
+  const steps = [];
+  let from = null;
+  for (const h of x.history || []) { steps.push([from, h.amount]); from = addMonths(h.until, 1); }
+  steps.push([from, x.amount]);
+  return steps;
+}
+
+/**
+ * A fixed cost with a new amount from a pay period on. Earlier pay periods keep what they had, and an amount
+ * already set for a later payday stays.
+ */
+export function withAmountFrom(x, base, amount) {
+  const steps = expenseSteps(x).filter(([from]) => from !== base);
+  steps.push([base, amount]);
+  steps.sort((a, b) => (a[0] === b[0] ? 0 : a[0] === null ? -1 : b[0] === null ? 1 : a[0] < b[0] ? -1 : 1));
+  const kept = [];
+  for (const s of steps) if (!kept.length || kept.at(-1)[1] !== s[1]) kept.push(s);     // the same amount again says nothing
+  while (kept.length > MAX_COST_STEPS) kept.shift();
+  const history = kept.slice(0, -1).map(([, a], i) => ({ until: addMonths(kept[i + 1][0], -1), amount: a }));
+  const { history: _was, ...rest } = x;
+  return { ...rest, amount: kept.at(-1)[1], ...(history.length ? { history } : {}) };
+}
+
+/**
+ * A fixed cost as it is in a pay period: its amount then, what it was the period before (amount_before) and what
+ * it becomes at the next payday (amount_next), each null when the same. A copy to show and to add up: to change
+ * the cost, change the stored one (the store refuses to save this copy's amount).
+ */
+export function expenseInPeriod(x, base) {
+  const amount = expenseAmountFor(x, base);
+  const before = expenseAmountFor(x, addMonths(base, -1)), next = expenseAmountFor(x, addMonths(base, 1));
+  return { ...x, amount, in_period: base, amount_before: before !== amount ? before : null, amount_next: next !== amount ? next : null };
+}
 
 export const goalMonthsTotal = (g) => Math.max(1, mIndex(g.target_month) - mIndex(g.start_month) + 1);
 export const goalPerMonth = (g) => (g.kind === "year" ? g.amount / 12
@@ -811,7 +861,7 @@ export function budgetSnapshot(data, today = todayDate(), offset = 0, salaryOver
   const savedSalary = typeof kept === "number" && Number.isFinite(kept) && kept >= 0 ? kept : null;
   const salary = salaryOverride !== null ? salaryOverride : savedSalary !== null ? savedSalary : latest ? latest.income_sek : 0;
   // your fixed costs, and the cars you count in the Budget (from the car monitor)
-  const expenses = [...data.expenses, ...carBudgetLines(data, base)].sort(byPosition);
+  const expenses = [...data.expenses.map((x) => expenseInPeriod(x, base)), ...carBudgetLines(data, base)].sort(byPosition);
   const goals = [...data.goals].sort(byPosition);
   const profiles = loadProfiles(data);
   let key = getSetting(data, "profile", "balanced");
@@ -971,7 +1021,11 @@ export function convertSecond(data, newRate) {
     if (e.added_eur !== null && e.added_eur !== undefined) e.added_eur = r2(e.added_eur / r0 * r1);
     e.sek_to_eur = r1;
   }
-  for (const x of d.expenses) if (x.currency === "EUR") { x.amount = r2(x.amount / oldFx); x.currency = "SEK"; }
+  for (const x of d.expenses) {
+    if (x.currency !== "EUR") continue;
+    x.amount = r2(x.amount / oldFx); x.currency = "SEK";
+    for (const hst of x.history || []) hst.amount = r2(hst.amount / oldFx);
+  }
   const basis = getSetting(data, "inv_basis");
   if (basis && typeof basis === "object" && (basis.currency === "EUR" || ("eur" in basis && !basis.currency))) {
     const amount = Number(basis.amount ?? basis.eur);

@@ -6,7 +6,7 @@ import {
   fmtRange, shortDate, longDate, mLong, mShort, mIndex, fmtSek, fmtEur, plainNumber, parseNumber, pct, roundTo10,
   weekChunks, summarize, monthFlows, travelFund, expenseApplies, expenseMonthlySek, goalApplies, goalPerMonth,
   goalPlannedBy, fetchSekToEur, CUR, inSweden, localSym, brokersText, hasMoney, rateFromInput, rateShown,
-  loadBudgets, budgetToSave, budgetChanges, carsToOffer, getSetting, plural,
+  loadBudgets, budgetToSave, budgetChanges, carsToOffer, getSetting, plural, dayMonth, joinAnd, defaultPeriodMonth,
 } from "../core.js";
 import { store } from "../store.js";
 import { openExpenseSheet, openGoalSheet } from "./budget-sheets.js";
@@ -277,7 +277,7 @@ function addCarToBudget(snap, offer) {
     return strong || named || x.category === "Transport" ? { x, monthly, keep: toggle(!strong, () => {}, `Keep ${x.name}`) } : null;
   }).filter(Boolean);
   const done = (off) => {
-    for (const x of off) store.saveExpense({ ...x, active: false });
+    for (const x of off) store.setExpenseActive(x.id, false);
     setCarInBudget(car.id, true);
     toast(`✓  ${name} in your fixed costs${off.length ? `  ·  ${plural(off.length, "cost")} switched off` : ""}`);
   };
@@ -304,12 +304,23 @@ function carOffer(snap, ctx) {
       h("button", { type: "button", class: "btn plain small", onclick: () => setCarInBudget(offer.car.id, false) }, "Leave it out")));
 }
 
+/** An amount in a cost's own unit: its currency, and "a year" for a yearly one. */
+const ownAmount = (x, v) => `${x.currency === "EUR" ? fmtEur(v, Math.abs(v - Math.round(v)) < 0.005 ? 0 : 2) : fmtSek(v)}${x.per === "year" ? " a year" : ""}`;
+
 function expenseRow(x, snap, ctx) {
   if (x.car) return carRow(x, snap, ctx);
   const live = expenseApplies(x, snap.base);
+  const nextBase = addMonths(snap.base, 1);
   const subs = [];
   if (x.currency === "EUR" && x.amount) subs.push(`${fmtEur(x.amount, Math.abs(x.amount - Math.round(x.amount)) < 0.005 ? 0 : 2)} per ${x.per === "year" ? "year" : "month"}`);
   else if (x.per === "year") subs.push(`${fmtSek(x.amount)} per year`);
+  // an amount that changes with a payday: what it was before this pay period, and what the next payday makes it
+  if (x.start_month && x.start_month > snap.base) subs.push(`from payday ${dayMonth(paydayFor(x.start_month))}`);
+  else if (x.active) {
+    if (x.start_month === snap.base) subs.push("new this pay period");
+    else if (x.amount_before !== null) subs.push(`was ${ownAmount(x, x.amount_before)}`);
+    if (x.amount_next !== null && expenseApplies(x, nextBase)) subs.push(`${ownAmount(x, x.amount_next)} from ${dayMonth(paydayFor(nextBase))}`);
+  }
   if (x.end_month) {
     if (snap.base > x.end_month) subs.push(`ended ${mShort(x.end_month)}`);
     else { const n = mIndex(x.end_month) - mIndex(snap.base) + 1; subs.push(`until ${mShort(x.end_month)} · ${n} payment${n !== 1 ? "s" : ""} left`); }
@@ -320,9 +331,47 @@ function expenseRow(x, snap, ctx) {
     : h("span", { class: `row-amount amt ${live ? "" : "off"}` }, fmtSek(expenseMonthlySek(x, snap.fx)));
   const [content, sw] = switchRow(h("div", { class: "row-main" },
     h("div", { class: `row-title ${live ? "" : "off"}` }, x.name), subs.length ? h("div", { class: "row-sub amt-soft" }, subs.join("  ·  ")) : null),
-  x.active, (on) => store.saveExpense({ ...x, active: on }), `Include ${x.name}`);
+  x.active, (on) => store.setExpenseActive(x.id, on), `Include ${x.name}`);
   return h("div", { class: "list-row", role: "button", tabindex: "0", onclick: () => openExpenseSheet(ctx, snap, x) },
     dot(live ? CATEGORY_COLORS[x.category] || COLORS.gray : "var(--gray3)", 10), content, amount, sw);
+}
+
+/**
+ * What the next payday changes in the fixed costs of the pay period shown: the amounts you set for it (an invoice
+ * that came in), costs that start then and instalments that end. null when nothing does, or the period is over.
+ */
+export function nextPaydayChanges(snap) {
+  if (snap.end <= snap.today) return null;
+  const nextBase = addMonths(snap.base, 1);
+  const items = [];
+  let diff = 0;
+  for (const x of snap.expenses) {
+    if (x.car || !x.active) continue;
+    const now = expenseApplies(x, snap.base), then = expenseApplies(x, nextBase);
+    const a = now ? expenseMonthlySek(x, snap.fx) : 0;
+    const b = then ? expenseMonthlySek({ ...x, amount: x.amount_next ?? x.amount }, snap.fx) : 0;
+    if (now && then && x.amount_next !== null) items.push(`${x.name} ${ownAmount(x, x.amount_next)}`);
+    else if (!now && then && x.start_month === nextBase) items.push(`${x.name} ${ownAmount(x, x.amount_next ?? x.amount)} (new)`);
+    else if (now && !then) items.push(`${x.name} ends`);
+    else continue;
+    diff += b - a;
+  }
+  return items.length ? { items, diff, payday: snap.end, base: nextBase } : null;
+}
+
+function nextPaydayNote(snap, ctx) {
+  const ch = nextPaydayChanges(snap);
+  if (!ch) return null;
+  const total = Math.abs(ch.diff) < 0.5 ? "Your fixed costs stay the same in total."
+    : `That's ${fmtSek(Math.abs(ch.diff))} ${ch.diff > 0 ? "more" : "less"} a month in fixed costs.`;
+  return h("div", { class: "tip-box stack" },
+    h("div", { class: "tip-text amt-soft" }, `From payday ${shortDate(ch.payday)}: ${joinAnd(ch.items)}. ${total}${snap.start <= snap.today ? " This pay period stays as it is." : ""}`),
+    h("div", { class: "tip-actions" },
+      h("button", { type: "button", class: "btn tinted small", onclick: () => {
+        offset = mIndex(ch.base) - mIndex(defaultPeriodMonth(ctx.today));
+        ctx.refresh();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } }, "See that pay period")));
 }
 
 function costsCard(snap, ctx) {
@@ -348,8 +397,9 @@ function costsCard(snap, ctx) {
       addBtn(() => openExpenseSheet(ctx, snap, null))),
     missing ? h("div", { class: "warn-note" }, `${missing} cost${missing !== 1 ? "s are" : " is"} still at ${fmtSek(0)}. Tap a row to set the amount.`) : null,
     carOffer(snap, ctx),
+    nextPaydayNote(snap, ctx),
     blocks.length ? blocks : h("div", { class: "muted list-empty" }, "No fixed costs yet. Tap “+ Add” to add one."),
-    h("div", { class: "hint" }, `Tap a cost to edit it (amount, ${CUR.single ? "" : `${CUR.local} or ${CUR.second}, `}monthly or yearly). The switch leaves it out of this budget.`));
+    h("div", { class: "hint" }, `Tap a cost to edit it (amount, ${CUR.single ? "" : `${CUR.local} or ${CUR.second}, `}monthly or yearly). For an invoice you'll pay at the next payday, type its amount and pick that payday. The switch leaves it out of this budget.`));
 }
 
 // ---------------------------------------------------------------------------

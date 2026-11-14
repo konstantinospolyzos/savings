@@ -44,6 +44,17 @@ const MONTH_RX = /^\d{4}-\d{2}$/;
 const num = (v, def = 0) => { const n = typeof v === "number" ? v : Number(v); return Number.isFinite(n) ? n : def; };
 const optNum = (v) => (v === null || v === undefined || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 const optMonth = (v) => { if (!v) return null; const m = String(v).slice(0, 7); return MONTH_RX.test(m) ? m : null; };
+/** A fixed cost's earlier amounts, oldest first: [{until: the last pay period it was that, amount}] */
+function costHistory(list) {
+  const out = [];
+  for (const hst of Array.isArray(list) ? list : []) {
+    const until = optMonth(hst?.until), amount = optNum(hst?.amount);
+    if (until && amount !== null && amount >= 0 && (!out.length || until > out.at(-1).until)) out.push({ until, amount });
+  }
+  return out;
+}
+/** What a copy of a cost for one pay period carries on top (see expenseInPeriod): never stored. */
+const PERIOD_KEYS = ["in_period", "amount_before", "amount_next"];
 
 /** Check and tidy a data file (from Drive, a backup, or the desktop import). */
 export function normalize(raw) {
@@ -64,12 +75,17 @@ export function normalize(raw) {
   let nextId = 1;
   const ids = new Set();
   const takeId = (v) => { let id = Number.isInteger(v) && !ids.has(v) ? v : null; if (id === null) { while (ids.has(nextId)) nextId++; id = nextId; } ids.add(id); return id; };
-  const expenses = (Array.isArray(raw.expenses) ? raw.expenses : []).filter((x) => x && x.name).map((x, i) => ({
-    id: takeId(x.id), name: String(x.name), amount: num(x.amount), per: x.per === "year" ? "year" : "month",
-    category: String(x.category || "Other"), active: x.active !== false && x.active !== 0, end_month: optMonth(x.end_month),
-    position: Number.isInteger(x.position) ? x.position : i, currency: x.currency === "EUR" ? "EUR" : "SEK",
-    ...(x.pocket ? { pocket: true } : {}),         // paid from a Revolut pocket, filled on payday
-  })).sort(byPosition);
+  const expenses = (Array.isArray(raw.expenses) ? raw.expenses : []).filter((x) => x && x.name).map((x, i) => {
+    const history = costHistory(x.history), start = optMonth(x.start_month);
+    return {
+      id: takeId(x.id), name: String(x.name), amount: num(x.amount), per: x.per === "year" ? "year" : "month",
+      category: String(x.category || "Other"), active: x.active !== false && x.active !== 0, end_month: optMonth(x.end_month),
+      position: Number.isInteger(x.position) ? x.position : i, currency: x.currency === "EUR" ? "EUR" : "SEK",
+      ...(x.pocket ? { pocket: true } : {}),         // paid from a Revolut pocket, filled on payday
+      ...(history.length ? { history } : {}),        // what it was in earlier pay periods (amount is the newest)
+      ...(start ? { start_month: start } : {}),      // the first pay period it counts in
+    };
+  }).sort(byPosition);
   ids.clear(); nextId = 1;
   const goals = (Array.isArray(raw.goals) ? raw.goals : []).filter((g) => g && g.name).map((g, i) => ({
     id: takeId(g.id), name: String(g.name), category: String(g.category || "Other"), kind: g.kind === "once" ? "once" : "year",
@@ -122,6 +138,9 @@ export function applyOp(data, op) {
       break;
     case "putExpense":
       d.expenses = d.expenses.filter((x) => x.id !== op.expense.id).concat([op.expense]).sort(byPosition);
+      break;
+    case "setExpenseActive":     // the switch on a fixed cost's row: nothing else of the cost changes
+      d.expenses = d.expenses.map((x) => (x.id === op.id ? { ...x, active: Boolean(op.active) } : x));
       break;
     case "deleteExpense":
       d.expenses = d.expenses.filter((x) => x.id !== op.id);
@@ -475,8 +494,15 @@ class Store {
   setSetting(key, value) { this.commit({ type: "setSetting", key, value }); }
   saveExpense(expense) {
     if (expense.id === null || expense.id === undefined) expense = { ...expense, id: newId(this.data.expenses) };
+    if (PERIOD_KEYS.some((k) => k in expense)) {
+      // a copy for one pay period: its amount is that period's, so the stored amounts stay as they are
+      const stored = this.data.expenses.find((x) => x.id === expense.id);
+      expense = Object.fromEntries(Object.entries(expense).filter(([k]) => !PERIOD_KEYS.includes(k)));
+      if (stored) { expense.amount = stored.amount; delete expense.history; if (stored.history) expense.history = stored.history; }
+    }
     this.commit({ type: "putExpense", expense });
   }
+  setExpenseActive(id, active) { this.commit({ type: "setExpenseActive", id, active }); }
   deleteExpense(id) { this.commit({ type: "deleteExpense", id }); }
   saveGoal(goal) {
     if (goal.id === null || goal.id === undefined) goal = { ...goal, id: newId(this.data.goals) };

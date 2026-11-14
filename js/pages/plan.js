@@ -8,7 +8,7 @@ import {
   defaultPeriodMonth, paydayFor, addMonths, mIndex, daysBetween, addDays, isoDay, fmtRange, shortDate, fmtSek, fmtEur, pct,
   roundTo10, plainNumber, parseNumber, plural, usualSpending, planProgress, planCheck, currentPeriod, futureValue, investedSek,
   brokersText, localSym, mLong, getSetting, hasMoney, summarize, monthFlows, CUR, inSweden, buildActions, tagAnalysis,
-  travelFund, joinAnd, weekChunks, expenseMonthlySek,
+  travelFund, joinAnd, weekChunks, expenseMonthlySek, expenseApplies,
 } from "../core.js";
 import { store } from "../store.js";
 import { openProfilesSheet } from "./budget-sheets.js";
@@ -372,6 +372,9 @@ function paydaySteps(ctx, live, saved, changes) {
   const moves = P ? paydayMoves(live) : null;
   const toSave = P ? saveOf(P) : 0;
   const rv = moves?.revolut || null;
+  // the fixed costs with a new amount this payday (an invoice you logged when it came in), or starting now
+  const fresh = live.expenses.filter((x) => !x.car && expenseApplies(x, base) && (x.start_month === base || x.amount_before !== null)).map((x) => x.name);
+  const freshText = !fresh.length ? "" : ` (new: ${fresh.length > 3 ? `${fresh.slice(0, 2).join(", ")} and ${fresh.length - 2} more` : joinAnd(fresh)})`;
   return [
     { key: "log", done: Boolean(entry), title: `Log ${mLong(base)}`,
       sub: entry ? `Salary ${fmtSek(entry.income_sek)}, bank ${fmtSek(entry.bank_sek)}`
@@ -379,7 +382,7 @@ function paydaySteps(ctx, live, saved, changes) {
           : "The salary that just came in, and your bank and investments today",
       go: () => (entry ? ctx.openMonth(entry) : openMonthSheet(ctx, null, base)) },
     { key: "budget", done: Boolean(saved) && !changes.length, title: saved && changes.length ? "Save the budget again" : "Check the salary and save the budget",
-      sub: !saved ? (live.salary > 0 ? `Salary ${fmtSek(live.salary)}, fixed costs ${fmtSek(live.fixed)}: save them on the Budget tab` : "Enter your salary on the Budget tab, then save the budget")
+      sub: !saved ? (live.salary > 0 ? `Salary ${fmtSek(live.salary)}, fixed costs ${fmtSek(live.fixed)}${freshText}: save them on the Budget tab` : "Enter your salary on the Budget tab, then save the budget")
         : changes.length ? `It changed since you saved it: ${joinAnd(changes)}`
           : `Saved ${shortDate(asDay(saved.saved))}: ${fmtSek(saved.left)} left after fixed costs`,
       go: () => { showCurrentPeriod(); ctx.go("budget"); } },
