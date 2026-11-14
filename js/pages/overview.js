@@ -65,7 +65,7 @@ function stats(es, snap) {
   if (summ) {
     let chipText = "", tone = "flat";
     if (snap.plan_ready) {
-      const plan = snap.save_rate;
+      const plan = snap.usual_rate ?? snap.save_rate;      // not lowered by this pay period's one-time expenses
       chipText = `Plan ${pct(plan)}`;
       tone = summ.rate >= plan - 0.02 ? "up" : summ.rate < plan - 0.10 ? "down" : "flat";
     }

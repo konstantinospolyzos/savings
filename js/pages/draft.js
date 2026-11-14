@@ -57,7 +57,7 @@ function amountInput(value, onChange, label) {
 const signed = (v) => `${v >= 0 ? "+" : "−"}${fmtSek(Math.abs(v))}`;
 
 function resultCard(d, t, snap) {
-  const diff = t.free - snap.free;
+  const diff = t.free - (snap.free + (snap.oneoff || 0));      // against your budget without this period's one-time expenses
   const eqRow = (sign, label, value, cls = "") => h("div", { class: `eq-row ${cls}` },
     h("span", { class: "eq-label" }, sign ? h("span", { class: "eq-sign" }, sign) : null, label),
     h("span", { class: `eq-value amt ${cls === "total" ? "big tone-text-up" : ""}` }, value));

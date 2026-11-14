@@ -139,6 +139,14 @@ export function applyOp(data, op) {
     case "putExpense":
       d.expenses = d.expenses.filter((x) => x.id !== op.expense.id).concat([op.expense]).sort(byPosition);
       break;
+    case "putOneTime": {         // a one-time expense, added or changed (kept in the settings: see loadOneTime)
+      const list = Array.isArray(d.settings.one_time) ? d.settings.one_time : [];
+      d.settings.one_time = list.filter((x) => x && x.id !== op.item.id).concat([op.item]);
+      break;
+    }
+    case "deleteOneTime":
+      d.settings.one_time = (Array.isArray(d.settings.one_time) ? d.settings.one_time : []).filter((x) => x && x.id !== op.id);
+      break;
     case "setExpenseActive":     // the switch on a fixed cost's row: nothing else of the cost changes
       d.expenses = d.expenses.map((x) => (x.id === op.id ? { ...x, active: Boolean(op.active) } : x));
       break;
@@ -503,6 +511,13 @@ class Store {
     this.commit({ type: "putExpense", expense });
   }
   setExpenseActive(id, active) { this.commit({ type: "setExpenseActive", id, active }); }
+  /** A one-time expense {id (null for a new one), date, name, amount}; returns its id. */
+  saveOneTime(item) {
+    const id = item.id || `ot-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    this.commit({ type: "putOneTime", item: { id, date: item.date, name: item.name, amount: item.amount } });
+    return id;
+  }
+  deleteOneTime(id) { this.commit({ type: "deleteOneTime", id }); }
   deleteExpense(id) { this.commit({ type: "deleteExpense", id }); }
   saveGoal(goal) {
     if (goal.id === null || goal.id === undefined) goal = { ...goal, id: newId(this.data.goals) };
