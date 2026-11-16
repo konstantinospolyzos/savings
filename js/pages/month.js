@@ -1,7 +1,7 @@
 import { h, sheet, group, caption, footer, toggle, alertBox, toast, icon } from "../ui.js";
 import {
   CUR, localSym, secondSym, brokersText, rateShown, rateFromInput, TRAVEL_RX, addMonths, defaultNewMonth, mLong, mShort, logName, paydayFor, shortDate,
-  parseNumber, plainNumber, fmtEur, fmtSek, toneOf, fetchSekToEur,
+  parseNumber, plainNumber, fmtEur, fmtSek, toneOf, fetchSekToEur, loadPeriodSalaries,
 } from "../core.js";
 import { store } from "../store.js";
 
@@ -106,7 +106,17 @@ export function openMonthSheet(ctx, original = null, startMonth = null) {
     }
   }
 
+  // a new log starts from the salary you typed for its pay period on the Budget tab, until you change it
+  let autoIncome = null;
+  function fillIncome() {
+    if (original || (income.value.trim() && income.value !== autoIncome)) return;
+    const typed = loadPeriodSalaries(ctx.data || store.data)[CUR.end_months ? month : addMonths(month, -1)];
+    autoIncome = typed === undefined ? null : plainNumber(typed);
+    income.value = autoIncome ?? "";
+  }
+
   function updateMonth() {
+    fillIncome();
     monthLabel.textContent = logName(month);
     monthMeans.textContent = CUR.end_months ? `${mLong(month).split(" ")[0]}'s salary (paid ${shortDate(paydayFor(month))}) and what you have at the end of the month, after the bills. Log it on payday, and correct it at the end of the month.` : "";
     monthMeans.style.display = CUR.end_months ? "" : "none";

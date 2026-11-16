@@ -7,6 +7,7 @@ import {
   weekChunks, summarize, monthFlows, travelFund, expenseApplies, expenseMonthlySek, goalApplies, goalPerMonth,
   goalPlannedBy, fetchSekToEur, CUR, inSweden, localSym, brokersText, hasMoney, rateFromInput, rateShown,
   loadBudgets, budgetToSave, budgetChanges, carsToOffer, getSetting, plural, dayMonth, joinAnd, defaultPeriodMonth,
+  logName, loadPeriodSalaries, salaryFor,
 } from "../core.js";
 import { store } from "../store.js";
 import { openExpenseSheet, openGoalSheet } from "./budget-sheets.js";
@@ -56,6 +57,31 @@ function paydayCard(today) {
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * A pay period's salary, typed: kept for that pay period only (in the data file, so your other devices have it
+ * too), or forgotten when it's what the pay period has anyway. null forgets it.
+ */
+function setPeriodSalary(ctx, base, v) {
+  const all = { ...loadPeriodSalaries(ctx.data) };
+  if (v === null || Math.abs(v - salaryFor(ctx.data, base, { typed: false }).salary) < 0.5) delete all[base];
+  else all[base] = v;
+  for (const k of Object.keys(all).sort().slice(0, -24)) delete all[k];       // the last two years
+  store.setSetting("period_salaries", all);
+}
+
+/** Where the salary of the pay period shown comes from, and the link that undoes a typed one. */
+function salaryNote(snap, ctx, kind) {
+  const { latest } = snap;
+  switch (snap.salary_src) {
+    case "period": return ["Your figure for this pay period", ["Clear", () => setPeriodSalary(ctx, snap.base, null)]];
+    case "kept": return [latest ? "Your own figure, kept until you tap “Use latest”" : "Your own figure",
+      latest ? ["Use latest", () => store.setSetting("budget_salary", null)] : null];
+    case "log": return [`From your ${logName(snap.salary_log.month)} log`, null];
+    case "latest": return [kind === "Past" ? `From your ${logName(latest.month)} log` : `From your ${logName(latest.month)} log, until you type this payday's salary`, null];
+    default: return ["Log a month first", null];
+  }
+}
+
 function periodCard(snap, ctx) {
   const { start, end, days, fx, latest, salary, today } = snap;
   const kind = start <= today && today < end ? "Now" : start > today ? "Upcoming" : "Past";
@@ -69,10 +95,9 @@ function periodCard(snap, ctx) {
   salaryInput.addEventListener("change", () => {
     const v = parseNumber(salaryInput.value);
     if (v === null) { salaryInput.value = salary ? plainNumber(salary) : ""; return; }
-    // kept in the data file (and on your other devices) until you tap "Use latest"
-    store.setSetting("budget_salary", latest && Math.abs(v - latest.income_sek) < 0.5 ? null : v);
+    setPeriodSalary(ctx, snap.base, v);          // this pay period only: the salary isn't the same every month
   });
-  const src = snap.salary_kept ? (latest ? "Your own figure, kept until you tap “Use latest”" : "Your own figure") : latest ? `From your ${mLong(latest.month)} log` : "Log a month first";
+  const [src, undo] = salaryNote(snap, ctx, kind);
 
   const fxInput = h("input", { class: "fx-input", type: "text", inputmode: "decimal", autocomplete: "off", value: rateShown(fx), "aria-label": `${CUR.local} per ${CUR.second}` });
   fxInput.addEventListener("change", () => {
@@ -135,8 +160,7 @@ function periodCard(snap, ctx) {
     stepper,
     h("div", { class: "eq" },
       h("label", { class: "eq-row" }, h("span", { class: "eq-label" }, "Salary"), salaryInput, h("span", { class: "eq-unit" }, localSym())),
-      h("div", { class: "eq-note" }, src, snap.salary_kept && latest
-        ? h("button", { type: "button", class: "link-btn", onclick: () => store.setSetting("budget_salary", null) }, "Use latest") : null),
+      h("div", { class: "eq-note" }, src, undo ? h("button", { type: "button", class: "link-btn", onclick: undo[1] }, undo[0]) : null),
       h("div", { class: "eq-row" }, h("span", { class: "eq-label" }, h("span", { class: "eq-sign" }, "−"), "Fixed costs"),
         h("span", { class: "eq-value amt" }, fmtSek(snap.fixed))),
       h("div", { class: "eq-note" }, `${snap.active.length} active costs`),

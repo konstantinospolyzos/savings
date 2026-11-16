@@ -932,16 +932,47 @@ export function carsToOffer(data, base) {
     .map((c) => ({ car: c, name: carName(c), parts: carMonthly(c, base) })).filter((x) => x.parts.total > 0);
 }
 
+// ---------------------------------------------------------------------------
+// The salary of each pay period. It isn't the same every month: you can type the coming one as soon as you know it
+// (around the 15th), and it counts for that pay period only. A pay period you've logged takes it from its log.
+// ---------------------------------------------------------------------------
+const MONTH_KEY = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/** The log that holds the salary of a pay period's payday: End of November, or December while your logs carry the month after (log_months). */
+export const salaryLogMonth = (base, endMonths = CUR.end_months) => (endMonths ? base : addMonths(base, 1));
+
+/** Salaries you typed for one pay period each, by the month of its payday: {"2026-11": 39500} */
+export function loadPeriodSalaries(data) {
+  const s = getSetting(data, "period_salaries", {});
+  if (!s || typeof s !== "object" || Array.isArray(s)) return {};
+  return Object.fromEntries(Object.entries(s).filter(([k, v]) => MONTH_KEY.test(k) && typeof v === "number" && Number.isFinite(v) && v >= 0));
+}
+
+/**
+ * A pay period's salary, and where it's from: typed for it ("period"), your own figure for every pay period
+ * from before ("kept", until you tap Use latest), its log ("log"), or the latest log ("latest").
+ * `typed: false` gives what it would be without the one typed for it.
+ */
+export function salaryFor(data, base, { typed = true } = {}) {
+  const own = typed ? loadPeriodSalaries(data)[base] : undefined;
+  if (own !== undefined) return { salary: own, src: "period", entry: null };
+  const kept = getSetting(data, "budget_salary");
+  if (typeof kept === "number" && Number.isFinite(kept) && kept >= 0) return { salary: kept, src: "kept", entry: null };
+  const logged = (data.entries || []).find((e) => e.month === salaryLogMonth(base));
+  if (logged) return { salary: logged.income_sek, src: "log", entry: logged };
+  const latest = data.entries?.length ? data.entries.at(-1) : null;
+  return latest ? { salary: latest.income_sek, src: "latest", entry: latest } : { salary: 0, src: "none", entry: null };
+}
+
 export function budgetSnapshot(data, today = todayDate(), offset = 0, salaryOverride = null) {
   const entries = data.entries;
   const base = addMonths(defaultPeriodMonth(today), offset);
   const start = paydayFor(base), end = paydayFor(addMonths(base, 1));
   const latest = entries.length ? entries.at(-1) : null;
   const [fx, fxSrc, fxOverride] = budgetRate(data, entries);
-  // a salary you typed on the Budget page is kept (in the data file) until you go back to the latest log
-  const kept = getSetting(data, "budget_salary");
-  const savedSalary = typeof kept === "number" && Number.isFinite(kept) && kept >= 0 ? kept : null;
-  const salary = salaryOverride !== null ? salaryOverride : savedSalary !== null ? savedSalary : latest ? latest.income_sek : 0;
+  // the salary of this pay period: typed for it, your own figure, its log, or the latest log
+  const paid = salaryFor(data, base);
+  const salary = salaryOverride !== null ? salaryOverride : paid.salary;
   // your fixed costs, and the cars you count in the Budget (from the car monitor)
   const expenses = [...data.expenses.map((x) => expenseInPeriod(x, base)), ...carBudgetLines(data, base)].sort(byPosition);
   const goals = [...data.goals].sort(byPosition);
@@ -961,7 +992,8 @@ export function budgetSnapshot(data, today = todayDate(), offset = 0, salaryOver
   const missing = active.filter((e) => e.amount === 0);
   return Object.assign(b, {
     today, base, start, end, days: daysBetween(start, end), fx, fx_src: fxSrc, fx_override: fxOverride,
-    expenses, active, profiles, floors, maxes, trip, plan, profile: key, goals_list: goals, latest, salary_kept: salaryOverride === null && savedSalary !== null, buffer_first: bufferFirst, missing,
+    expenses, active, profiles, floors, maxes, trip, plan, profile: key, goals_list: goals, latest, salary_kept: salaryOverride === null && paid.src === "kept",
+    salary_src: salaryOverride !== null ? "override" : paid.src, salary_log: salaryOverride !== null ? null : paid.entry, buffer_first: bufferFirst, missing,
     plan_ready: salary > 0 && b.fixed > 0 && missing.length <= 2,
   });
 }
