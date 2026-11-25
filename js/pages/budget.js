@@ -1,7 +1,7 @@
 // Budget: your setup. The salary of this pay period and the next, your fixed costs and goals, the rules of the
 // saving plans you pick from on Home, and a draft to try changes on. Fixed costs and goals come first, then your
 // future, and the rest is yours to live on.
-import { h, chip, dot, segmented, toggle, splitBar, toast } from "../ui.js";
+import { h, chip, dot, segmented, toggle, icon, splitBar, toast, sheet, group, caption, footer } from "../ui.js";
 import {
   COLORS, PROFILE_DEFS, CATEGORIES, CATEGORY_COLORS, GOAL_COLORS,
   budgetSnapshot, paydayStatus, paydayReason, paydayFor, addMonths, monthOf, daysBetween, addDays,

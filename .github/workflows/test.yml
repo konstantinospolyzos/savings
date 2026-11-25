@@ -9,6 +9,8 @@ jobs:
         with:
           node-version: 22
       - run: npm test
+      - name: Every name the app uses is defined
+        run: npx --yes eslint@8 --no-eslintrc --env browser,es2022 --parser-options=ecmaVersion:2022,sourceType:module --rule 'no-undef: error' js/*.js js/pages/*.js sw.js
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
