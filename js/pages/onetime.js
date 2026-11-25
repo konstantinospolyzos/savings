@@ -22,7 +22,7 @@ const syncNow = () => { if (store.mode === "drive" && !store.drive.tokenValid())
 
 /**
  * The one-time expenses of the months the pay period shown touches (by the month you bought them in): tap one
- * to change it. They're paid already, so nothing on the Budget tab or in My plan changes with them.
+ * to change it. They're paid already, so nothing on the Budget tab or in your plan changes with them.
  */
 export function oneTimeCard(snap, ctx) {
   const months = oneTimeMonths(ctx.data, snap.start, snap.end);

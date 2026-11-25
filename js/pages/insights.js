@@ -1,14 +1,15 @@
-// Insights: what your logs and your budget say, looking back (your action plan is on My plan).
+// Insights: what your logs and your budget say, looking back: your money over the months first (it was on Overview),
+// then the key numbers and the rest (your action plan is on Plan details).
 import { h, chip, dot, segmented, splitBar, kv, appIcon, toast } from "../ui.js";
 import { chart } from "../charts.js";
 import {
   COLORS, MONTHS, NOTE_TAGS, CUR, CURRENCIES, inSweden, localSym, secondSym, brokersText, hasMoney, CAPITAL_GAINS_TAX, ISK_TAX_FREE, CATEGORY_COLORS,
   monthFlows, summarize, tagAnalysis, quietMonths, tripComparison, travelFund, incomeAnalysis, investmentStatus,
   futureValue, tripStatus, isTrip, mean, mLong, mShort, mNum, fmtSek, fmtEur, fmtAxisSek, pct, toneOf,
-  parseNumber, plainNumber, expenseMonthlySek, shortNote, roundTo10, investedSek,
+  parseNumber, plainNumber, expenseMonthlySek, shortNote, roundTo10, investedSek, bufferTargetText,
 } from "../core.js";
 import { store } from "../store.js";
-import { statCard } from "./overview.js";
+import { statCard, chartCard } from "./overview.js";
 import { makeFoldable } from "./fold.js";
 
 const LIVING_C = COLORS.purple;
@@ -40,7 +41,7 @@ function kpis(snap, summ, inv) {
   } else cards.push(statCard("SPENDING PER MONTH", LIVING_C, fmtSek(summ.spending), "estimated: income − saved", "", "flat", "v"));
   if (snap.plan_ready) {
     cards.push(statCard("BUFFER", COLORS.blue, `${(snap.bank / snap.fixed).toFixed(1)} months`, "of fixed costs in the bank",
-      `Target ${snap.buffer_months} months`, snap.shortfall <= 0 ? "up" : "flat"));
+      bufferTargetText(snap), snap.shortfall <= 0 ? "up" : "flat", snap.buffer_amount !== null ? "c" : ""));
   } else cards.push(statCard("BUFFER", COLORS.blue, "—", "fill in fixed costs in Budget"));
   if (inv && !inv.taxed) {
     cards.push(statCard("INVESTED", COLORS.orange, fmtEur(inv.value), "market value in your latest log",
@@ -407,6 +408,7 @@ export function renderInsights(ctx) {
   if (planned > 0) { monthly = planned; source = "your plan"; }
   else { monthly = roundTo10(Math.max(mean(recent.map((f) => f.to_inv)) || 0, 0)); source = "your recent average"; }
   return [`Based on ${mShort(recent[0].month)} – ${mShort(recent.at(-1).month)} and your budget`,
+    chartCard(es),
     kpis(snap, summ, inv),
     foldable("chart", monthChartCard(recent, snap)),
     foldable("trips", tripCard(tripComparison(recent), recent)),

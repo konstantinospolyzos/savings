@@ -1,7 +1,8 @@
-import { h, sheet, group, caption, footer, icon, alertBox, toast, saveFile, pickFile, toggle, selectRow } from "../ui.js";
+import { h, sheet, group, caption, footer, icon, alertBox, toast, saveFile, pickFile, toggle, selectRow, segmented } from "../ui.js";
 import {
   APP_NAME, APP_VERSION, toCsv, COUNTRIES, CURRENCIES, currencySettings, configure, convertSecond, fetchMonthlyRates,
-  getSetting, DEFAULT_BROKERS, symOf, mLong, addMonths,
+  getSetting, DEFAULT_BROKERS, symOf, mLong, addMonths, budgetSnapshot, todayDate, KEEP_SAVING_CHOICES, fmtSek, plainNumber, parseNumber,
+  localSym, inSweden,
 } from "../core.js";
 import { store, FILE_NAME, FOLDER_NAME, describeData, readBackupFile } from "../store.js";
 import { getKey } from "../pump.js";
@@ -102,7 +103,7 @@ function currencySection(rebuild) {
   brokerInput.addEventListener("keydown", (ev) => { if (ev.key === "Enter") brokerInput.blur(); });
 
   const explain = two
-    ? `Salary, bank savings and the budget are in ${c.local}. Investments and the Overview totals are in ${c.second}, with the exchange rate you log each month.`
+    ? `Salary, bank savings and the budget are in ${c.local}. Investments and the balances on Home are in ${c.second}, with the exchange rate you log each month.`
     : `Everything is in ${c.local}: salary, bank savings, investments and the budget.`;
   const local = c.country === "SE" ? " Swedish bank holidays move payday, and the 30% tax on investments is worked out." : "";
   return [
@@ -112,6 +113,42 @@ function currencySection(rebuild) {
     group(h("label", { class: "form-row" }, h("span", { class: "form-label" }, "Where you invest"), brokerInput)),
     footer("Your broker or investment account, shown in your plan (“To Avanza: long-term money”). Leave it empty if you don't want a name."),
   ];
+}
+
+/**
+ * Your emergency buffer, set once: how much to keep in the bank (empty: some months of your fixed costs), whether
+ * it fills before you invest, and how much keeps going to savings once it's full. Payday's plan works from it.
+ */
+function bufferSection() {
+  const snap = budgetSnapshot(store.data, todayDate());
+  const amount = getSetting(store.data, "buffer_amount", null);
+  const own = typeof amount === "number" && Number.isFinite(amount) && amount >= 0;
+  const months = snap.buffer_months;
+  const input = h("input", { class: "form-input", type: "text", inputmode: "numeric", autocomplete: "off",
+    placeholder: snap.fixed > 0 ? plainNumber(months * snap.fixed) : "0", value: own ? plainNumber(amount) : "", "aria-label": "Buffer amount" });
+  const set = () => {
+    const raw = input.value.trim();
+    const v = raw ? parseNumber(raw) : null;
+    if (raw && (v === null || v < 0)) { input.classList.add("invalid"); return; }
+    input.classList.remove("invalid");
+    if ((v === null && !own) || (own && v !== null && Math.abs(v - amount) < 0.5)) return;
+    store.setSetting("buffer_amount", v === null ? null : Math.round(v));
+    toast(v === null ? `Buffer: ${months} months of fixed costs` : `✓  Buffer: ${fmtSek(Math.round(v))}`);
+  };
+  input.addEventListener("change", set);
+  input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") input.blur(); });
+  const keep = segmented(KEEP_SAVING_CHOICES.map((v) => `${Math.round(v * 100)}%`), Math.max(KEEP_SAVING_CHOICES.indexOf(snap.keep_share), 0),
+    (i) => store.setSetting("keep_saving", KEEP_SAVING_CHOICES[i]), "small");
+  const where = snap.latest ? ` You have ${fmtSek(snap.bank)} in the bank: ${snap.shortfall > 0 ? `${fmtSek(snap.shortfall)} to go` : "it's full"}.` : "";
+  return [caption("EMERGENCY BUFFER"),
+    group(
+      h("label", { class: "form-row" }, h("span", { class: "form-label" }, "Buffer"), input, h("span", { class: "form-unit" }, localSym())),
+      h("label", { class: "form-row switch-row" }, h("span", { class: "form-label" }, "Fill it before investing"),
+        toggle(snap.buffer_first, (on) => setTimeout(() => store.setSetting("buffer_first", on), 220), "Fill it before investing")),
+      h("div", { class: "form-row keep-row" }, h("span", { class: "form-label" }, "When it's full, keep saving"), keep)),
+    footer(`The money you keep in the bank for the unexpected. Payday's plan compares your bank with it: until it's full, what you save goes to the bank${snap.buffer_first ? " and nothing is invested" : ""}.`
+      + `${own ? "" : ` Empty: ${months} months of your fixed costs${snap.fixed > 0 ? ` (${fmtSek(months * snap.fixed)})` : ""}.`}${where}`
+      + ` Once it's full, the share above stays in savings and the rest is invested. ${inSweden() ? "Finansinspektionen suggests" : "A common rule of thumb is"} 2–3 months of necessary costs.`)];
 }
 
 const dayText = (ms) => new Date(ms).toLocaleDateString([], { day: "numeric", month: "short" });
@@ -198,6 +235,7 @@ export function openSettings(ctx) {
       toggle(ctx.privacy(), (on) => ctx.setPrivacy(on), "Hide amounts"))));
     parts.push(footer("Blurs balances, salaries, changes and notes so you can show the app to others. Only on this device. The eye button at the top switches it too."));
 
+    if (!ctx.inCar) parts.push(...bufferSection());
     if (!ctx.inCar) parts.push(...monthsSection());
 
     parts.push(caption("IMPORT AND BACKUP"));

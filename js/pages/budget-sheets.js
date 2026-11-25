@@ -206,7 +206,7 @@ export function openExpenseSheet(ctx, snap, shownCost = null) {
     footer("For instalments: turn on “Last month” and pick the final payment. After that month the cost drops out of the budget by itself."),
     caption("PAID FROM"),
     group(switchRow("Revolut pocket", pocket)),
-    footer("For what you pay from a Revolut pocket (groceries, fuel…): My plan adds it to the money to move to Revolut on payday, with your week pockets."),
+    footer("For what you pay from a Revolut pocket (groceries, fuel…): payday adds it to the money to move to Revolut, with your living money."),
     original ? h("button", { type: "button", class: "btn destructive-row", onclick: remove }, "Delete Fixed Cost") : null);
   api = sheet({ title: original ? "Edit Fixed Cost" : "New Fixed Cost", left: { text: "Cancel" },
     right: { text: "Save", bold: true, onClick: save }, body });
@@ -385,7 +385,7 @@ export function openProfilesSheet(ctx, snap) {
     footer(`Living money is what you spend beyond your fixed costs: eating out, fun, small buys. A plan never leaves you less than this a week: when its % doesn't fit, it saves less instead. At least ${fmtSek(minFloor)} a week.`),
     caption("LIVE ON AT MOST"),
     group(maxRows),
-    footer("A plan never leaves you more than this a week: when its % would, the rest goes to your future (savings and investing) too. Leave it empty for no most. In a pay period with a trip, turn on the trip switch in My plan and there's no most."),
+    footer("A plan never leaves you more than this a week: when its % would, the rest goes to your future (savings and investing) too. Leave it empty for no most. In a pay period with a trip, turn on the trip switch when you pick the plan and there's no most."),
     note,
     h("button", { type: "button", class: "link-btn center", onclick: () => {
       for (const [key, , , def, floorDef, maxDef] of PROFILE_DEFS) {

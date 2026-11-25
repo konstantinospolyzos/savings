@@ -35,6 +35,7 @@ export function s(tag, attrs = {}, ...children) {
 // ---------------------------------------------------------------------------
 const ICONS = {
   overview: '<path d="M4 17.5l5.2-5.6 3.6 3.4L20 7.5"/><path d="M15.5 7.5H20V12"/>',
+  home: '<path d="M3.8 11.4L12 4.4l8.2 7"/><path d="M6.2 9.6v9.9h11.6V9.6"/><path d="M10.1 19.5v-5.2h3.8v5.2"/>',
   history: '<path d="M9 7h11M9 12h11M9 17h11"/><circle cx="4.6" cy="7" r="1.1" fill="currentColor"/><circle cx="4.6" cy="12" r="1.1" fill="currentColor"/><circle cx="4.6" cy="17" r="1.1" fill="currentColor"/>',
   budget: '<circle cx="12" cy="12" r="8.2"/><path d="M12 3.8V12l6.6 4.6" />',
   insights: '<path d="M9.2 17.2h5.6M9.8 20.2h4.4"/><path d="M12 3.6a5.8 5.8 0 0 0-3.4 10.5c.6.5.8 1.1.8 1.8v.4h5.2v-.4c0-.7.2-1.3.8-1.8A5.8 5.8 0 0 0 12 3.6z"/>',

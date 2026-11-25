@@ -69,6 +69,7 @@ export function normalize(raw) {
       month, income_sek: num(e.income_sek), bank_sek: num(e.bank_sek), invested_eur: num(e.invested_eur),
       sek_to_eur: rate, comment: typeof e.comment === "string" ? e.comment : "",
       added_eur: optNum(e.added_eur), trip: e.trip === null || e.trip === undefined ? null : Boolean(e.trip),
+      ...(typeof e.logged === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.logged) ? { logged: e.logged } : {}),    // the day it was last saved
     });
   }
   const entries = [...byMonth.values()].sort((a, b) => (a.month < b.month ? -1 : 1));

@@ -1,5 +1,5 @@
 // Draft budget: a copy of your budget to try things out (a cost you'll share, a raise, a new subscription).
-// Nothing here changes your real budget or My plan. The draft stays on this device until you start over.
+// Nothing here changes your real budget or your plan. The draft stays on this device until you start over.
 import { h, dot, toggle, icon, alertBox, toast } from "../ui.js";
 import {
   COLORS, CATEGORIES, CATEGORY_COLORS, PROFILE_DEFS, budgetSnapshot, expenseApplies, expenseMonthlySek, planForRate,
@@ -35,7 +35,7 @@ function totals(d, snap) {
   const fixed = d.costs.filter((c) => c.on).reduce((a, c) => a + c.amount, 0);
   const goals = d.goals_on ? d.goals : 0;
   const left = d.salary - fixed, free = left - goals;
-  let shortfall = Math.max(snap.buffer_months * fixed - snap.bank, 0);
+  let shortfall = Math.max((snap.buffer_amount ?? snap.buffer_months * fixed) - snap.bank, 0);    // the buffer you set, or months of the draft's costs
   if (shortfall < 500) shortfall = 0;
   const like = { salary: d.salary, free, goals, days: snap.days, buffer_first: snap.buffer_first, shortfall, keep_share: snap.keep_share };
   const plans = PROFILE_DEFS.map(([key, name]) => ({ key, name, ...planForRate(like, snap.profiles[key], snap.floors[key], snap.trip ? 0 : snap.maxes[key]) }));
@@ -147,7 +147,7 @@ export function renderDraft(ctx) {
   const t = totals(d, snap);
   return [`Copied from your budget ${shortDate(new Date(`${d.made}T12:00:00`))}  ·  nothing here changes it`,
     h("div", { class: "card draft-intro" },
-      h("div", { class: "muted" }, "Try changes here: a cost you'll share, a raise, something new. Your Budget and My plan stay as they are."),
+      h("div", { class: "muted" }, "Try changes here: a cost you'll share, a raise, something new. Your budget and your plan stay as they are."),
       h("div", { class: "card-actions" },
         h("button", { type: "button", class: "btn tinted small", onclick: () => ctx.go("budget") }, "Back to Budget"),
         h("button", { type: "button", class: "btn plain small", onclick: startOver }, "Start over"))),

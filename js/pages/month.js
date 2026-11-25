@@ -1,7 +1,7 @@
 import { h, sheet, group, caption, footer, toggle, alertBox, toast, icon } from "../ui.js";
 import {
   CUR, localSym, secondSym, brokersText, rateShown, rateFromInput, TRAVEL_RX, addMonths, defaultNewMonth, mLong, mShort, logName, paydayFor, shortDate,
-  parseNumber, plainNumber, fmtEur, fmtSek, toneOf, fetchSekToEur, loadPeriodSalaries,
+  parseNumber, plainNumber, fmtEur, fmtSek, toneOf, fetchSekToEur, loadPeriodSalaries, isoDay, budgetSnapshot,
 } from "../core.js";
 import { store } from "../store.js";
 
@@ -10,12 +10,20 @@ function field(placeholder) {
     spellcheck: "false", placeholder });
 }
 
+const getBufferSet = (ctx) => typeof (ctx.data || store.data).settings?.buffer_amount === "number";
+
 function row(labelText, input, unit = null, extra = null) {
   return h("label", { class: "form-row" }, h("span", { class: "form-label" }, labelText), input,
     unit ? h("span", { class: "form-unit" }, unit) : null, extra);
 }
 
-export function openMonthSheet(ctx, original = null, startMonth = null) {
+/**
+ * Log a month (or change one). opts.when says where you came from: "payday" (Home's payday step: your numbers
+ * today, the bank without the salary that just came in) or "month_end" (the 1st, after the bills: it replaces
+ * the payday numbers). Every save notes the day it was logged.
+ */
+export function openMonthSheet(ctx, original = null, startMonth = null, opts = {}) {
+  const when = opts.when || null;
   const entries = ctx.entries;
   const last = entries.at(-1) || null;
   let month = original ? original.month : startMonth || defaultNewMonth(entries, ctx.today);
@@ -147,6 +155,17 @@ export function openMonthSheet(ctx, original = null, startMonth = null) {
     validate();
   });
 
+  // what the numbers mean, when you come from Home's payday or 1st-of-the-month step
+  function whenNote() {
+    if (when === "payday") {
+      const snap = budgetSnapshot(ctx.data || store.data, ctx.today);
+      const target = snap.target > 0 ? `, ${fmtSek(snap.target)}${getBufferSet(ctx) ? ", set in Settings" : ""}` : "";
+      return footer(`The bank as it is now, without the salary that just came in: one-time buys are already out of it. Your plan compares it with your buffer${target}. On the 1st, after the bills, you log the month again: these numbers are just for today's plan.`);
+    }
+    if (when === "month_end") return footer("The bills are paid and the money is moved: your bank and investments as they are now. It replaces your payday numbers.");
+    return null;
+  }
+
   const stepper = h("div", { class: "month-stepper" },
     h("button", { type: "button", class: "stepper", "aria-label": "Previous month", onclick: () => { month = addMonths(month, -1); updateMonth(); } }, icon("chevronLeft", 18)),
     monthLabel,
@@ -154,10 +173,11 @@ export function openMonthSheet(ctx, original = null, startMonth = null) {
 
   const body = h("div", { class: "form" },
     caption("MONTH"), group(stepper), monthNote, monthMeans,
-    caption("AMOUNTS"),
-    group(row("Income (salary)", income, localSym()), row("Bank savings", bank, localSym()),
+    caption(when === "payday" ? "YOUR NUMBERS TODAY" : "AMOUNTS"),
+    group(row("Income (salary)", income, localSym()), row(when === "payday" ? "Bank, without today's salary" : "Bank savings", bank, localSym()),
       row(CUR.brokers ? `Invested (${CUR.brokers})` : "Invested", invested, secondSym())),
     convFooter,
+    whenNote(),
     caption("INVESTMENTS"),
     group(row("Added this month", added, secondSym())),
     footer(`Money you moved into ${brokersText("your investments")} this month. Optional, but it lets Insights tell your own saving apart from market ups and downs.`),
@@ -188,7 +208,7 @@ export function openMonthSheet(ctx, original = null, startMonth = null) {
     const { inc, bnk, inv, add, r } = read();
     if ([inc, bnk, inv, r].includes(null) || (added.value.trim() && add === null)) return;
     const entry = { month, income_sek: inc, bank_sek: bnk, invested_eur: inv, sek_to_eur: r,
-      comment: note.value.trim(), added_eur: add, trip: tripSwitch.input.checked };
+      comment: note.value.trim(), added_eur: add, trip: tripSwitch.input.checked, logged: isoDay(ctx.today) };
     store.saveEntry(entry, original && original.month !== month ? original.month : null);
     sh.close();
     toast(`✓  Saved ${logName(month)}`);
@@ -206,7 +226,7 @@ export function openMonthSheet(ctx, original = null, startMonth = null) {
     if (store.mode === "drive" && !store.drive.tokenValid()) store.syncFromTap();
   }
 
-  api = sheet({ title: original ? "Edit Month" : "New Month", left: { text: "Cancel" },
+  api = sheet({ title: when === "payday" ? "Your Numbers Today" : when === "month_end" ? "After the Bills" : original ? "Edit Month" : "New Month", left: { text: "Cancel" },
     right: { text: "Save", bold: true, onClick: save }, body });
   note.dispatchEvent(new Event("input"));
   if (original && original.trip !== null && original.trip !== undefined) tripTouched = true;

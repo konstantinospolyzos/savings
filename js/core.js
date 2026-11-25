@@ -16,7 +16,7 @@ export const COLORS = {
   teal: "var(--teal)", brown: "var(--brown)", gray: "var(--gray)", gray3: "var(--gray3)",
 };
 
-export const SERIES = {             // Overview chart lines
+export const SERIES = {             // the money chart's lines (Insights)
   bank: ["Bank", COLORS.blue],
   invested: ["Invested", COLORS.orange],
   income: ["Income", COLORS.cyan],
@@ -131,6 +131,14 @@ export function fromSek(sek) {
 export const BUFFER_MONTH_CHOICES = [2, 3, 4, 6];
 /** The share of your future money that keeps going to your savings account once the buffer is full. */
 export const KEEP_SAVING_CHOICES = [0, 0.1, 0.25, 0.5];
+/** The buffer you want in the bank, in your currency (Settings), or null: some months of fixed costs (buffer_months). */
+export function loadBufferAmount(data) {
+  const v = getSetting(data, "buffer_amount", null);
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+/** "Target 30 000 kr" or "Target 3 months": the buffer you aim for, in a few words. */
+export const bufferTargetText = (snap) => (snap.buffer_amount !== null && snap.buffer_amount !== undefined
+  ? `Target ${fmtSek(snap.target)}` : `Target ${snap.buffer_months} months`);
 export function loadKeepSaving(data) {
   const v = getSetting(data, "keep_saving", 0.25);
   return KEEP_SAVING_CHOICES.includes(v) ? v : 0.25;
@@ -633,7 +641,14 @@ export function planSplit(free, salary, ratePct, floorTotal = 0, maxTotal = 0) {
     by_floor: capped && floorTotal > 0 && free >= wanted - 0.5 };       // the % fits, but would leave too little
 }
 
-export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, bufferFirst, fx, bufferMonths = 3, floorWeek = 0, days = 0, keepShare = 0, maxWeek = 0) {
+/** What the bank is short of the buffer: a few hundred kronor short counts as full. */
+export function shortfallOf(target, bank) {
+  const short = Math.max(target - bank, 0);
+  return short < 500 ? 0 : short;
+}
+
+export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, bufferFirst, fx, bufferMonths = 3, floorWeek = 0, days = 0, keepShare = 0, maxWeek = 0,
+  bufferAmount = null) {
   const fixed = sum(expenses.filter((e) => expenseApplies(e, base)).map((e) => expenseMonthlySek(e, fx)));
   const goalRows = goals.filter((g) => goalApplies(g, base)).map((g) => [g, goalPerMonth(g)]);
   const goalsTotal = sum(goalRows.map(([, m]) => m));
@@ -642,9 +657,9 @@ export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, b
   const floorTotal = floorWeek > 0 && days > 0 ? floorWeek * days / 7 : 0;
   const split = planSplit(free, salary, ratePct, floorTotal, maxWeek > 0 && days > 0 ? maxWeek * days / 7 : 0);
   const { wanted, future, living } = split;
-  const target = bufferMonths * fixed;
-  let shortfall = Math.max(target - bankSek, 0);
-  if (shortfall < 500) shortfall = 0;           // a few hundred kronor short counts as full
+  // the buffer you want: the amount you set (Settings), or some months of fixed costs
+  const target = bufferAmount !== null ? bufferAmount : bufferMonths * fixed;
+  const shortfall = shortfallOf(target, bankSek);
   const toBuffer = bufferFirst ? Math.min(future, shortfall) : 0;
   const [toSavings, invest] = keepSplit(future - toBuffer, keepShare);
   return {
@@ -653,7 +668,7 @@ export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, b
     max_week: maxWeek, living, to_buffer: toBuffer, to_savings: toSavings, invest, savings: goalsTotal + toBuffer + toSavings, keep_share: keepShare,
     save_rate: salary > 0 ? future / salary : 0, rate_pct: ratePct,
     max_rate: salary > 0 ? Math.max(free, 0) / salary : 0,
-    target, shortfall, bank: bankSek, buffer_months: bufferMonths,
+    target, shortfall, bank: bankSek, buffer_months: bufferMonths, buffer_amount: bufferAmount,
   };
 }
 
@@ -841,21 +856,41 @@ function planWithoutOneOff(p, budget) {
 }
 
 /** What the Budget page saves for My plan: the numbers a saving plan is worked out from. */
+/**
+ * From the 1st after payday, with the pay period's plan running, the plan's saving is in the bank: the bank grows
+ * with the plan (what you moved, and the month you log after the bills), so the budget keeps the bank the plan
+ * started from. Before that, a new bank figure (your payday numbers, typed again) is a change to the budget.
+ */
+export function bankSettled(snap) {
+  if (!snap.plan || !snap.today || !snap.base) return false;
+  const m = addMonths(snap.base, 1);
+  return snap.today >= day(mYear(m), mNum(m), 1);
+}
+
 export function budgetToSave(snap, today) {
+  const keep = bankSettled(snap) && typeof snap.plan.bank === "number";
+  const bank = keep ? snap.plan.bank : snap.bank;
   return {
     salary: snap.salary, fixed: snap.fixed, goals: snap.goals, goal_rows: snap.goal_rows.map(([g, m]) => [g.name, m]),
-    left: snap.left, free: snap.free, bank: snap.bank, target: snap.target, shortfall: snap.shortfall,
+    left: snap.left, free: snap.free, bank, target: snap.target, shortfall: keep ? shortfallOf(snap.target, bank) : snap.shortfall,
     buffer_first: snap.buffer_first, buffer_months: snap.buffer_months, keep_share: snap.keep_share || 0, days: snap.days, saved: isoDay(today),
   };
 }
 
-/** What changed on the Budget page since a budget was saved: [] when nothing did. */
+/**
+ * What changed on the Budget page since a budget was saved: [] when nothing did. From the 1st, with the pay
+ * period's plan running, the bank moving isn't a change: it moves with the plan (see bankSettled). A new buffer
+ * target still is.
+ */
 export function budgetChanges(saved, snap) {
   const out = [];
   if (Math.abs(saved.salary - snap.salary) > 0.5) out.push("the salary");
   if (Math.abs(saved.fixed - snap.fixed) > 0.5) out.push("the fixed costs");
   if (Math.abs(saved.goals - snap.goals) > 0.5) out.push("the saving goals");
-  if (Math.abs((saved.shortfall || 0) - snap.shortfall) > 0.5 || Boolean(saved.buffer_first) !== Boolean(snap.buffer_first)) out.push("the buffer");
+  const bank = !bankSettled(snap) && Math.abs((saved.shortfall || 0) - snap.shortfall) > 0.5;
+  const target = typeof saved.target === "number" && typeof snap.target === "number" && Math.abs(saved.target - snap.target) > 0.5
+    && !out.includes("the fixed costs");
+  if (bank || target || Boolean(saved.buffer_first) !== Boolean(snap.buffer_first)) out.push("the buffer");
   if ((saved.keep_share || 0) !== (snap.keep_share || 0)) out.push("the share kept in savings");
   return out;
 }
@@ -886,7 +921,7 @@ export function budgetRate(data, entries) {
   return [0.09, "Default rate, type yours", false];
 }
 
-/** Everything the Budget, Overview and Insights pages need about the plan. */
+/** Everything the Home, Budget and Insights pages need about the plan. */
 // ---------------------------------------------------------------------------
 // Your car in the Budget: its costs are entered once, in the car monitor
 // ---------------------------------------------------------------------------
@@ -986,7 +1021,7 @@ export function budgetSnapshot(data, today = todayDate(), offset = 0, salaryOver
   let months = getSetting(data, "buffer_months", 3);
   if (!BUFFER_MONTH_CHOICES.includes(months)) months = 3;
   const b = computeBudget(salary, expenses, goals, base, profiles[key], latest ? latest.bank_sek : 0,
-    bufferFirst, fx, months, floors[key], daysBetween(start, end), loadKeepSaving(data), trip ? 0 : maxes[key]);
+    bufferFirst, fx, months, floors[key], daysBetween(start, end), loadKeepSaving(data), trip ? 0 : maxes[key], loadBufferAmount(data));
   const plan = loadPlans(data)[base] || null;
   const active = expenses.filter((e) => expenseApplies(e, base));
   const missing = active.filter((e) => e.amount === 0);

@@ -2,7 +2,7 @@
 import { store, readDesktopFile, describeData } from "./store.js";
 import { todayDate, budgetSnapshot, investmentStatus, configure } from "./core.js";
 import { h, icon, alertBox, toast, pickFile } from "./ui.js";
-import { renderOverview } from "./pages/overview.js";
+import { renderHome } from "./pages/home.js";
 import { renderHistory } from "./pages/history.js";
 import { renderBudget } from "./pages/budget.js";
 import { renderInsights } from "./pages/insights.js";
@@ -15,12 +15,12 @@ import { renderPlan } from "./pages/plan.js";
 import { renderDraft } from "./pages/draft.js";
 
 const TABS = [
-  { key: "overview", title: "Overview", icon: "overview", render: renderOverview },
-  { key: "plan", title: "My plan", icon: "target", render: renderPlan },     // this pay period's saving plan
+  { key: "home", title: "Home", icon: "home", render: renderHome },         // your money, today's living money and the steps due
   { key: "budget", title: "Budget", icon: "budget", render: renderBudget },
   { key: "history", title: "History", icon: "history", render: renderHistory },
   { key: "insights", title: "Insights", icon: "insights", render: renderInsights },
-  // a copy of the budget to try changes on, from a button on the Budget page (not in the tab bar)
+  // not in the tab bar: this pay period's plan in detail (from Home), and a copy of the budget to try changes on (from Budget)
+  { key: "plan", title: "Plan details", icon: "target", render: renderPlan, hidden: true, parent: "home" },
   { key: "draft", title: "Draft budget", icon: "budget", render: renderDraft, hidden: true, parent: "budget" },
 ];
 // The car monitor: its own section, opened with the car button; the € button goes back to the
@@ -33,10 +33,13 @@ const CAR_TABS = [
 ];
 const ALL_TABS = [...TABS, ...CAR_TABS.filter((t) => !t.exit)];
 const tabKeys = ALL_TABS.map((t) => t.key);
-let current = tabKeys.includes(location.hash.slice(1)) ? location.hash.slice(1) : store.pref("tab", "overview");
-if (!tabKeys.includes(current)) current = "overview";
+// Overview and My plan were tabs before Home: a link or a remembered tab to them opens Home
+const RENAMED = { overview: "home", plan: "home" };
+const known = (key) => (tabKeys.includes(RENAMED[key] || key) ? RENAMED[key] || key : null);
+let current = known(location.hash.slice(1)) || known(store.pref("tab", "home")) || "home";
 const inCar = () => current.startsWith("car");
 if (!inCar()) store.setPref("savings_tab", current);
+if (location.hash.slice(1) !== current && location.hash) history.replaceState(null, "", `#${current}`);
 const scrolls = {};
 
 const main = document.getElementById("main");
@@ -119,7 +122,7 @@ function setPrivacy(on, announce = false) {
 }
 
 function go(key) {
-  if (key === "savings") key = store.pref("savings_tab", "overview");
+  if (key === "savings") key = known(store.pref("savings_tab", "home")) || "home";
   if (!tabKeys.includes(key)) return;
   scrolls[current] = window.scrollY;
   current = key;
@@ -150,7 +153,7 @@ function updateChrome() {
 }
 
 function buildTabbar() {
-  const shown = ALL_TABS.find((t) => t.key === current)?.parent || current;     // the draft shows under Budget
+  const shown = ALL_TABS.find((t) => t.key === current)?.parent || current;     // Plan details shows under Home, the draft under Budget
   tabbar.replaceChildren(...(inCar() ? CAR_TABS : TABS).filter((t) => !t.hidden).map((t) => {
     const b = h("button", { type: "button", class: `tab ${t.key === shown ? "on" : ""}`, "aria-label": t.title,
       "aria-current": t.key === shown ? "page" : null }, icon(t.icon, 26), h("span", null, t.title));
@@ -177,14 +180,14 @@ function render() {
   carBtn.setAttribute("aria-label", inCar() ? "Back to Savings" : "Car monitor");
   statusPill = h("button", { type: "button", class: "status-pill" });
   statusPill.addEventListener("click", () => (store.mode === "drive" ? store.syncFromTap() : ctx.openSettings()));
-  const showPill = current === "overview" || ["signin", "error"].includes(store.status.state);
+  const showPill = current === "home" || ["signin", "error"].includes(store.status.state);
   main.replaceChildren(h("div", { class: "page", dataset: { page: current } },
     h("h1", { class: "large-title" }, title),
     h("div", { class: "subtitle" }, subtitle),
     showPill ? statusPill : null,
     ...content.filter(Boolean)));
   addBtn.setAttribute("aria-label", current === "car-garage" ? "Add a car" : inCar() ? "Add a car log" : current === "draft" ? "Add a cost to the draft"
-    : checkInput() ? "Check in" : "Add a month");
+    : "Add a month");
   buildTabbar();
   updateChrome();
 }
@@ -194,8 +197,7 @@ function render() {
 // ---------------------------------------------------------------------------
 document.getElementById("settings-btn").addEventListener("click", () => store.ready && openSettings(context()));
 carBtn.addEventListener("click", () => store.ready && go(inCar() ? "savings" : store.pref("car_tab", "car")));
-// +: a month; on My plan, while a plan runs, a check-in; in the car monitor a log for the car shown, or in the Garage a car
-const checkInput = () => (current === "plan" ? main.querySelector(".check-input") : null);
+// +: a month; in the draft a cost; in the car monitor a log for the car shown, or in the Garage a car
 function addNew() {
   if (current === "car-garage") return openCarSheet(context(), null);
   if (inCar()) return openNewCarLog(context());
@@ -205,10 +207,7 @@ function addNew() {
     name?.focus({ preventScroll: true });
     return;
   }
-  const input = checkInput();
-  if (!input) return openMonthSheet(context(), null);
-  input.scrollIntoView({ block: "center", behavior: "smooth" });
-  input.focus({ preventScroll: true });
+  return openMonthSheet(context(), null);
 }
 addBtn.addEventListener("click", () => store.ready && addNew());
 privacyBtn.addEventListener("click", () => setPrivacy(!store.pref("privacy", false), true));
@@ -239,7 +238,7 @@ document.addEventListener("touchend", (ev) => {
 document.addEventListener("click", signInOnTap, true);
 store.on((kind) => { if (kind === "status" && store.drive.tokenValid()) autoSignIn = true; });   // signed in: next time too
 window.addEventListener("scroll", () => navbar.classList.toggle("scrolled", window.scrollY > 38), { passive: true });
-window.addEventListener("hashchange", () => { const k = location.hash.slice(1); if (k !== current && tabKeys.includes(k)) go(k); });
+window.addEventListener("hashchange", () => { const k = known(location.hash.slice(1)); if (k && k !== current) go(k); });
 document.addEventListener("keydown", (ev) => {
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "n" && store.ready) { ev.preventDefault(); addNew(); }
 });

@@ -1,25 +1,23 @@
-// My plan: the saving plan you started for this pay period, day by day (a tab of the savings section).
-// The plan keeps its numbers until payday; this page shows where you are in it: the payday checklist (the
-// first week), this week's money, a check-in against what's left, the payday transfers to tick off, what the
-// plan builds, your action plan, and past plans.
+// My plan: the saving plan of this pay period in detail (a page opened from Home, not in the tab bar).
+// Picking a plan happens here (the three plans, worked out from the budget you saved); with a plan running it
+// shows the transfers to tick off, where the salary goes, what the plan builds, the weeks, the plan's numbers,
+// your action plan and past plans. Home has the day to day: living money, check-ins and the steps.
 import { h, chip, dot, splitBar, toggle, toast, alertBox, kv, icon } from "../ui.js";
 import {
   COLORS, PROFILE_DEFS, budgetSnapshot, planForRate, loadPlans, loadBudgets, loadProfiles, loadFloors, loadMaxes, loadTrips, budgetChanges, budgetToSave,
   defaultPeriodMonth, paydayFor, addMonths, mIndex, daysBetween, addDays, isoDay, fmtRange, shortDate, fmtSek, fmtEur, pct,
-  roundTo10, plainNumber, parseNumber, plural, usualSpending, planProgress, planCheck, currentPeriod, futureValue, investedSek,
-  brokersText, localSym, mLong, getSetting, hasMoney, summarize, monthFlows, CUR, inSweden, buildActions, tagAnalysis,
-  travelFund, joinAnd, weekChunks, expenseMonthlySek, expenseApplies,
+  roundTo10, plainNumber, plural, usualSpending, planProgress, currentPeriod, futureValue, investedSek,
+  brokersText, mLong, logName, getSetting, hasMoney, summarize, monthFlows, CUR, inSweden, buildActions, tagAnalysis,
+  travelFund, expenseMonthlySek, bufferTargetText,
 } from "../core.js";
 import { store } from "../store.js";
 import { openProfilesSheet } from "./budget-sheets.js";
-import { openMonthSheet } from "./month.js";
-import { showCurrentPeriod } from "./budget.js";
 import { makeFoldable } from "./fold.js";
 
 const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, GOALS_C = COLORS.teal, BUFFER_C = COLORS.blue, INVEST_C = COLORS.orange,
   SAVINGS_C = COLORS.indigo;
 const kept = (P) => P.to_savings || 0;                  // what goes to savings after the buffer is full
-const saveOf = (P) => P.goals + P.to_buffer + kept(P);    // all that goes to your savings account
+export const saveOf = (P) => P.goals + P.to_buffer + kept(P);    // all that goes to the bank (your savings account)
 const card = (...children) => h("div", { class: "card" }, children);
 const head = (title, sub = null, right = null) => h("div", { class: "card-head" },
   h("div", { class: "card-head-text" }, h("div", { class: "card-title" }, title),
@@ -27,12 +25,6 @@ const head = (title, sub = null, right = null) => h("div", { class: "card-head" 
 const asDay = (iso) => new Date(`${iso}T12:00:00`);
 const when = (iso, today) => (iso === isoDay(today) ? "today" : `on ${shortDate(asDay(iso))}`);
 const money = (v) => fmtSek(roundTo10(v));
-/** A card of this page by its class, opened if it's folded and scrolled to just under the top bar. */
-function scrollToCard(cls) {
-  const el = document.querySelector(`[data-page="plan"] .${cls}`);
-  el?.unfold?.();
-  el?.scrollIntoView({ behavior: "smooth", block: "start" });
-}
 /** The cards further down fold to their title (tap it); these start folded. */
 const foldable = makeFoldable("plan_folded", new Set(["weeks", "details", "past"]));
 const withClass = (el, cls) => { el?.classList.add(cls); return el; };
@@ -71,7 +63,9 @@ export function planFields(bs, key) {
   const p = planForRate(bs, rate, floor, max);
   return { profile: key, rate, floor_week: floor, max_week: max, trip: Boolean(bs.trip), salary: bs.salary, fixed: bs.fixed, goals: bs.goals,
     living: p.spend, to_buffer: p.to_buffer, to_savings: p.to_savings, invest: p.invest, future: p.future, save_rate: p.rate, days: bs.days,
-    capped: p.capped, short: p.short, by_floor: p.by_floor, by_max: p.by_max };
+    capped: p.capped, short: p.short, by_floor: p.by_floor, by_max: p.by_max,
+    // the bank it started from (your payday numbers) and the buffer it filled toward
+    ...(typeof bs.bank === "number" ? { bank: bs.bank } : {}), ...(typeof bs.target === "number" ? { target: bs.target } : {}) };
 }
 
 /** Start a pay period's plan (it keeps its numbers until payday). Updating one keeps its check-ins and ticks. */
@@ -99,7 +93,7 @@ export function planChanges(P, bs) {
   if (!bs) return { changed: false, why: [], fields: null };
   const f = planFields(bs, P.profile);
   const changed = Math.abs(f.living - P.living) > 50 || Math.abs(f.future - P.future) > 50 || Math.abs(f.goals - P.goals) > 50
-    || Math.abs(kept(f) - kept(P)) > 50
+    || Math.abs(kept(f) - kept(P)) > 50 || Math.abs(f.to_buffer - P.to_buffer) > 50 || Math.abs(f.invest - P.invest) > 50
     || Math.abs(f.salary - P.salary) > 0.5 || Math.abs(f.fixed - P.fixed) > 0.5;
   const why = [Math.abs(f.salary - P.salary) > 0.5 ? "the salary" : null, Math.abs(f.fixed - P.fixed) > 0.5 ? "the fixed costs" : null,
     Math.abs(f.goals - P.goals) > 0.5 ? "the goals" : null, Math.abs(f.to_buffer - P.to_buffer) > 50 ? "the buffer" : null,
@@ -110,22 +104,14 @@ export function planChanges(P, bs) {
 }
 
 /**
- * What goes to Revolut on payday, when you pay fixed costs from Revolut pockets: a pocket for each week of the
- * pay period (the plan's living money, week by week) and the fixed costs marked Revolut pocket. null without them.
+ * What goes to Revolut on payday, when you pay fixed costs from Revolut pockets: the plan's living money (to your
+ * spending account there) and the fixed costs marked Revolut pocket. null without them.
  */
 export function revolutPockets(snap) {
   const costs = snap.active.filter((x) => x.pocket && !x.car).map((x) => [x.name, expenseMonthlySek(x, snap.fx)]);
   if (!costs.length || !snap.plan) return null;
-  const P = snap.plan, weeks = weekChunks(snap.start, snap.end), perDay = P.living / snap.days;
-  let given = 0;
-  const weekRows = weeks.map((w, k) => {
-    const last = k === weeks.length - 1;
-    const amount = last ? Math.max(Math.round(P.living - given), 0) : roundTo10(perDay * w.days);
-    given += amount;
-    return [w.days === 7 ? `Week ${k + 1}` : `Week ${k + 1} (${plural(w.days, "day")})`, amount];
-  });
-  const weeksTotal = weekRows.reduce((a, [, v]) => a + v, 0), costsTotal = costs.reduce((a, [, v]) => a + v, 0);
-  return { weeks: weekRows, costs, weeks_total: weeksTotal, costs_total: costsTotal, total: weeksTotal + costsTotal };
+  const living = Math.round(snap.plan.living), costsTotal = costs.reduce((a, [, v]) => a + v, 0);
+  return { living, costs, costs_total: costsTotal, total: living + costsTotal };
 }
 
 /** The money to move on payday, each ticked off when it's done. */
@@ -136,7 +122,7 @@ export function paydayMoves(snap) {
     kept(P) > 0 ? `savings ${fmtSek(kept(P))}` : null].filter(Boolean);
   const rv = revolutPockets(snap);
   const moves = [
-    rv ? ["revolut", `To Revolut ${fmtSek(rv.total)}`, `Weeks ${fmtSek(rv.weeks_total)} + ${rv.costs.length === 1 ? rv.costs[0][0] : "other pockets"} ${fmtSek(rv.costs_total)}`, LIVING_C] : null,
+    rv ? ["revolut", `To Revolut ${fmtSek(rv.total)}`, `Living money ${fmtSek(rv.living)} + ${rv.costs.length === 1 ? rv.costs[0][0] : "pockets"} ${fmtSek(rv.costs_total)}`, LIVING_C] : null,
     save > 0 ? ["save", `Save ${fmtSek(save)}`, `To your savings account${into.length > 1 ? `: ${into.join(" + ")}` : P.goals > 0 ? ": your saving goals" : P.to_buffer > 0 ? ": your buffer" : ""}`, BUFFER_C] : null,
     P.invest > 0 ? ["invest", `Invest ${fmtSek(P.invest)}`, `To ${brokersText("your investment account")}`, INVEST_C] : null,
   ].filter(Boolean);
@@ -149,11 +135,11 @@ export function paydayMoves(snap) {
 }
 
 /** Pocket by pocket: what to put in each one. */
-function pocketsList(rv) {
+export function pocketsList(rv) {
   const line = (name, v) => h("div", { class: "kv" }, h("span", { class: "kv-label" }, name), h("span", { class: "kv-value amt" }, fmtSek(v)));
   return h("div", { class: "pockets" },
-    h("div", { class: "caption" }, "INTO YOUR REVOLUT POCKETS"),
-    h("div", { class: "kv-list" }, rv.weeks.map(([n, v]) => line(n, v)), rv.costs.map(([n, v]) => line(n, v)),
+    h("div", { class: "caption" }, "INTO REVOLUT"),
+    h("div", { class: "kv-list" }, line("Living money, your spending account", rv.living), rv.costs.map(([n, v]) => line(`${n} pocket`, v)),
       h("div", { class: "kv pockets-total" }, h("span", { class: "kv-label" }, "Total to Revolut"), h("span", { class: "kv-value amt" }, fmtSek(rv.total)))));
 }
 
@@ -161,7 +147,7 @@ function pocketsList(rv) {
 // The page
 // ---------------------------------------------------------------------------
 /** The budget of the pay period today is in (the Budget page jumps ahead a week before payday). */
-function periodSnapshot(ctx) {
+export function periodSnapshot(ctx) {
   const per = currentPeriod(ctx.today);
   const offset = mIndex(per.base) - mIndex(defaultPeriodMonth(ctx.today));
   const snap = budgetSnapshot(ctx.data, ctx.today, offset);
@@ -169,78 +155,26 @@ function periodSnapshot(ctx) {
   return [snap, offset];
 }
 
-/** This week: the money, the day of the pay period and how long to payday. */
 let switching = false;        // the saving plans show only after you tap Switch plan
+/** Home's Plan details and Switch plan: this page opens with the three plans only for Switch plan. */
+export function startSwitching(on = true) { switching = on; }
 
-function weekCard(snap, pr, ctx) {
+/** The plan running: what it gives, and switching to another one. */
+function planHeadCard(snap, pr, ctx) {
   const P = snap.plan;
-  const toPayday = daysBetween(snap.today, snap.end);
-  const w = pr.week;
-  return h("div", { class: "card hero plan-hero" },
-    h("div", { class: "cap-row" }, dot(LIVING_C, 8),
-      h("span", { class: "caption" }, w.days === 7 ? `WEEK ${pr.week_index + 1} OF ${pr.weeks.length}` : "THE LAST DAYS"),
-      h("span", { class: "hint" }, fmtRange(w.start, w.end)),
-      h("span", { class: "plan-day" }, chip(`Day ${pr.day} of ${pr.days}`, "info"))),
-    h("div", { class: "big-value amt" }, money(pr.week_money)),
-    h("div", { class: "muted amt-soft" }, `to spend this week  ·  ≈ ${money(pr.per_day)} a day  ·  ${pr.week_days_left === 1 ? "last day of the week" : `${pr.week_days_left} days left in it`}`),
-    h("div", { class: "plan-progress" }, splitBar([[pr.day, BUFFER_C], [pr.days - pr.day, "var(--fill)"]], 8)),
-    h("div", { class: "plan-progress-labels" }, h("span", null, `Payday ${shortDate(snap.start)}`),
-      h("span", null, toPayday === 1 ? "Payday tomorrow" : `${toPayday} days to payday, ${shortDate(snap.end)}`)),
-    h("div", { class: "hint amt-soft" }, `${profileName(P.profile)} plan: ${fmtSek(P.living)} to live on for the whole pay period, about ${money(pr.per_week)} a week.`
-      + (pr.week_index + 1 < pr.weeks.length ? ` Next week: ${money(pr.per_day * pr.weeks[pr.week_index + 1].days)}.` : " Next up: payday.")),
-    h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn tinted small",
-      onclick: () => { switching = !switching; ctx.refresh(); } }, switching ? "Cancel switching" : "Switch plan")));
-}
-
-/** How's it going: what's left of the living money, against what the plan has left for the days to come. */
-function checkCard(snap, pr) {
-  const P = snap.plan, today = snap.today;
-  const checks = (P.checks || []).filter((c) => c.date >= isoDay(snap.start) && c.date <= isoDay(today));
-  const last = checks.at(-1) || null;
-  const input = h("input", { class: "check-input amt", type: "text", inputmode: "decimal", autocomplete: "off",
-    placeholder: plainNumber(roundTo10(pr.expected)), "aria-label": "Living money left" });
-  const save = () => {
-    const v = parseNumber(input.value);
-    if (v === null || v < 0) { input.classList.add("invalid"); return; }
-    const list = [...(P.checks || []).filter((c) => c.date !== isoDay(today)), { date: isoDay(today), left: Math.round(v) }].slice(-40);
-    setPlan(snap.base, { ...P, checks: list });
-    const r = planCheck(P, snap.start, snap.end, { date: isoDay(today), left: v });
-    toast(`${r.status}: ≈ ${money(r.per_day_now)} a day to payday`);
-  };
-  input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); save(); } });
-  input.addEventListener("input", () => input.classList.remove("invalid"));
-  let result = null;
-  if (last) {
-    const r = planCheck(P, snap.start, snap.end, last);
-    const diffText = Math.abs(r.diff) < 10 ? "just what the plan has for them" : `${money(Math.abs(r.diff))} ${r.diff > 0 ? "more" : "less"} than the plan has for them (${money(r.expected)})`;
-    const age = daysBetween(asDay(last.date), today);
-    result = h("div", { class: "check-result" },
-      h("div", { class: "cap-row" }, chip(r.status, r.tone), h("span", { class: "hint" }, `${fmtSek(last.left)} left ${when(last.date, today)}`)),
-      h("div", { class: "check-line amt-soft" }, `You have ${fmtSek(last.left)} for the ${plural(r.days_left, "day")} ${last.date === isoDay(today) ? "from today" : "from then"} to payday: ${diffText}.`),
-      h("div", { class: "check-now amt" }, `To make it last: ≈ ${money(r.per_day_now)} a day, ${money(r.per_week_now)} a week.`),
-      age >= 3 ? h("div", { class: "hint" }, `That was ${plural(age, "day")} ago: check in again to keep this right.`) : null);
-  }
-  const older = checks.slice(0, -1).slice(-4).reverse().map((c) => {
-    const r = planCheck(P, snap.start, snap.end, c);
-    return h("div", { class: "check-old" }, h("span", { class: "muted" }, shortDate(asDay(c.date))),
-      h("span", { class: "amt" }, `${fmtSek(c.left)} left`), chip(r.status, r.tone, "small"));
-  });
-  return card(head("How's it going?", last ? null : "Check in now and then: it tells you if you're on track, and what you can spend a day to make it last."),
-    result,
-    h("div", { class: "check-row" }, h("span", { class: "check-label" }, "Living money left now"), input, h("span", { class: "check-unit" }, localSym()),
-      h("button", { type: "button", class: "btn tinted small", onclick: save }, "Check")),
-    h("div", { class: "hint" }, "Look at your everyday account and take off what you still have to pay this period: bills, and the transfers below if you haven't made them. What's left is your living money."),
-    older.length ? h("div", { class: "check-history" }, h("div", { class: "caption" }, "EARLIER CHECK-INS"), older,
-      h("div", { class: "hint" }, "How each one compared with the plan on that day.")) : null);
+  return card(head(`${profileName(P.profile)} plan`,
+    `${fmtSek(P.living)} to live on, ≈ ${money(pr.per_day)} a day. ${fmtSek(saveOf(P))} to the bank${P.invest > 0 ? `, ${fmtSek(P.invest)} to invest` : ", nothing to invest"}.`,
+    h("button", { type: "button", class: "btn tinted small", onclick: () => { switching = !switching; ctx.refresh(); } }, switching ? "Cancel" : "Switch plan")));
 }
 
 function movesCard(snap) {
   const m = paydayMoves(snap);
   if (!m.count) return null;
-  return withClass(card(head("On payday, move", m.all_done ? "✓ Done. What's left in your everyday account is yours to spend." : "As soon as the salary lands, before you start spending."),
+  return withClass(card(head("Moving the money", m.all_done ? "✓ All moved. What's left in your spending account is yours to spend."
+    : "Revolut on payday. The bank and investing on the 1st, after the bills."),
     h("div", { class: "list" }, m.rows),
     m.revolut ? pocketsList(m.revolut) : null,
-    h("div", { class: "hint" }, "Tick them off when you've moved the money. Standing transfers make it automatic.")), "plan-moves");
+    h("div", { class: "hint" }, "Home ticks these off with you on payday and on the 1st. You can tick them here too.")), "plan-moves");
 }
 
 /** Where the salary goes in this plan. */
@@ -267,15 +201,17 @@ function buildsCard(snap) {
     h("div", { class: "cap-row" }, dot(color, 8), h("span", { class: "caption" }, title)),
     value ? h("div", { class: "build-value amt" }, value) : null, ...rest);
   if (snap.target > 0) {
-    const after = snap.bank + P.to_buffer;
+    const bank = typeof P.bank === "number" ? P.bank : snap.bank;        // the bank on payday: what you move on the 1st comes on top
+    const after = bank + P.to_buffer;
     const short = Math.max(snap.target - after, 0);
     const months = P.to_buffer > 0 && short > 0 ? Math.ceil(short / P.to_buffer) : null;
-    const text = snap.bank >= snap.target ? (kept(P) > 0 ? `Full. ${fmtSek(kept(P))} still goes to your savings account this period, the rest to investing.` : "Full: all of this plan's future money can go to investing.")
+    const text = bank >= snap.target ? (kept(P) > 0 ? `Full. ${fmtSek(kept(P))} still goes to your savings account this period, the rest to investing.` : "Full: all of this plan's future money can go to investing.")
       : P.to_buffer > 0 ? `This period adds ${fmtSek(P.to_buffer)}: ${pct(Math.min(after / snap.target, 1))} full after it${months ? `, and full in about ${plural(months, "more pay period")} at this pace` : ""}.`
         : "This plan doesn't add to it: its future money goes to investing.";
-    parts.push(section("EMERGENCY BUFFER", BUFFER_C, `${fmtSek(snap.bank)} of ${fmtSek(snap.target)}`,
-      splitBar([[Math.min(snap.bank, snap.target), COLORS.green], [Math.min(P.to_buffer, Math.max(snap.target - snap.bank, 0)), BUFFER_C], [short, "var(--fill)"]], 8),
-      h("div", { class: "hint amt-soft" }, `${text} ${snap.buffer_months} months of fixed costs; the bank figure is from your ${latest ? mLong(latest.month) : ""} log.`)));
+    parts.push(section("EMERGENCY BUFFER", BUFFER_C, `${fmtSek(bank)} of ${fmtSek(snap.target)}`,
+      splitBar([[Math.min(bank, snap.target), COLORS.green], [Math.min(P.to_buffer, Math.max(snap.target - bank, 0)), BUFFER_C], [short, "var(--fill)"]], 8),
+      h("div", { class: "hint amt-soft" }, `${text} ${bufferTargetText(snap)}${snap.buffer_amount !== null ? ", set in Settings" : " of fixed costs"}.`
+        + (typeof P.bank === "number" ? " The bank figure is your payday numbers." : ` The bank figure is from your ${latest ? logName(latest.month) : ""} log.`))));
   }
   const invested = latest ? investedSek(latest) : 0;
   if (P.invest > 0 || invested > 0) {
@@ -361,83 +297,9 @@ function actionsCard(ctx, snap) {
 }
 
 // ---------------------------------------------------------------------------
-// The payday checklist: the first week of a pay period, until all its steps are done
-// ---------------------------------------------------------------------------
-const CHECKLIST_DAYS = 7;
-
-/** Payday, step by step: each step ticks itself off, and tapping it takes you to where it's done. */
-function paydaySteps(ctx, live, saved, changes) {
-  const base = live.base, P = live.plan;
-  const entry = ctx.entries.find((e) => e.month === base) || null;
-  const moves = P ? paydayMoves(live) : null;
-  const toSave = P ? saveOf(P) : 0;
-  const rv = moves?.revolut || null, done = P?.done || {};
-  // with Revolut pockets, filling them is a step of its own, as soon as the plan says what the weeks get
-  const pockets = live.active.filter((x) => x.pocket && !x.car);
-  const out = P ? [toSave > 0 ? "save" : null, P.invest > 0 ? "invest" : null].filter(Boolean) : [];   // Save and Invest
-  const outDone = out.every((k) => done[k]);
-  // the fixed costs with a new amount this payday (an invoice you logged when it came in), or starting now
-  const fresh = live.expenses.filter((x) => !x.car && expenseApplies(x, base) && (x.start_month === base || x.amount_before !== null)).map((x) => x.name);
-  const freshText = !fresh.length ? "" : ` (new: ${fresh.length > 3 ? `${fresh.slice(0, 2).join(", ")} and ${fresh.length - 2} more` : joinAnd(fresh)})`;
-  return [
-    { key: "log", done: Boolean(entry), title: `Log ${mLong(base)}`,
-      sub: entry ? `Salary ${fmtSek(entry.income_sek)}, bank ${fmtSek(entry.bank_sek)}`
-        : CUR.end_months ? "The salary that just came in and your money now; correct it at the end of the month, after the bills"
-          : "The salary that just came in, and your bank and investments today",
-      go: () => (entry ? ctx.openMonth(entry) : openMonthSheet(ctx, null, base)) },
-    { key: "budget", done: Boolean(saved) && !changes.length, title: saved && changes.length ? "Save the budget again" : "Check the salary and save the budget",
-      sub: !saved ? (live.salary > 0 ? `Salary ${fmtSek(live.salary)}, fixed costs ${fmtSek(live.fixed)}${freshText}: save them on the Budget tab` : "Enter your salary on the Budget tab, then save the budget")
-        : changes.length ? `It changed since you saved it: ${joinAnd(changes)}`
-          : `Saved ${shortDate(asDay(saved.saved))}: ${fmtSek(saved.left)} left after fixed costs`,
-      go: () => { showCurrentPeriod(); ctx.go("budget"); } },
-    { key: "plan", done: Boolean(P), title: "Pick a saving plan and start it",
-      sub: P ? `${profileName(P.profile)}: ≈ ${money(P.living / (live.days / 7))} a week to live on`
-        : saved ? "Below: the three plans, worked out from the budget you saved" : "Once the budget is saved",
-      go: P ? () => scrollToCard("plan-details") : saved ? () => scrollToCard("plan-tiles") : null },
-    pockets.length ? { key: "revolut", done: Boolean(rv) && Boolean(done.revolut), title: "Move money to Revolut",
-      sub: !rv ? `The weekly money and ${pockets.length === 1 ? `the ${pockets[0].name} pocket` : `${pockets.length} pockets`}, once the plan is started`
-        : done.revolut ? `Moved ${fmtSek(rv.total)}: your weeks and pockets are filled`
-          : `${fmtSek(rv.total)}: weeks ${fmtSek(rv.weeks_total)} + pockets ${fmtSek(rv.costs_total)}, then tick it off`,
-      go: rv ? () => scrollToCard("plan-moves") : null } : null,
-    { key: "move", done: Boolean(P) && (!out.length || outDone), title: "Move Save and Invest",
-      sub: !P ? "Once the plan is started" : !out.length ? (pockets.length ? "Nothing to save or invest this pay period" : "Nothing to move this pay period")
-        : outDone ? "Moved: what's left is yours to spend"
-          : `${joinAnd([toSave > 0 ? `save ${fmtSek(toSave)}` : "", P.invest > 0 ? `invest ${fmtSek(P.invest)}` : ""]).replace(/^./, (c) => c.toUpperCase())}, then tick ${out.length > 1 ? "them" : "it"} off`,
-      go: P && out.length ? () => scrollToCard("plan-moves") : null },
-  ].filter(Boolean);
-}
-
-function checklistCard(steps, live, today) {
-  const nDone = steps.filter((s) => s.done).length;
-  const next = steps.findIndex((s) => !s.done);
-  const rows = steps.map((s, k) => {
-    const mark = s.done ? h("span", { class: "step-mark done", "aria-label": "Done" }, icon("check", 15))
-      : h("span", { class: `step-mark ${k === next ? "next" : ""}` }, String(k + 1));
-    const go = s.go ? () => s.go() : null;
-    return h("div", { class: `list-row step-row ${s.done ? "done" : ""} ${go ? "" : "static"}`, role: go ? "button" : null, tabindex: go ? "0" : null,
-      onclick: go, onkeydown: go ? (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); } } : null },
-      mark,
-      h("div", { class: "row-main" }, h("div", { class: "row-title" }, s.title), h("div", { class: "row-sub amt-soft" }, s.sub)),
-      go ? icon("chevron", 15, "chev") : null);
-  });
-  const isToday = isoDay(live.start) === isoDay(today);
-  const count = ["", "one step", "two steps", "three steps", "four steps", "five steps", "six steps"][steps.length] || `${steps.length} steps`;
-  return withClass(card(head("Payday checklist", `${isToday ? "It's payday" : `Payday was ${shortDate(live.start)}`}: ${count}, and this pay period is set.`,
-    chip(`${nDone} of ${steps.length}`, nDone ? "info" : "flat")),
-  h("div", { class: "list" }, rows)), "plan-checklist");
-}
-
-/** The checklist, in the first week of the pay period while a step is still to do. */
-function paydayChecklist(ctx, live, saved, changes) {
-  if (daysBetween(live.start, ctx.today) >= CHECKLIST_DAYS) return null;
-  const steps = paydaySteps(ctx, live, saved, changes);
-  return steps.every((s) => s.done) ? null : checklistCard(steps, live, ctx.today);
-}
-
-// ---------------------------------------------------------------------------
 // Picking a plan: from the budget you saved on the Budget page
 // ---------------------------------------------------------------------------
-/** The Budget page has changes you haven't saved: My plan still uses the saved ones. */
+/** The Budget page has changes you haven't saved: the plans still use the saved ones. */
 function unsavedNote(changes, ctx, saved) {
   if (!changes.length) return null;
   return h("div", { class: "warn-note" }, `Your Budget tab has changes you haven't saved (${changes.join(", ")}). This page uses the budget you saved on ${shortDate(asDay(saved.saved))}: save it again there to use the new numbers.`,
@@ -497,7 +359,7 @@ function tilesCard(bs, ctx) {
   const trip = h("label", { class: "switch-line trip-line" }, h("span", null, "Going on a trip this pay period"),
     toggle(Boolean(bs.trip), (on) => setTimeout(() => setTrip(bs.base, on), 220), "Going on a trip this pay period"));
   return withClass(card(
-    head("Pick a saving plan", "Each puts a share of your salary toward your future, and keeps what you live on a week between a least and a most.",
+    head("Pick this month's plan", "Each puts a share of your salary toward your future, and keeps what you live on a week between a least and a most.",
       h("button", { type: "button", class: "link-btn", onclick: () => openProfilesSheet(ctx, bs) }, "Edit")),
     h("div", { class: "tiles" }, tiles),
     trip,
@@ -534,45 +396,47 @@ function previewCard(bs, live, ctx, running = null) {
   if (bs.goal_rows.length) parts.push(`goals ${plainNumber(f.goals)} (${bs.goal_rows.map(([n, m]) => `${n} ${plainNumber(m)}`).join(", ")})`);
   if (f.to_buffer > 0) parts.push(`buffer ${plainNumber(f.to_buffer)}`);
   if (kept(f) > 0) parts.push(`savings ${plainNumber(kept(f))}`);
-  let saveText = parts.length > 1 || (parts.length && !kept(f)) ? `To your savings account: ${parts.join(" + ")}.` : parts.length ? "To your savings account." : "Nothing this period.";
+  let saveText = parts.length > 1 || (parts.length && !kept(f)) ? `To the bank on the 1st, after the bills: ${parts.join(" + ")}.` : parts.length ? "To the bank on the 1st, after the bills." : "Nothing this period.";
   if (bs.target > 0 && bs.shortfall <= 0) saveText += kept(f) > 0 ? ` Your buffer is full, so ${pct(bs.keep_share || 0)} of your future money stays in savings, the rest is invested.` : " Your buffer is full.";
-  else if (bs.target > 0 && f.to_buffer <= 0) saveText += " The buffer isn't topped up (switched off on the Budget tab).";
+  else if (bs.target > 0 && f.to_buffer <= 0) saveText += " The buffer isn't topped up first (switched off in Settings).";
   const block = (title, color, value, subText, hint) => h("div", { class: "alloc" },
     h("div", { class: "cap-row" }, dot(color, 8), h("span", { class: "caption" }, title)),
     h("div", { class: "alloc-row" }, h("span", { class: "alloc-value amt" }, value), h("span", { class: "alloc-sub amt" }, subText)),
     h("div", { class: "hint amt-soft" }, hint));
   const actual = summarize(monthFlows(bs.entries).slice(-12));
   const canStart = bs.salary > 0 && !(bs.free < 0) && bs.end > bs.today;
-  return card(head(`The ${profileName(f.profile)} plan`, `For ${fmtRange(bs.start, addDays(bs.end, -1))}: move Save and Invest on payday, before you start spending.`),
+  return card(head(`The ${profileName(f.profile)} plan`, `For ${fmtRange(bs.start, addDays(bs.end, -1))}: Revolut on payday, the bank and investing on the 1st.`),
     warn ? h("div", { class: "warn-note" }, warn) : null,
     note ? h("div", { class: "hint amt-soft plan-note" }, note) : null,
     block("SPEND", LIVING_C, fmtSek(f.living), `≈ ${money(f.living / weeks)} per week`, live.active.some((x) => x.pocket)
-      ? "Goes to your Revolut week pockets: beers, eating out, small buys." : "Stays in your everyday account: beers, eating out, small buys."),
+      ? "Goes to your spending account in Revolut: beers, eating out, small buys." : "Stays in your everyday account: beers, eating out, small buys."),
     h("div", { class: "hairline" }),
     block("SAVE", BUFFER_C, fmtSek(save), CUR.single ? "" : `≈ ${fmtEur(save * fx)}`, saveText),
     h("div", { class: "hairline" }),
-    block("INVEST", INVEST_C, fmtSek(f.invest), CUR.single ? "" : `≈ ${fmtEur(f.invest * fx)}`, `To ${brokersText("your investment account")}: long-term money (5+ years).`),
+    block("INVEST", INVEST_C, fmtSek(f.invest), CUR.single ? "" : `≈ ${fmtEur(f.invest * fx)}`, f.invest > 0
+      ? `To ${brokersText("your investment account")} on the 1st: long-term money (5+ years).`
+      : bs.buffer_first && bs.shortfall > 0 ? "Nothing this time: you invest once the buffer is full." : "Nothing this time."),
     h("div", { class: "hairline" }),
     h("div", { class: "rate-text" }, `Your future gets ${pct(f.save_rate)} of your salary (buffer + investing). Goal money is spent later, so it isn't counted.${actual ? ` Over the last 12 months you managed ${pct(actual.rate)} (black mark).` : ""}`),
     rateMeter(f.save_rate, actual ? actual.rate : null),
     canStart ? h("div", { class: "hairline" }) : null,
     canStart && running ? h("button", { type: "button", class: "btn primary wide", disabled: running.profile === f.profile && Math.abs(running.living - f.living) < 1,
-      onclick: () => { switching = false; startPlan(ctx, bs.base, f, running); toast(`✓  Switched to ${profileName(f.profile)}`); window.scrollTo({ top: 0, behavior: "smooth" }); } },
+      onclick: () => { switching = false; startPlan(ctx, bs.base, f, running); toast(`✓  Switched to ${profileName(f.profile)}`); ctx.go("home"); } },
     running.profile !== f.profile ? `Switch to the ${profileName(f.profile)} plan`
       : Math.abs(running.living - f.living) < 1 ? `${profileName(f.profile)} is your plan now` : `Update the ${profileName(f.profile)} plan`) : null,
-    canStart && !running ? h("button", { type: "button", class: "btn primary wide", onclick: () => { startPlan(ctx, bs.base, f); toast(`✓  ${profileName(f.profile)} plan started`); } },
+    canStart && !running ? h("button", { type: "button", class: "btn primary wide", onclick: () => { startPlan(ctx, bs.base, f); toast(`✓  ${profileName(f.profile)} plan started`); ctx.go("home"); } },
       `Start the ${profileName(f.profile)} plan`) : null,
     canStart ? h("div", { class: "hint" }, running
       ? `Same pay period, from payday ${shortDate(bs.start)} to the day before payday ${shortDate(bs.end)}. Your check-ins and ticks stay.`
-      : "Keeps these numbers until payday, so you can follow them through the month: this week's money, check-ins, and a tick when you've moved Save and Invest.") : null);
+      : "Keeps these numbers until payday: Home shows your living money and the steps to move the money.") : null);
 }
 
 /** No saved budget for this pay period yet: save it on the Budget tab first. */
 function saveFirstCard(live, ctx, nextSaved) {
   return card(head("First, save your budget", `For ${fmtRange(live.start, addDays(live.end, -1))}`),
     h("div", { class: "muted amt-soft" }, live.salary > 0
-      ? `On the Budget tab, check your salary (${fmtSek(live.salary)}) and fixed costs (${fmtSek(live.fixed)}), then tap Save for My plan. Your saving plan is worked out from what's left: ${fmtSek(Math.max(live.left, 0))} right now.`
-      : "On the Budget tab, enter your salary and fixed costs, then tap Save for My plan. Your saving plan is worked out from what's left."),
+      ? `On the Budget tab, check your salary (${fmtSek(live.salary)}) and fixed costs (${fmtSek(live.fixed)}), then tap Save the budget. Your saving plan is worked out from what's left: ${fmtSek(Math.max(live.left, 0))} right now.`
+      : "On the Budget tab, enter your salary and fixed costs, then tap Save the budget. Your saving plan is worked out from what's left."),
     nextSaved ? h("div", { class: "hint amt-soft plan-prev" }, `You've saved the budget for the next pay period: you can pick its plan from payday, ${shortDate(live.end)}.`) : null,
     h("div", { class: "card-actions" }, h("button", { type: "button", class: "btn primary small", onclick: () => ctx.go("budget") }, "Open Budget")));
 }
@@ -586,16 +450,17 @@ export function renderPlan(ctx) {
   const changes = saved ? budgetChanges(saved, live) : [];
   const nextBase = addMonths(base, 1);
   const next = loadPlans(ctx.data)[nextBase] || null;
-  const foot = h("div", { class: "hint page-foot" }, `The plans are rules of thumb (${inSweden() ? "Swedbank, Finansinspektionen, the 50/30/20 rule" : "common guidance and the 50/30/20 rule"}), not financial advice. Change the % and the minimums to fit you.`);
-  const checklist = paydayChecklist(ctx, live, saved, changes);
+  const back = h("button", { type: "button", class: "back-link", onclick: () => { switching = false; ctx.go("home"); } }, icon("chevronLeft", 17), "Home");
+  const foot = h("div", { class: "hint page-foot" }, `The plans are rules of thumb (${inSweden() ? "Swedbank, Finansinspektionen, the 50/30/20 rule" : "common guidance and the 50/30/20 rule"}), not financial advice. Change the % and the minimums on the Budget tab.`);
   if (!live.plan) {
     if (!bs) return [`${fmtRange(live.start, addDays(live.end, -1))}  ·  save your budget first`,
-      checklist || saveFirstCard(live, ctx, Boolean(loadBudgets(ctx.data)[nextBase])),
+      back,
+      saveFirstCard(live, ctx, Boolean(loadBudgets(ctx.data)[nextBase])),
       foldable("actions", actionsCard(ctx, live)),
       foldable("past", pastCard(ctx, base))];
     const prev = loadPlans(ctx.data)[addMonths(base, -1)] || null;
-    return [`${fmtRange(live.start, addDays(live.end, -1))}  ·  pick a saving plan`,
-      checklist,
+    return [`${fmtRange(live.start, addDays(live.end, -1))}  ·  pick this month's plan`,
+      back,
       budgetCard(bs, changes, ctx),
       tilesCard(bs, ctx),
       prev ? h("div", { class: "card plan-next amt-soft" }, `Last pay period you followed ${profileName(prev.profile)} and saved ${pct(prev.save_rate || 0)}.`) : null,
@@ -609,13 +474,12 @@ export function renderPlan(ctx) {
   // switching: the plans from the saved budget (or the budget as it is, if you haven't saved one)
   const sw = switching ? (bs || budgetFor(ctx, base, budgetToSave(live, ctx.today), live.start, live.end)) : null;
   const toPayday = daysBetween(snap.today, snap.end);
-  return [`${profileName(snap.plan.profile)} plan  ·  ${fmtRange(snap.start, addDays(snap.end, -1))}  ·  ${toPayday === 1 ? "payday tomorrow" : `payday in ${toPayday} days`}`,
-    checklist,
-    changes.length && bs && !checklist ? h("div", { class: "card" }, unsavedNote(changes, ctx, bs)) : null,
-    weekCard(snap, pr, ctx),
+  return [`${fmtRange(snap.start, addDays(snap.end, -1))}  ·  ${toPayday === 1 ? "payday tomorrow" : `payday in ${toPayday} days`}`,
+    back,
+    planHeadCard(snap, pr, ctx),
+    changes.length && bs ? h("div", { class: "card" }, unsavedNote(changes, ctx, bs)) : null,
     sw ? tilesCard(sw, ctx) : null,
     sw ? previewCard(sw, live, ctx, snap.plan) : null,
-    checkCard(snap, pr),
     movesCard(snap),
     next ? h("div", { class: "card plan-next amt-soft" }, `Next pay period: your ${profileName(next.profile)} plan is ready and starts on payday, ${shortDate(snap.end)}.`) : null,
     foldable("split", splitCard(snap)),
@@ -623,5 +487,6 @@ export function renderPlan(ctx) {
     foldable("actions", actionsCard(ctx, snap)),
     foldable("weeks", weeksCard(snap, pr)),
     foldable("details", detailsCard(snap, ctx, bs), planChanges(snap.plan, bs).changed),     // open when it offers an update
-    foldable("past", pastCard(ctx, base))];
+    foldable("past", pastCard(ctx, base)),
+    foot];
 }

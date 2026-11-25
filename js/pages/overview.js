@@ -1,47 +1,17 @@
-import { h, chip, dot, segmented, toggle, appIcon, icon } from "../ui.js";
+// Pieces the savings pages share: the stat card (Insights, the car monitor), your money over the months (Insights)
+// and the empty state (Home). The Overview tab became Home.
+import { h, chip, dot, segmented, toggle, appIcon } from "../ui.js";
 import { chart, linearFit } from "../charts.js";
-import {
-  COLORS, SERIES, MONTHS, fmtEur, fmtSek, fmtAxisEur, mLong, mShort, logName, mIndex, mNum, nMonths, pct, toneOf, mean,
-  monthFlows, summarize, paydayStatus, paydayReason, shortDate, longDate, daysBetween,
-  bankEur, incomeEur, totalEur, investedSek, CUR,
-} from "../core.js";
+import { SERIES, fmtEur, fmtSek, fmtAxisEur, logName, mIndex, COLORS, bankEur, incomeEur, totalEur, CUR } from "../core.js";
 import { store } from "../store.js";
 
-function emptyState(ctx) {
+export function emptyState(ctx) {
   return h("div", { class: "card empty-state" },
     appIcon(64),
     h("div", { class: "empty-title" }, "No months yet"),
     h("div", { class: "empty-text" }, "Log your salary, bank savings and investments once a month. The app converts everything to euro and draws the charts for you."),
     h("button", { class: "btn primary", type: "button", onclick: () => ctx.openMonth(null) }, "+  Add your first month"),
     h("button", { class: "btn plain", type: "button", onclick: () => ctx.importDesktop() }, "Import from the desktop app"));
-}
-
-function balanceHero(es, inv) {
-  const last = es.at(-1), first = es[0], prev = es.length > 1 ? es.at(-2) : null;
-  const vs = prev ? MONTHS[mNum(prev.month) - 1] : "";
-  const half = (title, color, hint, value, sub, chips) => h("div", { class: "hero-half" },
-    h("div", { class: "cap-row" }, dot(color), h("span", { class: "caption" }, title), h("span", { class: "hint" }, hint)),
-    h("div", { class: "big-value amt" }, value),
-    sub ? h("div", { class: "muted amt" }, sub) : null,
-    chips.length ? h("div", { class: "chips amt" }, chips) : null);
-
-  const bankChips = [];
-  const invChips = [];
-  if (prev) {
-    const d = last.bank_sek - prev.bank_sek;
-    bankChips.push(chip(`${d >= 0 ? "▲" : "▼"} ${fmtSek(Math.abs(d))} vs ${vs}`, toneOf(d)));
-    bankChips.push(chip(`${fmtSek(last.bank_sek - first.bank_sek, true)} since ${mShort(first.month)}`, "flat"));
-    const di = last.invested_eur - prev.invested_eur;
-    invChips.push(chip(`${di >= 0 ? "▲" : "▼"} ${fmtEur(Math.abs(di))} vs ${vs}`, toneOf(di)));
-  }
-  if (inv && inv.taxed && inv.after !== null) invChips.push(chip(`≈ ${fmtEur(inv.after)} after tax`, "flat"));
-  else if (prev) invChips.push(chip(`${fmtEur(last.invested_eur - first.invested_eur, 0, true)} since ${mShort(first.month)}`, "flat"));
-
-  return h("div", { class: "card hero" },
-    half("BANK SAVINGS", COLORS.blue, "money you can use", fmtEur(bankEur(last)), CUR.single ? null : fmtSek(last.bank_sek), bankChips),
-    h("div", { class: "hairline" }),
-    half("INVESTED", COLORS.orange, inv && inv.taxed ? "market value, before tax" : "market value", fmtEur(last.invested_eur),
-      CUR.single ? null : `≈ ${fmtSek(investedSek(last))}`, invChips));
 }
 
 /** hide: which parts are money and get blurred in privacy mode, e.g. "vsc" = value, sub, chip */
@@ -54,43 +24,8 @@ export function statCard(title, color, value, sub, chipText = "", tone = "flat",
     chipText ? chip(chipText, tone, amt("c")) : null);
 }
 
-function stats(es, snap) {
-  const last = es.at(-1);
-  const last12 = es.slice(-12);
-  const cards = [];
-  cards.push(statCard("INCOME", COLORS.cyan, fmtEur(incomeEur(last)), CUR.single ? `in ${MONTHS[mNum(last.month) - 1]}` : fmtSek(last.income_sek),
-    `Average ${fmtEur(mean(last12.map(incomeEur)))}`, "flat", "vsc"));
-
-  const summ = summarize(monthFlows(es).slice(-12));
-  if (summ) {
-    let chipText = "", tone = "flat";
-    if (snap.plan_ready) {
-      const plan = snap.save_rate;
-      chipText = `Plan ${pct(plan)}`;
-      tone = summ.rate >= plan - 0.02 ? "up" : summ.rate < plan - 0.10 ? "down" : "flat";
-    }
-    cards.push(statCard("SAVED PER MONTH", COLORS.green, fmtSek(summ.saved, true),
-      `${pct(summ.rate)} of income, last ${summ.n === 1 ? "month" : `${summ.n} months`}`, chipText, tone, "v"));
-  } else cards.push(statCard("SAVED PER MONTH", COLORS.green, "—", "needs two months"));
-
-  if (snap.plan_ready) {
-    cards.push(statCard("BUFFER", COLORS.blue, `${(last.bank_sek / snap.fixed).toFixed(1)} months`, "of fixed costs in the bank",
-      `Target ${snap.buffer_months} months`, snap.shortfall <= 0 ? "up" : "flat"));
-  } else cards.push(statCard("BUFFER", COLORS.blue, "—", "fill in fixed costs in Budget"));
-
-  const today = snap.today;
-  const ps = paydayStatus(today);
-  if (ps.isToday) cards.push(statCard("NEXT PAYDAY", COLORS.purple, "Today", `next one ${shortDate(ps.next)}`, "Salary lands today", "up"));
-  else {
-    const days = daysBetween(today, ps.next);
-    const reason = paydayReason(ps.next);
-    cards.push(statCard("NEXT PAYDAY", COLORS.purple, `${days} day${days !== 1 ? "s" : ""}`, longDate(ps.next),
-      reason ? `25th is ${reason}` : "On the 25th"));
-  }
-  return h("div", { class: "stats" }, cards);
-}
-
-function chartCard(es) {
+/** Your money over the months: balances or monthly changes (Insights shows it at the top). */
+export function chartCard(es) {
   const st = { series: { bank: true, invested: true, income: true, total: false }, trend: true, view: 0, range: 2,
     ...(store.pref("overview_chart", {}) || {}) };
   st.series = { bank: true, invested: true, income: true, total: false, ...(st.series || {}) };
@@ -170,19 +105,3 @@ function chartCard(es) {
     h("div", { class: "hint center" }, "Touch the chart to see each month."));
 }
 
-function noteCard(es) {
-  const noted = [...es].reverse().find((e) => e.comment);
-  if (!noted) return null;
-  return h("div", { class: "card note-card" },
-    h("div", { class: "caption" }, `LATEST NOTE  ·  ${logName(noted.month).toUpperCase()}`),
-    h("div", { class: "note-text" }, noted.comment));
-}
-
-export function renderOverview(ctx) {
-  const es = ctx.entries;
-  const subtitle = es.length ? `${nMonths(es.length)} logged  ·  latest: ${CUR.end_months ? `end of ${mLong(es.at(-1).month)}` : mLong(es.at(-1).month)}` : "Nothing logged yet";
-  if (!es.length) return [subtitle, emptyState(ctx)];
-  return [subtitle, balanceHero(es, ctx.inv), stats(es, ctx.snap), chartCard(es), noteCard(es)];
-}
-
-export const overviewIcon = () => icon("overview");

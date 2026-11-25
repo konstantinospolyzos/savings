@@ -641,6 +641,66 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
 .line-swatch.dotted { border-top-style: dotted; border-top-width: 2.5px; }
 .chart-card > .legend { row-gap: 6px; column-gap: 14px; }
 
+/* Home */
+.home-money { padding: 16px 18px 14px; }
+.money-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.money-half { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.money-half + .money-half { border-left: 0.5px solid var(--sep); padding-left: 14px; }
+.money-value { font-size: 28px; line-height: 34px; font-weight: 800; letter-spacing: -0.01em; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.money-sub { font-size: 14px; color: var(--gray); }
+.money-half .chip { margin-top: 8px; max-width: 100%; white-space: normal; line-height: 1.3; }
+.money-foot { margin-top: 12px; padding-top: 10px; border-top: 0.5px solid var(--sep); line-height: 1.4; }
+.home-living { padding: 18px 18px 16px; }
+.living-label { font-size: 15px; color: var(--label2); margin-top: 12px; }
+.home-living .big-value { margin-top: 0; }
+.home-living .muted { font-size: 14px; }
+.living-empty { font-size: 14.5px; line-height: 1.45; margin-top: 10px; }
+.home-living .check-result { margin-top: 4px; padding-top: 12px; border-top: 0.5px solid var(--sep); }
+.home-living .check-row { padding-top: 12px; border-top: 0.5px solid var(--sep); }
+.home-living .check-result + .check-row { border-top: 0; padding-top: 2px; }
+.check-field { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+.home-steps .card-head { margin-bottom: 6px; }
+.home-done .card-head { margin-bottom: 0; }
+.home-done .card-title { color: var(--up-fg); }
+.step-mark.muted { color: var(--gray2); box-shadow: inset 0 0 0 1.5px var(--fill); }
+.step-row.muted .row-title { color: var(--gray); }
+.step-row.muted { cursor: default; }
+.step-row.muted:active { opacity: 1; }
+.home-steps .step-row > .switch { flex: none; }
+.home-steps .pockets { margin: 0 0 8px 36px; padding-top: 8px; }
+.steps-then { margin-top: 10px; padding-top: 10px; border-top: 0.5px solid var(--sep); font-size: 13px; line-height: 1.4; }
+.fold-btn { width: 30px; height: 30px; flex: none; border-radius: 15px; background: var(--fill); color: var(--blue); font-size: 20px; font-weight: 600;
+  line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+.fold-btn:active { opacity: 0.6; }
+.home-spend.collapsed .spend-body { display: none; }
+.home-spend.collapsed .card-head { margin-bottom: 0; }
+.spend-chart { display: block; width: 100%; height: auto; overflow: visible; }
+.spend-chart .sc-grid { stroke: var(--sep); stroke-width: 1; }
+.spend-chart .sc-axis { fill: var(--gray); font-size: 10.5px; }
+.spend-chart .sc-today { stroke: var(--gray3); stroke-width: 1; stroke-dasharray: 2 3; }
+.spend-chart .sc-pace { stroke: var(--gray); stroke-width: 1.4; stroke-dasharray: 5 4; }
+.spend-chart .sc-budget { stroke: var(--red); stroke-width: 1.6; }
+.spend-chart .sc-label { fill: var(--label2); font-size: 11px; font-weight: 600; }
+.spend-chart .sc-label.now { fill: var(--purple); font-size: 12px; font-weight: 700; }
+.spend-chart .sc-line { fill: none; stroke: var(--purple); stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
+.spend-chart .sc-dot { fill: var(--card); stroke: var(--purple); stroke-width: 2; }
+.spend-chart .sc-dot.now { fill: var(--purple); }
+.spend-legend { margin: 8px 0 0; padding: 0; flex-wrap: wrap; row-gap: 6px; column-gap: 14px; overflow: visible; }
+.line-swatch.solid { border-top-style: solid; border-color: var(--red); }
+.spend-legend .line-swatch:not(.solid) { border-color: var(--gray); }
+.back-link { align-self: flex-start; display: inline-flex; align-items: center; gap: 2px; color: var(--blue); font-size: 16px; font-weight: 500;
+  margin: -6px 0 -2px -4px; padding: 4px 6px 4px 0; }
+.back-link:active { opacity: 0.5; }
+/* Budget */
+.period-seg { margin-bottom: 14px; }
+.period-head { margin-bottom: 8px; }
+.plan-rule { min-height: 44px; padding: 8px 0; cursor: default; }
+.plan-rule:active { opacity: 1; }
+.draft-card .card-head { margin-bottom: 0; }
+.keep-row { justify-content: space-between; flex-wrap: wrap; row-gap: 6px; padding-top: 8px; padding-bottom: 8px; }
+.keep-row .form-label { max-width: none; }
+body.privacy .spend-chart .amt { visibility: hidden; }
+
 /* ---------- wider screens (tablets, computers) ---------- */
 @media (min-width: 700px) {
   .stats { grid-template-columns: repeat(4, 1fr); }
