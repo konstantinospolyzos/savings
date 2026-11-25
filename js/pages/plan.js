@@ -361,7 +361,7 @@ function actionsCard(ctx, snap) {
 }
 
 // ---------------------------------------------------------------------------
-// The payday checklist: the first week of a pay period, until all four steps are done
+// The payday checklist: the first week of a pay period, until all its steps are done
 // ---------------------------------------------------------------------------
 const CHECKLIST_DAYS = 7;
 
@@ -371,7 +371,11 @@ function paydaySteps(ctx, live, saved, changes) {
   const entry = ctx.entries.find((e) => e.month === base) || null;
   const moves = P ? paydayMoves(live) : null;
   const toSave = P ? saveOf(P) : 0;
-  const rv = moves?.revolut || null;
+  const rv = moves?.revolut || null, done = P?.done || {};
+  // with Revolut pockets, filling them is a step of its own, as soon as the plan says what the weeks get
+  const pockets = live.active.filter((x) => x.pocket && !x.car);
+  const out = P ? [toSave > 0 ? "save" : null, P.invest > 0 ? "invest" : null].filter(Boolean) : [];   // Save and Invest
+  const outDone = out.every((k) => done[k]);
   // the fixed costs with a new amount this payday (an invoice you logged when it came in), or starting now
   const fresh = live.expenses.filter((x) => !x.car && expenseApplies(x, base) && (x.start_month === base || x.amount_before !== null)).map((x) => x.name);
   const freshText = !fresh.length ? "" : ` (new: ${fresh.length > 3 ? `${fresh.slice(0, 2).join(", ")} and ${fresh.length - 2} more` : joinAnd(fresh)})`;
@@ -390,12 +394,17 @@ function paydaySteps(ctx, live, saved, changes) {
       sub: P ? `${profileName(P.profile)}: ≈ ${money(P.living / (live.days / 7))} a week to live on`
         : saved ? "Below: the three plans, worked out from the budget you saved" : "Once the budget is saved",
       go: P ? () => scrollToCard("plan-details") : saved ? () => scrollToCard("plan-tiles") : null },
-    { key: "move", done: Boolean(P) && (!moves.count || moves.all_done), title: rv ? "Move the money" : "Move Save and Invest",
-      sub: !P ? "Once the plan is started" : !moves.count ? "Nothing to move this pay period"
-        : moves.all_done ? "Moved: what's left is yours to spend"
-          : `${joinAnd([rv ? `Revolut ${fmtSek(rv.total)}` : "", toSave > 0 ? `save ${fmtSek(toSave)}` : "", P.invest > 0 ? `invest ${fmtSek(P.invest)}` : ""]).replace(/^./, (c) => c.toUpperCase())}, then tick ${moves.count > 1 ? "them" : "it"} off`,
-      go: P && moves.count ? () => scrollToCard("plan-moves") : null },
-  ];
+    pockets.length ? { key: "revolut", done: Boolean(rv) && Boolean(done.revolut), title: "Move money to Revolut",
+      sub: !rv ? `The weekly money and ${pockets.length === 1 ? `the ${pockets[0].name} pocket` : `${pockets.length} pockets`}, once the plan is started`
+        : done.revolut ? `Moved ${fmtSek(rv.total)}: your weeks and pockets are filled`
+          : `${fmtSek(rv.total)}: weeks ${fmtSek(rv.weeks_total)} + pockets ${fmtSek(rv.costs_total)}, then tick it off`,
+      go: rv ? () => scrollToCard("plan-moves") : null } : null,
+    { key: "move", done: Boolean(P) && (!out.length || outDone), title: "Move Save and Invest",
+      sub: !P ? "Once the plan is started" : !out.length ? (pockets.length ? "Nothing to save or invest this pay period" : "Nothing to move this pay period")
+        : outDone ? "Moved: what's left is yours to spend"
+          : `${joinAnd([toSave > 0 ? `save ${fmtSek(toSave)}` : "", P.invest > 0 ? `invest ${fmtSek(P.invest)}` : ""]).replace(/^./, (c) => c.toUpperCase())}, then tick ${out.length > 1 ? "them" : "it"} off`,
+      go: P && out.length ? () => scrollToCard("plan-moves") : null },
+  ].filter(Boolean);
 }
 
 function checklistCard(steps, live, today) {
@@ -412,7 +421,8 @@ function checklistCard(steps, live, today) {
       go ? icon("chevron", 15, "chev") : null);
   });
   const isToday = isoDay(live.start) === isoDay(today);
-  return withClass(card(head("Payday checklist", `${isToday ? "It's payday" : `Payday was ${shortDate(live.start)}`}: four steps, and this pay period is set.`,
+  const count = ["", "one step", "two steps", "three steps", "four steps", "five steps", "six steps"][steps.length] || `${steps.length} steps`;
+  return withClass(card(head("Payday checklist", `${isToday ? "It's payday" : `Payday was ${shortDate(live.start)}`}: ${count}, and this pay period is set.`,
     chip(`${nDone} of ${steps.length}`, nDone ? "info" : "flat")),
   h("div", { class: "list" }, rows)), "plan-checklist");
 }
