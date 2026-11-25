@@ -1,11 +1,11 @@
 // Home: the first tab of the savings section. Your money, the living money you should have left today (with a
 // check-in), the steps that are due (payday, the 1st, the days before payday), how you're spending, where this
 // pay period's salary goes, and your one-time expenses. The plan in detail is a page of its own (Plan details).
-import { h, chip, dot, splitBar, toggle, toast, icon, s, sheet, group, caption, footer } from "../ui.js";
+import { h, chip, dot, splitBar, toast, icon, s, sheet, group, caption, footer } from "../ui.js";
 import {
   COLORS, CUR, MONTHS, fmtSek, fmtEur, fmtRange, shortDate, longDate, dayMonth, addDays, addMonths, daysBetween, isoDay, logName,
   plural, joinAnd, parseNumber, plainNumber, roundTo10, planProgress, planCheck, loadBudgets, budgetChanges, bankEur, investedSek,
-  summarize, monthFlows, salaryLogMonth, fmtAxisSek, loadPeriodSalaries, expenseApplies, brokersText, localSym, hasMoney,
+  summarize, monthFlows, salaryLogMonth, fmtAxisSek, loadSteps, loadPeriodSalaries, expenseApplies, brokersText, localSym, hasMoney,
 } from "../core.js";
 import { store } from "../store.js";
 import { openMonthSheet } from "./month.js";
@@ -13,6 +13,7 @@ import { oneTimeCard } from "./onetime.js";
 import { emptyState } from "./overview.js";
 import { periodSnapshot, paydayMoves, revolutPockets, pocketsList, saveOf, setPlan, profileName, startSwitching, budgetFor, planChanges } from "./plan.js";
 import { showPeriod, setPeriodSalary, nextPaydayChanges } from "./budget.js";
+import { setStep } from "./steps.js";
 
 const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, BANK_C = COLORS.blue, INVEST_C = COLORS.orange;
 const card = (cls, ...children) => h("div", { class: `card ${cls}` }, children);
@@ -125,30 +126,51 @@ function livingCard(ctx, live, saved) {
 // ---------------------------------------------------------------------------
 // Steps: payday, the 1st, before payday
 // ---------------------------------------------------------------------------
-/** One step of a checklist: a number (or a tick when it's done), what to do, and where to do it or a switch to tick it. */
+/*
+ * A step of a checklist: a circle with its number, ticked when it's done, then what to do. Tap the circle to tick
+ * or untick it. Some steps tick themselves (your numbers logged, the budget saved, the plan picked): untick one and
+ * it stays unticked until you do it again (the row takes you there), or tap the circle again. A move of money (to
+ * Revolut, the bank, investing) you tick yourself, with the circle or the row. A step: {key, title, sub, done, n,
+ * mark (tap the circle), go (tap the row), money (the row ticks), muted (not this time), below (shown under it)}.
+ */
 function stepRow(step, k, next) {
-  const mark = step.done ? h("span", { class: "step-mark done", "aria-label": "Done" }, icon("check", 15))
-    : step.muted ? h("span", { class: "step-mark muted" }, "–")
-      : h("span", { class: `step-mark ${k === next ? "next" : ""}` }, String(step.n));
+  const cls = `step-mark ${step.done ? "done" : step.muted ? "muted" : k === next ? "next" : ""}`;
+  const inner = step.done ? icon("check", 15) : step.muted ? "–" : String(step.n);
+  const mark = step.mark
+    ? h("button", { type: "button", class: `${cls} tappable`, "aria-pressed": String(Boolean(step.done)),
+      "aria-label": step.done ? `Untick: ${step.title}` : `Tick: ${step.title}`, onclick: (ev) => { ev.stopPropagation(); step.mark(); } }, inner)
+    : h("span", { class: cls, "aria-label": step.done ? "Done" : null }, inner);
   const go = step.go || null;
   const main = h("div", { class: "row-main" }, h("div", { class: "row-title amt-soft" }, step.title), step.sub ? h("div", { class: "row-sub amt-soft" }, step.sub) : null);
-  if (step.tick) {
-    return h("label", { class: `list-row step-row ${step.done ? "done" : ""} ${step.muted ? "muted" : ""}` }, mark, main,
-      toggle(step.done, (on) => setTimeout(() => step.tick(on), 220), step.title));
-  }
   return h("div", { class: `list-row step-row ${step.done ? "done" : ""} ${step.muted ? "muted" : ""} ${go ? "" : "static"}`, role: go ? "button" : null,
     tabindex: go ? "0" : null, onclick: go, onkeydown: go ? (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); } } : null },
-  mark, main, go ? icon("chevron", 15, "chev") : null);
+  mark, main, go && !step.money ? icon("chevron", 15, "chev") : null);
 }
 
-function checklist(cls, title, sub, steps, extra = []) {
+function checklist(cls, title, sub, steps, extra = [], right = null) {
   const counted = steps.filter((st) => !st.muted);
   let n = 0;
   for (const st of steps) if (!st.muted) st.n = ++n;
   const nDone = counted.filter((st) => st.done).length;
   const next = steps.findIndex((st) => !st.done && !st.muted);
-  return card(`home-steps ${cls}`, head(title, sub, counted.length ? chip(`${nDone} of ${counted.length}`, nDone ? "info" : "flat") : null),
+  return card(`home-steps ${cls}`, head(title, sub, right || (counted.length ? chip(`${nDone} of ${counted.length}`, nDone ? "info" : "flat") : null)),
     h("div", { class: "list" }, steps.flatMap((st, k) => [stepRow(st, k, next), st.below || null])), ...extra);
+}
+
+/** A step that ticks itself: done when it's done, unless you unticked it to do it again. */
+function autoStep(base, redo, key, isDone, step) {
+  const again = redo[key] === "redo";
+  const done = isDone && !again;
+  return { key, ...step, done, again: isDone && again,
+    mark: done ? () => { setStep(base, key, "redo"); toast(`Unticked: ${step.title}`); syncNow(); }
+      : isDone ? () => { setStep(base, key, null); syncNow(); } : null };
+}
+
+/** A move of money you tick yourself (kept with the plan, like Plan details' switches). */
+function moneyStep(live, key, step) {
+  const P = live.plan, on = Boolean(P?.done?.[key]);
+  const flip = P ? () => tickPlan(live, key)(!on) : null;
+  return { key, ...step, done: on, mark: flip, go: flip, money: true };
 }
 
 const tickPlan = (live, key) => (on) => {
@@ -157,13 +179,21 @@ const tickPlan = (live, key) => (on) => {
   syncNow();
 };
 
+/** The checklists you finished, opened again to see their steps (until the app reloads). */
+const opened = new Set();
+const doneCard = (ctx, id, title, sub) => card("home-steps home-done", head(title, sub,
+  h("button", { type: "button", class: "btn tinted small", onclick: () => { opened.add(id); ctx.refresh(); } }, "Steps")));
+const hideLink = (ctx, id) => h("div", { class: "steps-hide" },
+  h("button", { type: "button", class: "link-btn", onclick: () => { opened.delete(id); ctx.refresh(); } }, "Hide the steps"));
+
 /** The 1st after the bills: what to move to the bank, and to invest. */
 const firstLine = (P, first, logMonth) => `Then on ${shortDate(first)}, after the bills: move ${fmtSek(saveOf(P))} to the bank`
   + `${P.invest > 0 ? ` and invest ${fmtSek(P.invest)}` : ""}, and log ${monthName(logMonth)}.`;
 
 /** Payday: your numbers, the budget, the plan, and the money to Revolut. */
 function paydaySteps(ctx, live, saved, changes, days) {
-  const P = live.plan, done = P?.done || {};
+  const P = live.plan;
+  const redo = loadSteps(ctx.data)[live.base] || {};
   const entry = ctx.entries.find((e) => e.month === days.log) || null;
   const rv = P ? revolutPockets(live) : null;
   const pockets = live.active.filter((x) => x.pocket && !x.car);
@@ -174,50 +204,58 @@ function paydaySteps(ctx, live, saved, changes, days) {
   // numbers typed again after the plan was picked (the bank, a cost): the plan offers an update
   const upd = P && saved && !changes.length ? planChanges(P, budgetFor(ctx, live.base, saved, live.start, live.end)) : null;
   const revolutTitle = pockets.length ? "Move money to Revolut" : "Move the living money to your spending account";
-  return [
-    { key: "log", done: Boolean(entry), title: "Your numbers today",
-      sub: entry ? `Salary ${fmtSek(entry.income_sek)}  ·  bank ${fmtSek(entry.bank_sek)}  ·  invested ${fmtSek(investedSek(entry))}`
-        : "The salary that came in, your bank without it, and what you have invested",
-      go: () => (entry ? openMonthSheet(ctx, entry, null, opts) : openMonthSheet(ctx, null, days.log, opts)) },
-    { key: "budget", done: Boolean(saved) && !changes.length, title: saved && changes.length ? "Save the budget again" : "Check salary and fixed costs",
-      sub: !saved ? (live.salary > 0 ? `Salary ${fmtSek(live.salary)}, fixed costs ${fmtSek(live.fixed)}${freshText}: then save the budget` : "Enter the salary on the Budget tab, then save the budget")
-        : changes.length ? `It changed since you saved it: ${joinAnd(changes)}`
-          : `${fmtSek(saved.left)} left after fixed costs`,
-      go: () => { showPeriod(live.base, ctx.today); ctx.go("budget"); } },
-    upd?.changed ? { key: "plan", done: false, title: "Update the plan",
-      sub: `The budget changed since you picked ${profileName(P.profile)}${upd.why.length ? ` (${joinAnd(upd.why)})` : ""}: update it to use the new numbers`,
-      go: () => { ctx.go("plan"); document.querySelector("[data-page='plan'] .plan-details")?.scrollIntoView({ behavior: "smooth", block: "start" }); } }
-      : { key: "plan", done: Boolean(P), title: "Pick this month's plan",
-        sub: P ? `${profileName(P.profile)}: ≈ ${money(P.living / (live.days / 7))} a week to live on` : saved ? "Three plans, worked out from the budget you saved" : "Once the budget is saved",
-        go: P || saved ? () => ctx.go("plan") : null },
-    { key: "revolut", done: Boolean(P) && Boolean(done.revolut), title: revolutTitle,
-      sub: !P ? (pockets.length ? `The living money and ${pockets.length === 1 ? `the ${pockets[0].name} pocket` : `${pockets.length} pockets`}, once the plan is picked` : "Once the plan is picked")
-        : rv ? `${fmtSek(rv.total)}: living money ${fmtSek(rv.living)} + ${rv.costs.length === 1 ? rv.costs[0][0] : "pockets"} ${fmtSek(rv.costs_total)}`
-          : `${fmtSek(P.living)}: what you live on until payday`,
-      tick: P ? tickPlan(live, "revolut") : null,
-      below: P && rv && !done.revolut ? pocketsList(rv) : null },
-  ];
+  const log = autoStep(live.base, redo, "log", Boolean(entry), { title: "Your numbers today",
+    go: () => (entry ? openMonthSheet(ctx, entry, null, opts) : openMonthSheet(ctx, null, days.log, opts)) });
+  log.sub = !entry ? "The salary that came in, your bank without it, and what you have invested"
+    : `${log.again ? "Log them again: " : ""}Salary ${fmtSek(entry.income_sek)}  ·  bank ${fmtSek(entry.bank_sek)}  ·  invested ${fmtSek(investedSek(entry))}`;
+  const budget = autoStep(live.base, redo, "budget", Boolean(saved) && !changes.length,
+    { title: saved && changes.length ? "Save the budget again" : "Check salary and fixed costs", go: () => { showPeriod(live.base, ctx.today); ctx.go("budget"); } });
+  budget.sub = !saved ? (live.salary > 0 ? `Salary ${fmtSek(live.salary)}, fixed costs ${fmtSek(live.fixed)}${freshText}: then save the budget` : "Enter the salary on the Budget tab, then save the budget")
+    : changes.length ? `It changed since you saved it: ${joinAnd(changes)}`
+      : budget.again ? `Check them on the Budget tab and save the budget again (${fmtSek(saved.left)} left after fixed costs)`
+        : `${fmtSek(saved.left)} left after fixed costs`;
+  const plan = upd?.changed ? { key: "plan", done: false, title: "Update the plan",
+    sub: `The budget changed since you picked ${profileName(P.profile)}${upd.why.length ? ` (${joinAnd(upd.why)})` : ""}: update it to use the new numbers`,
+    go: () => { startSwitching(false); ctx.go("plan"); document.querySelector("[data-page='plan'] .plan-details")?.scrollIntoView({ behavior: "smooth", block: "start" }); } }
+    : autoStep(live.base, redo, "plan", Boolean(P), { title: "Pick this month's plan",
+      // unticked: Plan details opens with the plans, to pick one again (or keep yours)
+      go: P || saved ? () => { startSwitching(Boolean(P) && redo.plan === "redo"); ctx.go("plan"); } : null });
+  if (!upd?.changed) {
+    plan.sub = !P ? (saved ? "Three plans, worked out from the budget you saved" : "Once the budget is saved")
+      : `${plan.again ? "Pick it again: " : ""}${profileName(P.profile)}, ≈ ${money(P.living / (live.days / 7))} a week to live on`;
+  }
+  const revolut = moneyStep(live, "revolut", { title: revolutTitle,
+    sub: !P ? (pockets.length ? `The living money and ${pockets.length === 1 ? `the ${pockets[0].name} pocket` : `${pockets.length} pockets`}, once the plan is picked` : "Once the plan is picked")
+      : rv ? `${fmtSek(rv.total)}: living money ${fmtSek(rv.living)} + ${rv.costs.length === 1 ? rv.costs[0][0] : "pockets"} ${fmtSek(rv.costs_total)}`
+        : `${fmtSek(P.living)}: what you live on until payday` });
+  if (P && rv && !revolut.done) revolut.below = pocketsList(rv);
+  return [log, budget, plan, revolut];
 }
 
 function paydayCard(ctx, live, saved, changes, days) {
   const steps = paydaySteps(ctx, live, saved, changes, days);
   const P = live.plan;
+  const id = `payday-${live.base}`;
   const isToday = isoDay(live.start) === isoDay(ctx.today);
   const left = steps.filter((st) => !st.done);
+  const then = P ? firstLine(P, days.first, days.log) : null;
   if (!left.length) {
-    // all set: what's next is the 1st
-    return card("home-steps home-done", head("✓ Payday is done", P ? firstLine(P, days.first, days.log) : null));
+    // all set: what's next is the 1st (Steps shows them, to untick one)
+    if (!opened.has(id)) return doneCard(ctx, id, "✓ Payday is done", then);
+    return checklist("home-payday", "Payday checklist", "All done. Tap a tick to untick a step and do it again.", steps,
+      [then ? h("div", { class: "steps-then hint amt-soft" }, then) : null, hideLink(ctx, id)]);
   }
   const when = isToday ? "It's payday" : `Payday was ${shortDate(live.start)}`;
   const sub = left.length === 1 && left[0].key === "revolut" ? `${left[0].title} and today is done.`
     : `${when}: ${["", "one step", "two steps", "three steps", "four steps"][left.length] || plural(left.length, "step")} and this pay period is set.`;
-  return checklist("home-payday", "Payday checklist", sub, steps,
-    P ? [h("div", { class: "steps-then hint amt-soft" }, firstLine(P, days.first, days.log))] : []);
+  return checklist("home-payday", "Payday checklist", sub, steps, then ? [h("div", { class: "steps-then hint amt-soft" }, then)] : []);
 }
 
 /** The 1st, after the bills: the bank, investing, and the month's log. */
 function firstCard(ctx, live, days) {
-  const P = live.plan, done = P.done || {};
+  const P = live.plan;
+  const redo = loadSteps(ctx.data)[live.base] || {};
+  const id = `first-${live.base}`;
   const entry = ctx.entries.find((e) => e.month === days.log) || null;
   const logged = Boolean(entry) && !paydayNumbers(entry, days.first) && Boolean(entry.logged);
   const toBank = saveOf(P);
@@ -226,42 +264,49 @@ function firstCard(ctx, live, days) {
   const into = [P.goals > 0 ? `goals ${fmtSek(P.goals)}` : null, P.to_buffer > 0 ? `buffer ${fmtSek(P.to_buffer)}` : null,
     kept(P) > 0 ? `savings ${fmtSek(kept(P))}` : null].filter(Boolean);
   const broker = brokersText("your investment account");
+  const log = autoStep(live.base, redo, "month_log", logged, { title: `Log ${monthName(days.log)} after the bills`,
+    go: () => openMonthSheet(ctx, entry, entry ? null : days.log, { when: "month_end" }) });
+  log.sub = logged ? `${log.again ? "Log it again: it was " : "Logged "}${shortDate(asDay(entry.logged))}, bank ${fmtSek(entry.bank_sek)}`
+    : "Bank and invested as they are now. It replaces your payday numbers.";
   const steps = [
-    toBank > 0 ? { key: "save", done: Boolean(done.save), title: `Move ${fmtSek(toBank)} to the bank`,
+    toBank > 0 ? moneyStep(live, "save", { title: `Move ${fmtSek(toBank)} to the bank`,
       sub: P.to_buffer > 0 && into.length === 1 ? `Your saving this pay period. All of it goes to the buffer: ${fmtSek(short)} to go.`
-        : `Your saving this pay period: ${joinAnd(into)}.`,
-      tick: tickPlan(live, "save") } : null,
-    P.invest > 0 ? { key: "invest", done: Boolean(done.invest), title: `Invest ${fmtSek(P.invest)} on ${broker}`, sub: "Long-term money: 5+ years.",
-      tick: tickPlan(live, "invest") }
+        : `Your saving this pay period: ${joinAnd(into)}.` }) : null,
+    P.invest > 0 ? moneyStep(live, "invest", { title: `Invest ${fmtSek(P.invest)} on ${broker}`, sub: "Long-term money: 5+ years." })
       : { key: "invest", muted: true, title: `Invest on ${broker}`,
         sub: live.buffer_first && short > 0 ? "Not this month: you invest once the buffer is full" : "Nothing to invest this pay period" },
-    { key: "log", done: logged, title: `Log ${monthName(days.log)} after the bills`,
-      sub: logged ? `Logged ${shortDate(asDay(entry.logged))}: bank ${fmtSek(entry.bank_sek)}` : "Bank and invested as they are now. It replaces your payday numbers.",
-      go: () => openMonthSheet(ctx, entry, entry ? null : days.log, { when: "month_end" }) },
+    log,
   ].filter(Boolean);
-  if (steps.every((st) => st.done || st.muted)) return null;
   const n = steps.filter((st) => !st.muted).length;
+  if (steps.every((st) => st.done || st.muted)) {
+    // all done: a line until the 15th (Steps shows them, to untick one), then nothing
+    if (ctx.today >= days.fifteenth && !opened.has(id)) return null;
+    if (!opened.has(id)) return doneCard(ctx, id, `✓ ${monthName(days.log)} is done`, `Moved ${fmtSek(toBank)} to the bank${P.invest > 0 ? ` and invested ${fmtSek(P.invest)}` : ""}, and logged ${monthName(days.log)}.`);
+    return checklist("home-first", "1st of the month", "All done. Tap a tick to untick a step and do it again.", steps, [hideLink(ctx, id)]);
+  }
   return checklist("home-first", "1st of the month", `The bills are paid: ${["", "one step", "two steps", "three steps"][n] || plural(n, "step")} and ${monthName(days.log)} is done.`, steps);
 }
 
 /** From the 15th: next payday's salary, and the costs from new invoices. */
 function beforeCard(ctx, live) {
   const nextBase = addMonths(live.base, 1);
+  const redo = loadSteps(ctx.data)[live.base] || {};
   const typed = loadPeriodSalaries(ctx.data)[nextBase];
   const ch = nextPaydayChanges(live);
   const items = ch ? ch.items : [];
-  const steps = [
-    { key: "salary", done: typed !== undefined, title: typed !== undefined ? `${monthName(nextBase)}'s salary: ${fmtSek(typed)}` : `Add ${monthName(nextBase)}'s salary`,
-      sub: typed !== undefined ? `For payday ${shortDate(live.end)}. Tap to change it.` : "You know it from the 15th",
-      go: () => openSalarySheet(ctx, nextBase, live.end, typed) },
-    { key: "costs", done: false, title: "Update costs from new invoices",
-      sub: items.length ? `Set for next payday: ${items.length > 3 ? `${items.slice(0, 2).join(", ")} and ${items.length - 2} more` : joinAnd(items)}`
-        : "Rent, electricity: set the amount for next payday. ½ splits a bill.",
-      go: () => { showPeriod(nextBase, ctx.today); ctx.go("budget"); } },
-  ];
-  for (const [k, st] of steps.entries()) st.n = k + 1;
-  return card("home-steps home-before", head(`Before payday, ${shortDate(live.end)}`, "So payday starts from the right numbers."),
-    h("div", { class: "list" }, steps.map((st, k) => stepRow(st, k, steps.findIndex((x) => !x.done)))));
+  const salary = autoStep(live.base, redo, "salary", typed !== undefined, {
+    title: typed !== undefined ? `${monthName(nextBase)}'s salary: ${fmtSek(typed)}` : `Add ${monthName(nextBase)}'s salary`,
+    go: () => openSalarySheet(ctx, nextBase, live.end, typed) });
+  salary.sub = typed === undefined ? "You know it from the 15th"
+    : salary.again ? "Check it against your payslip and save it again" : `For payday ${shortDate(live.end)}. Tap to change it.`;
+  const costsDone = redo.costs === "done";
+  const costs = { key: "costs", done: costsDone, title: "Update costs from new invoices",
+    sub: items.length ? `Set for next payday: ${items.length > 3 ? `${items.slice(0, 2).join(", ")} and ${items.length - 2} more` : joinAnd(items)}`
+      : "Rent, electricity: set the amount for next payday. ½ splits a bill. Tick it when you're done.",
+    mark: () => { setStep(live.base, "costs", costsDone ? null : "done"); syncNow(); },
+    go: () => { showPeriod(nextBase, ctx.today); ctx.go("budget"); } };
+  const steps = [salary, costs];
+  return checklist("home-before", `Before payday, ${shortDate(live.end)}`, "So payday starts from the right numbers.", steps);
 }
 
 /** A small sheet for next payday's salary (the Budget's next pay period has it too). */

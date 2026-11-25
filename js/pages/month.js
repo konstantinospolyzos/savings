@@ -1,9 +1,10 @@
 import { h, sheet, group, caption, footer, toggle, alertBox, toast, icon } from "../ui.js";
 import {
   CUR, localSym, secondSym, brokersText, rateShown, rateFromInput, TRAVEL_RX, addMonths, defaultNewMonth, mLong, mShort, logName, paydayFor, shortDate,
-  parseNumber, plainNumber, fmtEur, fmtSek, toneOf, fetchSekToEur, loadPeriodSalaries, isoDay, budgetSnapshot,
+  parseNumber, plainNumber, fmtEur, fmtSek, toneOf, fetchSekToEur, loadPeriodSalaries, isoDay, budgetSnapshot, logPeriod,
 } from "../core.js";
 import { store } from "../store.js";
+import { stepDone } from "./steps.js";
 
 function field(placeholder) {
   return h("input", { class: "form-input", type: "text", inputmode: "decimal", autocomplete: "off", autocorrect: "off",
@@ -210,6 +211,7 @@ export function openMonthSheet(ctx, original = null, startMonth = null, opts = {
     const entry = { month, income_sek: inc, bank_sek: bnk, invested_eur: inv, sek_to_eur: r,
       comment: note.value.trim(), added_eur: add, trip: tripSwitch.input.checked, logged: isoDay(ctx.today) };
     store.saveEntry(entry, original && original.month !== month ? original.month : null);
+    stepDone(logPeriod(month), "log", "month_log");          // logged again: Home's steps for this log tick again
     sh.close();
     toast(`✓  Saved ${logName(month)}`);
     if (store.mode === "drive" && !store.drive.tokenValid()) store.syncFromTap();   // sign-in needs this tap

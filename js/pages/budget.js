@@ -9,11 +9,12 @@ import {
   monthFlows, travelFund, expenseApplies, expenseMonthlySek, goalApplies, goalPerMonth,
   goalPlannedBy, fetchSekToEur, CUR, inSweden, localSym, hasMoney, rateFromInput, rateShown,
   loadBudgets, budgetToSave, budgetChanges, carsToOffer, getSetting, plural, dayMonth, joinAnd, defaultPeriodMonth,
-  logName, loadPeriodSalaries, salaryFor, currentPeriod,
+  logName, loadPeriodSalaries, salaryFor, currentPeriod, loadSteps,
 } from "../core.js";
 import { store } from "../store.js";
 import { openExpenseSheet, openGoalSheet, openProfilesSheet } from "./budget-sheets.js";
 import { profileName } from "./plan.js";
+import { stepDone } from "./steps.js";
 
 const FIXED_C = "var(--gray3)", GOALS_C = COLORS.teal;
 
@@ -73,6 +74,7 @@ export function setPeriodSalary(ctx, base, v, { keep = false } = {}) {
   else all[base] = v;
   for (const k of Object.keys(all).sort().slice(0, -24)) delete all[k];       // the last two years
   store.setSetting("period_salaries", all);
+  if (v !== null) stepDone(addMonths(base, -1), "salary");                     // Home's "Add next salary" ticks again
 }
 
 /** Where the salary of the pay period shown comes from, and the link that undoes a typed one. */
@@ -137,8 +139,10 @@ function periodCard(snap, ctx) {
     const next = { ...budgets, [snap.base]: budgetToSave(snap, today) };
     for (const k of Object.keys(next).sort().slice(0, -24)) delete next[k];       // the last two years
     store.setSetting("period_budgets", next);
+    stepDone(snap.base, "budget");
     toast(`✓  Saved: ${fmtSek(snap.left)} left to plan`);
   };
+  const redo = loadSteps(ctx.data)[snap.base]?.budget === "redo";       // unticked on Home: save it again
   const savedOn = saved ? shortDate(new Date(`${saved.saved}T12:00:00`)) : "";
   const P = snap.plan;
   let saveBox = null;
@@ -148,8 +152,8 @@ function periodCard(snap, ctx) {
         h("button", { type: "button", class: "btn primary wide", onclick: saveIt }, "Save the budget"),
         h("div", { class: "hint" }, isNext ? `Saves the next pay period's numbers. You pick its plan on Home from payday, ${shortDate(start)}.`
           : "Saves this pay period's numbers. Then pick this month's plan on Home."));
-    } else if (changes.length) {
-      saveBox = h("div", { class: "save-box" },
+    } else if (changes.length || redo) {
+      saveBox = h("div", { class: "save-box" }, !changes.length ? h("div", { class: "hint" }, "You unticked this on Home: check the salary and the costs, then save it again.") :
         h("div", { class: "warn-note" }, `Changed since you saved it on ${savedOn} (${changes.join(", ")}). Save again so the plans use the new numbers.`),
         h("button", { type: "button", class: "btn primary wide", onclick: saveIt }, "Save again"));
     } else {

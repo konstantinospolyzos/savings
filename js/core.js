@@ -983,6 +983,35 @@ export function loadPeriodSalaries(data) {
   return Object.fromEntries(Object.entries(s).filter(([k, v]) => MONTH_KEY.test(k) && typeof v === "number" && Number.isFinite(v) && v >= 0));
 }
 
+/** The pay period a log belongs to: End of November is November's payday (December's log, while logs carry the month after). */
+export const logPeriod = (month, endMonths = CUR.end_months) => (endMonths ? month : addMonths(month, -1));
+
+/**
+ * The steps on Home you unticked to do again ("redo") or ticked by hand ("done"), by pay period:
+ * {"2026-11": {log: "redo", costs: "done"}}. A step that ticks itself (your numbers logged, the budget saved…)
+ * stays unticked until you do it again.
+ */
+export function loadSteps(data) {
+  const s = getSetting(data, "period_steps", {});
+  if (!s || typeof s !== "object" || Array.isArray(s)) return {};
+  const out = {};
+  for (const [base, steps] of Object.entries(s)) {
+    if (!MONTH_KEY.test(base) || !steps || typeof steps !== "object" || Array.isArray(steps)) continue;
+    const ok = Object.entries(steps).filter(([k, v]) => /^[a-z_]{1,24}$/.test(k) && (v === "redo" || v === "done"));
+    if (ok.length) out[base] = Object.fromEntries(ok);
+  }
+  return out;
+}
+
+/** The steps with one of them changed (state null forgets it), keeping the last two years. */
+export function withStep(all, base, key, state) {
+  const next = { ...all, [base]: { ...(all[base] || {}) } };
+  if (state) next[base][key] = state; else delete next[base][key];
+  if (!Object.keys(next[base]).length) delete next[base];
+  for (const k of Object.keys(next).sort().slice(0, -24)) delete next[k];
+  return next;
+}
+
 /**
  * A pay period's salary, and where it's from: typed for it ("period"), your own figure for every pay period
  * from before ("kept", until you tap Use latest), its log ("log"), or the latest log ("latest").

@@ -13,6 +13,7 @@ import {
 import { store } from "../store.js";
 import { openProfilesSheet } from "./budget-sheets.js";
 import { makeFoldable } from "./fold.js";
+import { stepDone } from "./steps.js";
 
 const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, GOALS_C = COLORS.teal, BUFFER_C = COLORS.blue, INVEST_C = COLORS.orange,
   SAVINGS_C = COLORS.indigo;
@@ -76,6 +77,7 @@ export function startPlan(ctx, base, fields, keep = null) {
   const plans = { ...loadPlans(store.data), [base]: plan };
   for (const k of Object.keys(plans).sort().slice(0, -24)) delete plans[k];      // the last two years
   store.setSetting("period_plans", plans);
+  stepDone(base, "plan");
 }
 export function setPlan(base, plan) {
   const plans = { ...loadPlans(store.data) };
@@ -420,10 +422,16 @@ function previewCard(bs, live, ctx, running = null) {
     h("div", { class: "rate-text" }, `Your future gets ${pct(f.save_rate)} of your salary (buffer + investing). Goal money is spent later, so it isn't counted.${actual ? ` Over the last 12 months you managed ${pct(actual.rate)} (black mark).` : ""}`),
     rateMeter(f.save_rate, actual ? actual.rate : null),
     canStart ? h("div", { class: "hairline" }) : null,
-    canStart && running ? h("button", { type: "button", class: "btn primary wide", disabled: running.profile === f.profile && Math.abs(running.living - f.living) < 1,
-      onclick: () => { switching = false; startPlan(ctx, bs.base, f, running); toast(`✓  Switched to ${profileName(f.profile)}`); ctx.go("home"); } },
+    canStart && running ? h("button", { type: "button", class: "btn primary wide",
+      onclick: () => {
+        const same = running.profile === f.profile && Math.abs(running.living - f.living) < 1;
+        switching = false;
+        startPlan(ctx, bs.base, f, running);
+        toast(same ? `✓  ${profileName(f.profile)} it is` : `✓  Switched to ${profileName(f.profile)}`);
+        ctx.go("home");
+      } },
     running.profile !== f.profile ? `Switch to the ${profileName(f.profile)} plan`
-      : Math.abs(running.living - f.living) < 1 ? `${profileName(f.profile)} is your plan now` : `Update the ${profileName(f.profile)} plan`) : null,
+      : Math.abs(running.living - f.living) < 1 ? `Keep the ${profileName(f.profile)} plan` : `Update the ${profileName(f.profile)} plan`) : null,
     canStart && !running ? h("button", { type: "button", class: "btn primary wide", onclick: () => { startPlan(ctx, bs.base, f); toast(`✓  ${profileName(f.profile)} plan started`); ctx.go("home"); } },
       `Start the ${profileName(f.profile)} plan`) : null,
     canStart ? h("div", { class: "hint" }, running
