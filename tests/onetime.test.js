@@ -18,7 +18,7 @@ const bought = [
   { id: "e", date: "2026-09-30", name: "Concert", amount: 650 },
 ];
 const dataWith = (settings = {}, bank = 200000) => ({ entries: [entry("2026-10", { bank_sek: bank })], expenses: [rent], goals: [], cars: [],
-  settings: { profile_rates: { light: 10, balanced: 20, high: 30 }, profile_maxes: { light: 0, balanced: 0, high: 0 }, keep_saving: 0.25, ...settings } });
+  settings: { keep_saving: 0.25, ...settings } });
 const NUMBERS = ["salary", "fixed", "left", "free", "future", "living", "to_buffer", "to_savings", "invest", "save_rate", "shortfall"];
 const numbers = (s) => Object.fromEntries(NUMBERS.map((k) => [k, s[k]]));
 
@@ -34,7 +34,8 @@ test("one-time expenses don't change the budget or the plan of any pay period", 
     assert.ok(!("oneoff" in c.budgetToSave(b, today)));
   }
   const now = c.budgetSnapshot(withOnce, today);
-  assert.deepEqual([now.left, now.future, now.living, now.to_savings, now.invest], [20000, 8000, 12000, 2000, 6000]);
+  // Balanced: 700 a week for the 33 days of 23 Oct – 24 Nov, the rest to your future
+  assert.deepEqual([now.left, now.future, now.living, now.to_savings, now.invest], [20000, 16700, 3300, 4180, 12520]);
 });
 
 test("they're kept with the day you bought them, oldest first", () => {
@@ -65,20 +66,20 @@ test("each shows with the logged month whose savings it lowers", () => {
 });
 
 test("a budget and plan saved while they still came out of them read as they would without", () => {
-  for (const [bank, toBuffer, toSavings, invest] of [[200000, 0, 2000, 6000], [40000, 8000, 0, 0]]) {
+  for (const [bank, toBuffer, toSavings, invest] of [[200000, 0, 4180, 12520], [40000, 16700, 0, 0]]) {
     const clean = dataWith({ one_time: bought }, bank);
     const snap = c.budgetSnapshot(clean, today);
     const saved = c.budgetToSave(snap, today);
-    const P = { profile: "balanced", rate: 20, floor_week: 0, max_week: 0, trip: false, salary: 40000, fixed: 20000, goals: 0,
-      living: snap.living, to_buffer: toBuffer, to_savings: toSavings, invest, future: 8000, save_rate: 0.2, days: snap.days,
+    const P = { profile: "balanced", week: 700, salary: 40000, fixed: 20000, goals: 0,
+      living: snap.living, to_buffer: toBuffer, to_savings: toSavings, invest, future: 16700, save_rate: 0.4175, days: snap.days,
       started: "2026-10-23", done: { save: true, invest: false }, checks: [] };
-    assert.deepEqual([snap.future, snap.to_buffer, snap.to_savings, snap.invest], [8000, toBuffer, toSavings, invest]);
+    assert.deepEqual([snap.future, snap.to_buffer, snap.to_savings, snap.invest], [16700, toBuffer, toSavings, invest]);
     // what the version of 14 Nov stored: 7 200 kr of one-time expenses taken off Save and Invest
     const taken = (p, oneoff, over, future) => {
       const buf = Math.min(future, bank < 60000 ? 20000 : 0), sav = future - buf > 0 ? Math.round((future - buf) * 0.25 / 10) * 10 : 0;
       return { ...p, future, to_buffer: buf, to_savings: sav, invest: future - buf - sav, save_rate: future / 40000, oneoff, oneoff_over: over };
     };
-    for (const old of [taken(P, 7200, 0, 800), taken(P, 10000, 2000, 0)]) {
+    for (const old of [taken(P, 7200, 0, 9500), taken(P, 18700, 2000, 0)]) {
       const data = dataWith({ one_time: bought, period_budgets: { "2026-10": { ...saved, left: saved.left - old.oneoff, free: saved.free - old.oneoff, oneoff: old.oneoff } },
         period_plans: { "2026-10": old } }, bank);
       assert.deepEqual(c.loadBudgets(data)["2026-10"], saved);

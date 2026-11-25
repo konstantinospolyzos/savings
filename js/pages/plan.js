@@ -4,14 +4,13 @@
 // your action plan and past plans. Home has the day to day: living money, check-ins and the steps.
 import { h, chip, dot, splitBar, toggle, toast, alertBox, kv, icon } from "../ui.js";
 import {
-  COLORS, PROFILE_DEFS, budgetSnapshot, planForRate, loadPlans, loadBudgets, loadProfiles, loadFloors, loadMaxes, loadTrips, budgetChanges, budgetToSave,
+  COLORS, PROFILE_DEFS, budgetSnapshot, planForWeek, planWeeks, loadPlans, loadBudgets, budgetChanges, budgetToSave,
   defaultPeriodMonth, paydayFor, addMonths, mIndex, daysBetween, addDays, isoDay, fmtRange, shortDate, fmtSek, fmtEur, pct,
   roundTo10, plainNumber, plural, usualSpending, planProgress, currentPeriod, futureValue, investedSek,
   brokersText, mLong, logName, getSetting, hasMoney, summarize, monthFlows, CUR, inSweden, buildActions, tagAnalysis,
   travelFund, expenseMonthlySek, bufferTargetText,
 } from "../core.js";
 import { store } from "../store.js";
-import { openProfilesSheet } from "./budget-sheets.js";
 import { makeFoldable } from "./fold.js";
 import { stepDone } from "./steps.js";
 
@@ -38,40 +37,28 @@ export const profileName = (key) => PROFILE_DEFS.find(([k]) => k === key)?.[1] |
 const selectedProfile = (data) => { const k = getSetting(data, "profile", "balanced"); return PROFILE_DEFS.some(([p]) => p === k) ? k : "balanced"; };
 
 /**
- * The budget a pay period's plans are worked out from: the one you saved on the Budget page, with your
- * profiles (their % and minimums) and the one you picked.
+ * The budget a pay period's plans are worked out from: the one you saved on the Budget page, with the plans'
+ * money a week and the one you picked.
  */
 export function budgetFor(ctx, base, saved, start, end) {
   return { ...saved, base, start, end, today: ctx.today, days: saved.days || daysBetween(start, end), goal_rows: saved.goal_rows || [],
-    profiles: loadProfiles(ctx.data), floors: loadFloors(ctx.data), maxes: loadMaxes(ctx.data), trip: Boolean(loadTrips(ctx.data)[base]),
-    profile: selectedProfile(ctx.data), entries: ctx.entries, plan: loadPlans(ctx.data)[base] || null };
+    weeks: planWeeks(), profile: selectedProfile(ctx.data), entries: ctx.entries, plan: loadPlans(ctx.data)[base] || null };
 }
 
-/** The most a profile lives on a week in a pay period: none when you go on a trip. */
-const maxFor = (bs, key) => (bs.trip ? 0 : bs.maxes?.[key] || 0);
-
-/** A trip this pay period: the plans have no most to live on. */
-export function setTrip(base, on) {
-  const trips = { ...loadTrips(store.data) };
-  if (on) trips[base] = true; else delete trips[base];
-  for (const k of Object.keys(trips).sort().slice(0, -24)) delete trips[k];
-  store.setSetting("trip_periods", trips);
-}
-
-/** A saving plan's numbers from a budget: what it spends, saves and invests, and why. */
+/** A saving plan's numbers from a budget: its money a week to spend, and the rest saved and invested. */
 export function planFields(bs, key) {
-  const rate = bs.profiles[key], floor = bs.floors[key], max = maxFor(bs, key);
-  const p = planForRate(bs, rate, floor, max);
-  return { profile: key, rate, floor_week: floor, max_week: max, trip: Boolean(bs.trip), salary: bs.salary, fixed: bs.fixed, goals: bs.goals,
+  const week = bs.weeks[key];
+  const p = planForWeek(bs, week);
+  return { profile: key, week, salary: bs.salary, fixed: bs.fixed, goals: bs.goals,
     living: p.spend, to_buffer: p.to_buffer, to_savings: p.to_savings, invest: p.invest, future: p.future, save_rate: p.rate, days: bs.days,
-    capped: p.capped, short: p.short, by_floor: p.by_floor, by_max: p.by_max,
+    short: p.short,
     // the bank it started from (your payday numbers) and the buffer it filled toward
     ...(typeof bs.bank === "number" ? { bank: bs.bank } : {}), ...(typeof bs.target === "number" ? { target: bs.target } : {}) };
 }
 
 /** Start a pay period's plan (it keeps its numbers until payday). Updating one keeps its check-ins and ticks. */
 export function startPlan(ctx, base, fields, keep = null) {
-  const { capped, short, by_floor, by_max, ...numbers } = fields;
+  const { short, ...numbers } = fields;
   const plan = { ...numbers, started: keep?.started || isoDay(ctx.today), ...(keep ? { updated: isoDay(ctx.today) } : {}),
     done: keep?.done || { save: false, invest: false }, checks: keep?.checks || [] };
   const plans = { ...loadPlans(store.data), [base]: plan };
@@ -100,8 +87,7 @@ export function planChanges(P, bs) {
   const why = [Math.abs(f.salary - P.salary) > 0.5 ? "the salary" : null, Math.abs(f.fixed - P.fixed) > 0.5 ? "the fixed costs" : null,
     Math.abs(f.goals - P.goals) > 0.5 ? "the goals" : null, Math.abs(f.to_buffer - P.to_buffer) > 50 ? "the buffer" : null,
     Math.abs(kept(f) - kept(P)) > 50 && Math.abs(f.future - P.future) <= 50 ? "what's kept in savings" : null,
-    Math.abs(f.living - P.living) > 50 && Boolean(f.trip) !== Boolean(P.trip) ? (f.trip ? "the trip" : "no trip") : null,
-    Math.abs(f.living - P.living) > 50 && !f.trip && (f.max_week || 0) !== (P.max_week || 0) ? "the most to live on" : null].filter(Boolean);
+    Math.abs(f.living - P.living) > 50 && f.week !== P.week ? `${fmtSek(f.week)} a week to spend` : null].filter(Boolean);
   return { changed, why, fields: f };
 }
 
@@ -184,15 +170,12 @@ function splitCard(snap) {
   const P = snap.plan;
   const parts = [["Fixed costs", P.fixed, FIXED_C], ["Saving goals", P.goals, GOALS_C], ["Buffer", P.to_buffer, BUFFER_C],
     ["Savings", kept(P), SAVINGS_C], ["Investing", P.invest, INVEST_C], ["Living money", P.living, LIVING_C]].filter(([, v]) => v > 0.5);
-  const aimed = P.rate !== undefined && P.save_rate < P.rate / 100 - 0.005;
-  const above = P.rate !== undefined && P.max_week > 0 && P.save_rate > P.rate / 100 + 0.005;
   return card(head("Where the salary goes", `${fmtSek(P.salary)} this pay period`),
     splitBar(parts.map(([, v, c]) => [v, c]), 12),
     h("div", { class: "legend-list" }, parts.map(([name, v, c]) => h("div", { class: "legend-row" }, dot(c, 9), h("span", { class: "legend-name" }, name),
       h("span", { class: "legend-amount amt" }, fmtSek(v)), h("span", { class: "legend-pct" }, P.salary > 0 ? `${Math.round(v / P.salary * 100)}%` : "")))),
-    h("div", { class: "hint amt-soft" }, `Your future gets ${pct(P.save_rate || 0)} of your salary (buffer${kept(P) > 0 ? " + savings" : ""} + investing).`
-      + (aimed ? ` You aimed for ${P.rate}%, but that would have left less than ${fmtSek(P.floor_week)} a week to live on.` : "")
-      + (above ? ` More than the ${P.rate}% you aimed for: you live on at most ${fmtSek(P.max_week)} a week, and the rest goes to your future.` : "")));
+    h("div", { class: "hint amt-soft" }, `Your future gets ${pct(P.save_rate || 0)} of your salary (buffer${kept(P) > 0 ? " + savings" : ""} + investing):`
+      + ` all that's left after fixed costs${P.goals > 0 ? ", goals" : ""} and ${P.week ? `${fmtSek(P.week)} a week` : "the living money"}.`));
 }
 
 /** What the plan builds: the buffer, the investments and the goals, if you keep it up. */
@@ -251,16 +234,14 @@ function weeksCard(snap, pr) {
 function detailsCard(snap, ctx, bs) {
   const P = snap.plan;
   const { changed, why, fields } = planChanges(P, bs);
-  const aimed = P.rate !== undefined && Math.abs(P.save_rate - P.rate / 100) > 0.005;
   const update = () => { startPlan(ctx, snap.base, fields, P); toast(`✓  Plan updated: ${profileName(P.profile)}`); };
   return withClass(card(head("The plan", `Started ${shortDate(asDay(P.started))}${P.updated ? `, updated ${shortDate(asDay(P.updated))}` : ""}`),
     changed ? h("div", { class: "warn-note" }, `Things changed since you started${why.length ? ` (${why.join(", ")})` : ""}: the plan would now be ${money(fields.living / (snap.days / 7))} a week to spend, ${fmtSek(saveOf(fields))} to save and ${fmtSek(fields.invest)} to invest.`,
       h("div", { class: "note-actions" }, h("button", { type: "button", class: "btn tinted small", onclick: update }, "Update the plan"))) : null,
     h("div", { class: "kv-list" },
       kv("Profile", profileName(P.profile), { amt: false }),
-      kv("Saves", `${pct(P.save_rate || 0)} of your salary${aimed ? ` (aimed for ${P.rate}%)` : ""}`, { amt: false }),
-      P.floor_week ? kv("Lives on at least", `${fmtSek(P.floor_week)} a week`) : null,
-      P.trip ? kv("Lives on at most", "no most: a trip", { amt: false }) : P.max_week ? kv("Lives on at most", `${fmtSek(P.max_week)} a week`) : null,
+      kv("To spend", P.week ? `${fmtSek(P.week)} a week` : `≈ ${money(P.living / (snap.days / 7))} a week`),
+      kv("Saves", `${pct(P.save_rate || 0)} of your salary`, { amt: false }),
       kv("Salary", fmtSek(P.salary)),
       kv("Fixed costs", fmtSek(P.fixed)),
       P.goals > 0 ? kv("Saving goals", fmtSek(P.goals)) : null,
@@ -333,16 +314,12 @@ function tilesCard(bs, ctx) {
   // what you really spend a week beyond your fixed costs, from your logs: how far each plan is from it
   const usual = bs.salary > 0 && bs.fixed > 0 ? usualSpending(bs.entries, bs.fixed) : null;
   const tiles = PROFILE_DEFS.map(([key, title, tagline]) => {
-    const rate = bs.profiles[key], floor = bs.floors[key], max = maxFor(bs, key);
-    const p = planForRate(bs, rate, floor, max);
-    const chipEl = p.short ? chip("Doesn't fit", "down")
-      : p.capped || p.by_max ? chip(`Saves ${pct(p.rate)} of salary`, rateTone(p.rate))
-        : chip(`Saves ${rate}% of salary`, rateTone(rate / 100));
-    const why = p.short ? `Even ${fmtSek(floor)} a week to live on doesn't fit after your fixed costs and goals.`
-      : p.capped ? `${rate}% would leave less than ${fmtSek(floor)} a week to live on, so it saves ${pct(p.rate)}.`
-        : p.by_max ? `At most ${fmtSek(max)} a week to live on, so it saves ${pct(p.rate)}: more than its ${rate}%.`
-          : max ? `Between ${fmtSek(floor)} and ${fmtSek(max)} a week to live on.` : `Never less than ${fmtSek(floor)} a week to live on.`;
-    const diff = usual ? p.spend / weeks - usual.week : null;
+    const week = bs.weeks[key];
+    const p = planForWeek(bs, week);
+    const chipEl = p.short ? chip("Doesn't fit", "down") : chip(`Saves ${pct(p.rate)} of salary`, rateTone(p.rate));
+    const why = p.short ? `${fmtSek(week)} a week doesn't fit after your fixed costs and goals: ${money(free / weeks)} a week is all that's left.`
+      : `${fmtSek(p.spend)} for the ${bs.days} days to payday, and all the rest to your future.`;
+    const diff = usual ? week - usual.week : null;
     const vsUsual = diff === null ? null : Math.abs(diff) < 50 ? "About what you usually spend."
       : `${money(Math.abs(diff))} a week ${diff < 0 ? "less" : "more"} than you usually spend.`;
     const cols = [["spend", "Spend", LIVING_C], ["save", "Save", BUFFER_C], ["invest", "Invest", INVEST_C]].map(([part, text, color]) =>
@@ -352,21 +329,15 @@ function tilesCard(bs, ctx) {
     return h("button", { type: "button", class: `tile ${key === bs.profile ? "selected" : ""}`, "aria-pressed": String(key === bs.profile),
       onclick: () => { if (key !== bs.profile) store.setSetting("profile", key); } },
       h("div", { class: "tile-head" }, h("div", null, h("div", { class: "tile-title" }, title), h("div", { class: "hint" }, tagline)), chipEl),
-      h("div", { class: "tile-week" }, h("span", { class: "tile-value amt" }, `≈ ${money(p.spend / weeks)}`), h("span", { class: "hint" }, " per week to spend")),
+      h("div", { class: "tile-week" }, h("span", { class: "tile-value amt" }, p.short ? `≈ ${money(p.spend / weeks)}` : fmtSek(week)), h("span", { class: "hint" }, " a week to spend")),
       splitBar([[p.spend, LIVING_C], [p.save, BUFFER_C], [p.invest, INVEST_C]], 6),
       h("div", { class: "tile-cols" }, cols),
       h("div", { class: `tile-why amt-soft ${p.short ? "tone-text-down" : ""}` }, why),
       vsUsual ? h("div", { class: "tile-why amt-soft" }, vsUsual) : null);
   });
-  const trip = h("label", { class: "switch-line trip-line" }, h("span", null, "Going on a trip this pay period"),
-    toggle(Boolean(bs.trip), (on) => setTimeout(() => setTrip(bs.base, on), 220), "Going on a trip this pay period"));
   return withClass(card(
-    head("Pick this month's plan", "Each puts a share of your salary toward your future, and keeps what you live on a week between a least and a most.",
-      h("button", { type: "button", class: "link-btn", onclick: () => openProfilesSheet(ctx, bs) }, "Edit")),
+    head("Pick this month's plan", "Each gives you a set amount to spend a week, and all the rest goes to your future."),
     h("div", { class: "tiles" }, tiles),
-    trip,
-    h("div", { class: "hint" }, bs.trip ? "Trip this pay period: no most to live on, so the plans leave you everything above their %."
-      : "On a trip, a pay period can have more to live on: turn this on and the plans have no most this time."),
     usual ? h("div", { class: "hint amt-soft" }, `You usually spend about ${money(usual.week)} a week beyond your fixed costs: the middle of your last ${usual.months} months of logs, trip months left out.`) : null), "plan-tiles");
 }
 
@@ -389,10 +360,7 @@ function previewCard(bs, live, ctx, running = null) {
   const fx = live.fx;
   let warn = "", note = "";
   if (bs.free < 0) warn = "Fixed costs and goals are higher than your salary, so nothing is left for your future or living.";
-  else if (f.short) warn = `Even ${fmtSek(f.floor_week)} a week to live on doesn't fit: after fixed costs and goals, ${fmtSek(Math.max(bs.free, 0))} is left for ${bs.days} days. Pause a goal or trim a fixed cost on the Budget tab.`;
-  else if (f.capped) note = `${f.rate}% of your salary would leave less than ${fmtSek(f.floor_week)} a week to live on, so this plan saves ${pct(f.save_rate)}: the most that still leaves you that.`;
-  else if (f.by_max) note = `${f.rate}% of your salary would leave more than ${fmtSek(f.max_week)} a week to live on, so this plan saves ${pct(f.save_rate)}: what's above that goes to your future.`;
-  else if (f.trip) note = "A trip this pay period: no most to live on.";
+  else if (f.short) warn = `${fmtSek(f.week)} a week to live on doesn't fit: after fixed costs and goals, ${fmtSek(Math.max(bs.free, 0))} is left for ${bs.days} days, so all of it is your living money and nothing goes to your future. Pause a goal or trim a fixed cost on the Budget tab, or pick a plan with less a week.`;
   const save = saveOf(f);
   const parts = [];
   if (bs.goal_rows.length) parts.push(`goals ${plainNumber(f.goals)} (${bs.goal_rows.map(([n, m]) => `${n} ${plainNumber(m)}`).join(", ")})`);
@@ -410,7 +378,7 @@ function previewCard(bs, live, ctx, running = null) {
   return card(head(`The ${profileName(f.profile)} plan`, `For ${fmtRange(bs.start, addDays(bs.end, -1))}: Revolut on payday, the bank and investing on the 1st.`),
     warn ? h("div", { class: "warn-note" }, warn) : null,
     note ? h("div", { class: "hint amt-soft plan-note" }, note) : null,
-    block("SPEND", LIVING_C, fmtSek(f.living), `≈ ${money(f.living / weeks)} per week`, live.active.some((x) => x.pocket)
+    block("SPEND", LIVING_C, fmtSek(f.living), f.short ? `≈ ${money(f.living / weeks)} a week` : `${fmtSek(f.week)} a week`, live.active.some((x) => x.pocket)
       ? "Goes to your spending account in Revolut: beers, eating out, small buys." : "Stays in your everyday account: beers, eating out, small buys."),
     h("div", { class: "hairline" }),
     block("SAVE", BUFFER_C, fmtSek(save), CUR.single ? "" : `≈ ${fmtEur(save * fx)}`, saveText),
@@ -459,7 +427,7 @@ export function renderPlan(ctx) {
   const nextBase = addMonths(base, 1);
   const next = loadPlans(ctx.data)[nextBase] || null;
   const back = h("button", { type: "button", class: "back-link", onclick: () => { switching = false; ctx.go("home"); } }, icon("chevronLeft", 17), "Home");
-  const foot = h("div", { class: "hint page-foot" }, `The plans are rules of thumb (${inSweden() ? "Swedbank, Finansinspektionen, the 50/30/20 rule" : "common guidance and the 50/30/20 rule"}), not financial advice. Change the % and the minimums on the Budget tab.`);
+  const foot = h("div", { class: "hint page-foot" }, `The plans are rules of thumb (${inSweden() ? "Swedbank, Finansinspektionen, the 50/30/20 rule" : "common guidance and the 50/30/20 rule"}), not financial advice. Each plan is a set amount to spend a week: Light saving ${fmtSek(planWeeks().light)}, Balanced ${fmtSek(planWeeks().balanced)}, High saving ${fmtSek(planWeeks().high)}.`);
   if (!live.plan) {
     if (!bs) return [`${fmtRange(live.start, addDays(live.end, -1))}  ·  save your budget first`,
       back,

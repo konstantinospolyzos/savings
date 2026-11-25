@@ -110,19 +110,18 @@ export const DEFAULT_EXPENSES = [
   ["Transport", "Transport"], ["Insurance", "Insurance"], ["Phone", "Subscriptions"],
   ["Streaming & apps", "Subscriptions"], ["Gym", "Health & fitness"],
 ];
-// [key, name, tagline, % of salary to your future, the least and the most to live on a week (in SEK)]
+// [key, name, tagline, what you have to spend a week (in SEK)]: a plan gives you that to live on, and the rest of
+// what's free after fixed costs and goals goes to your future (the buffer first, then savings and investing)
 export const PROFILE_DEFS = [
-  ["light", "Light saving", "More room to enjoy now", 10, 800, 850],
-  ["balanced", "Balanced", "Steady, with room to live", 20, 500, 700],
-  ["high", "High saving", "Live lean, grow fast", 30, 300, 500],
+  ["light", "Light saving", "More room to enjoy now", 1000],
+  ["balanced", "Balanced", "Steady, with room to live", 700],
+  ["high", "High saving", "Live lean, grow fast", 400],
 ];
-/** Nobody lives on less than about 300 kr a week, so no plan goes below it. */
-export const MIN_FLOOR_SEK = 300;
-// Roughly what 1 SEK is in other currencies: only for the suggested minimums to live on (you can change them).
+// Roughly what 1 SEK is in other currencies: only for the plans' money a week in another currency.
 const ROUGH_PER_SEK = { SEK: 1, NOK: 1, DKK: 0.65, ISK: 13, EUR: 0.09, GBP: 0.075, USD: 0.095, CHF: 0.08, PLN: 0.37, CZK: 2.2,
   HUF: 34, RON: 0.43, TRY: 3.3, JPY: 14, CNY: 0.68, KRW: 130, AUD: 0.145, NZD: 0.16, CAD: 0.13, HKD: 0.74, SGD: 0.12,
   ZAR: 1.7, BRL: 0.52, MXN: 1.8, ILS: 0.35, THB: 3.3, PHP: 5.4, IDR: 1500, MYR: 0.43, INR: 8 };
-/** An amount in SEK as a round amount in your currency (for the suggested minimums). */
+/** An amount in SEK as a round amount in your currency (for the plans' money a week). */
 export function fromSek(sek) {
   const v = sek * (ROUGH_PER_SEK[CUR.local] || 1);
   const step = v >= 2000 ? 100 : v >= 200 ? 10 : v >= 20 ? 5 : 1;
@@ -672,7 +671,16 @@ export function computeBudget(salary, expenses, goals, base, ratePct, bankSek, b
   };
 }
 
-/** What a profile would do this pay period: spend, save (goals + buffer + savings), invest, and why it saves less. */
+/**
+ * What a plan does this pay period: its money a week to live on (all that's free, if that doesn't fit: short),
+ * and the rest to your future: save (goals + buffer + savings) and invest.
+ */
+export function planForWeek(snap, week) {
+  const p = planForRate(snap, 0, week, week);
+  return { ...p, week, capped: false, by_floor: false, by_max: false };
+}
+
+/** What a % of the salary would do this pay period, with a least and a most to live on a week (planSplit). */
 export function planForRate(snap, ratePct, floorWeek = 0, maxWeek = 0) {
   const salary = snap.salary;
   const floorTotal = floorWeek > 0 ? floorWeek * snap.days / 7 : 0;
@@ -732,32 +740,9 @@ export function oneTimeMonths(data, start, end) {
   return out;
 }
 
-/** The least each profile lives on a week, in your currency (yours, or the suggested ones). */
-/** The most each profile lives on a week (0: no most), in your currency (yours, or the suggested ones). */
-export function loadMaxes(data) {
-  const stored = getSetting(data, "profile_maxes", {}) || {};
-  const out = {};
-  for (const [key, , , , , def] of PROFILE_DEFS) {
-    const val = typeof stored === "object" ? stored[key] : null;
-    out[key] = typeof val === "number" && val >= 0 && val < 1e9 ? val : fromSek(def);
-  }
-  return out;
-}
-
-/** Pay periods with a trip: no most to live on then ({"2026-12": true}). */
-export function loadTrips(data) {
-  const t = getSetting(data, "trip_periods", {});
-  return t && typeof t === "object" ? t : {};
-}
-
-export function loadFloors(data) {
-  const stored = getSetting(data, "profile_floors", {}) || {};
-  const out = {};
-  for (const [key, , , , def] of PROFILE_DEFS) {
-    const val = typeof stored === "object" ? stored[key] : null;
-    out[key] = typeof val === "number" && val >= 0 && val < 1e9 ? val : fromSek(def);
-  }
-  return out;
+/** What each plan gives you to spend a week, in your currency: 1 000, 700 and 400 kr. */
+export function planWeeks() {
+  return Object.fromEntries(PROFILE_DEFS.map(([key, , , week]) => [key, fromSek(week)]));
 }
 
 /**
@@ -855,7 +840,6 @@ function planWithoutOneOff(p, budget) {
     save_rate: rest.salary > 0 ? future / rest.salary : rest.save_rate };
 }
 
-/** What the Budget page saves for My plan: the numbers a saving plan is worked out from. */
 /**
  * From the 1st after payday, with the pay period's plan running, the plan's saving is in the bank: the bank grows
  * with the plan (what you moved, and the month you log after the bills), so the budget keeps the bank the plan
@@ -867,6 +851,7 @@ export function bankSettled(snap) {
   return snap.today >= day(mYear(m), mNum(m), 1);
 }
 
+/** What the Budget page saves: the numbers the saving plans are worked out from. */
 export function budgetToSave(snap, today) {
   const keep = bankSettled(snap) && typeof snap.plan.bank === "number";
   const bank = keep ? snap.plan.bank : snap.bank;
@@ -901,16 +886,6 @@ export function loadPlans(data) {
   if (!p || typeof p !== "object") return {};
   const budgets = getSetting(data, "period_budgets", {}) || {};
   return Object.fromEntries(Object.entries(p).map(([k, v]) => [k, planWithoutOneOff(v, budgets[k])]));
-}
-
-export function loadProfiles(data) {
-  const stored = getSetting(data, "profile_rates", {}) || {};
-  const out = {};
-  for (const [key, , , def] of PROFILE_DEFS) {
-    const val = typeof stored === "object" ? stored[key] : null;
-    out[key] = typeof val === "number" && val >= 0 && val <= 90 ? val : def;
-  }
-  return out;
 }
 
 export function budgetRate(data, entries) {
@@ -1040,23 +1015,21 @@ export function budgetSnapshot(data, today = todayDate(), offset = 0, salaryOver
   // your fixed costs, and the cars you count in the Budget (from the car monitor)
   const expenses = [...data.expenses.map((x) => expenseInPeriod(x, base)), ...carBudgetLines(data, base)].sort(byPosition);
   const goals = [...data.goals].sort(byPosition);
-  const profiles = loadProfiles(data);
+  const weeks = planWeeks();
   let key = getSetting(data, "profile", "balanced");
-  if (!(key in profiles)) key = "balanced";
-  const floors = loadFloors(data);
-  const maxes = loadMaxes(data);
-  const trip = Boolean(loadTrips(data)[base]);
+  if (!(key in weeks)) key = "balanced";
   const bufferFirst = Boolean(getSetting(data, "buffer_first", true));
   let months = getSetting(data, "buffer_months", 3);
   if (!BUFFER_MONTH_CHOICES.includes(months)) months = 3;
-  const b = computeBudget(salary, expenses, goals, base, profiles[key], latest ? latest.bank_sek : 0,
-    bufferFirst, fx, months, floors[key], daysBetween(start, end), loadKeepSaving(data), trip ? 0 : maxes[key], loadBufferAmount(data));
+  // the plan you picked: its money a week to live on (the least and the most at once), the rest to your future
+  const b = computeBudget(salary, expenses, goals, base, 0, latest ? latest.bank_sek : 0,
+    bufferFirst, fx, months, weeks[key], daysBetween(start, end), loadKeepSaving(data), weeks[key], loadBufferAmount(data));
   const plan = loadPlans(data)[base] || null;
   const active = expenses.filter((e) => expenseApplies(e, base));
   const missing = active.filter((e) => e.amount === 0);
   return Object.assign(b, {
     today, base, start, end, days: daysBetween(start, end), fx, fx_src: fxSrc, fx_override: fxOverride,
-    expenses, active, profiles, floors, maxes, trip, plan, profile: key, goals_list: goals, latest, salary_kept: salaryOverride === null && paid.src === "kept",
+    expenses, active, weeks, week: weeks[key], plan, profile: key, goals_list: goals, latest, salary_kept: salaryOverride === null && paid.src === "kept",
     salary_src: salaryOverride !== null ? "override" : paid.src, salary_log: salaryOverride !== null ? null : paid.entry, buffer_first: bufferFirst, missing,
     plan_ready: salary > 0 && b.fixed > 0 && missing.length <= 2,
   });

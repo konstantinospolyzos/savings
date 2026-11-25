@@ -12,7 +12,7 @@ import {
   logName, loadPeriodSalaries, salaryFor, currentPeriod, loadSteps,
 } from "../core.js";
 import { store } from "../store.js";
-import { openExpenseSheet, openGoalSheet, openProfilesSheet } from "./budget-sheets.js";
+import { openExpenseSheet, openGoalSheet } from "./budget-sheets.js";
 import { profileName } from "./plan.js";
 import { stepDone } from "./steps.js";
 
@@ -404,16 +404,12 @@ function costsCard(snap, ctx) {
 }
 
 // ---------------------------------------------------------------------------
-/** The rules of the saving plans you pick from on Home: the % each saves, and the least and most to live on a week. */
-function plansCard(snap, ctx) {
-  const rows = PROFILE_DEFS.map(([key, title]) => {
-    const floor = snap.floors[key], max = snap.maxes[key];
-    const week = max ? `${plainNumber(floor)}–${fmtSek(max)} a week` : `at least ${fmtSek(floor)} a week`;
-    return h("div", { class: "list-row static plan-rule" }, h("div", { class: "row-main" },
-      h("div", { class: "row-title" }, title), h("div", { class: "row-sub amt-soft" }, `Save at least ${snap.profiles[key]}%  ·  ${week}`)));
-  });
-  return card(head("Saving plans", "You pick one of these on each payday.",
-    h("button", { type: "button", class: "btn tinted small", onclick: () => openProfilesSheet(ctx, snap) }, "Edit")),
+/** The saving plans you pick from on Home: each a set amount to spend a week, the rest to your future. */
+function plansCard(snap) {
+  const rows = PROFILE_DEFS.map(([key, title, tagline]) => h("div", { class: "list-row static plan-rule" },
+    h("div", { class: "row-main" }, h("div", { class: "row-title" }, title), h("div", { class: "row-sub" }, tagline)),
+    h("span", { class: "row-amount amt" }, `${fmtSek(snap.weeks[key])} a week`)));
+  return card(head("Saving plans", "You pick one on each payday. Each gives you a set amount to spend a week, and all the rest goes to your future."),
   h("div", { class: "list" }, rows),
   h("div", { class: "hint amt-soft" }, snap.target > 0
     ? `Your buffer target, ${snap.buffer_amount !== null ? fmtSek(snap.target) : `${snap.buffer_months} months of fixed costs (${fmtSek(snap.target)})`}, is set once in Settings. Until it's full, what you save goes to the bank.`
@@ -433,7 +429,7 @@ export function renderBudget(ctx) {
     periodCard(snap, ctx),
     costsCard(snap, ctx),
     goalsCard(snap, ctx),
-    plansCard(snap, ctx),
+    plansCard(snap),
     draftCard(ctx),
     paydayCard(ctx.today),
     h("div", { class: "hint page-foot" }, `The buffer and the plans are rules of thumb (${inSweden() ? "Finansinspektionen, Swedbank" : "common guidance"}), not financial advice. Change the numbers to fit you.`)];

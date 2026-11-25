@@ -339,8 +339,8 @@ test("once the buffer is full, a share of the future money still goes to savings
   assert.deepEqual(c.budgetChanges(saved, { ...kept, keep_share: 0.5, buffer_first: true }), ["the share kept in savings"]);
 });
 
-test("a plan never leaves more than its most to live on, unless there's a trip", () => {
-  // 23 120 free after fixed costs, 33 days; Light aims for 20% of 40 000 = 8 000, which would leave 15 120 to live on
+test("a % of the salary with a least and a most to live on (the split the plans are made with)", () => {
+  // 23 120 free after fixed costs, 33 days; 20% of 40 000 = 8 000 would leave 15 120 to live on
   const days = 33, weeks = days / 7;
   const free = c.planSplit(23120, 40000, 20, 800 * weeks);
   close(free.living, 15120);
@@ -351,21 +351,30 @@ test("a plan never leaves more than its most to live on, unless there's a trip",
   // the most never goes below the least, and doesn't matter when the % already leaves less
   close(c.planSplit(23120, 40000, 20, 800 * weeks, 500 * weeks).living, 800 * weeks);
   assert.equal(c.planSplit(10339, 38095, 20, 500 * weeks, 700 * weeks).by_max, false);
-  // in a budget: the selected profile's most, but no most in a pay period with a trip
+});
+
+test("each plan gives a set amount to spend a week, and all the rest goes to your future", () => {
+  assert.deepEqual(c.planWeeks(), { light: 1000, balanced: 700, high: 400 });
+  const days = 33, weeks = days / 7;
   const exp = [{ id: 1, name: "Rent", amount: 16880, per: "month", category: "Home", active: true, position: 0, currency: "SEK" }];
+  // the old settings (a % and a least and a most per plan, a trip) don't change the plans any more
   const data = { entries: [entry("2026-10", { income_sek: 40000, bank_sek: 200000 })], expenses: exp, goals: [], cars: [],
-    settings: { profile: "light", profile_rates: { light: 20, balanced: 25, high: 35 } } };
+    settings: { profile: "light", profile_rates: { light: 20, balanced: 25, high: 35 }, profile_floors: { light: 300 }, profile_maxes: { light: 5000 },
+      trip_periods: { "2026-10": true } } };
   const snap = c.budgetSnapshot(data, c.day(2026, 10, 28));
-  assert.deepEqual([snap.days, snap.maxes.light, snap.trip], [33, 850, false]);
-  close(snap.living, 850 * weeks);
-  const trip = c.budgetSnapshot({ ...data, settings: { ...data.settings, trip_periods: { "2026-10": true } } }, c.day(2026, 10, 28));
-  assert.equal(trip.trip, true);
-  close(trip.living, 23120 - 8000);
-  // and the plans worked out from a saved budget do the same
-  const p = c.planForRate({ ...snap, days }, 20, 800, 850);
-  close(p.spend, 850 * weeks);
-  assert.equal(p.by_max, true);
-  close(p.rate, (23120 - 850 * weeks) / 40000);
+  assert.deepEqual([snap.days, snap.week, snap.weeks.balanced], [33, 1000, 700]);
+  close(snap.living, 1000 * weeks);                        // 4 714 to live on for 33 days
+  close(snap.future, 23120 - 1000 * weeks);                // and the rest, 18 406, to your future
+  for (const week of [1000, 700, 400]) {
+    const p = c.planForWeek({ ...snap, days }, week);
+    close(p.spend, week * weeks);
+    close(p.future, 23120 - week * weeks);
+    close(p.rate, (23120 - week * weeks) / 40000);
+    assert.deepEqual([p.week, p.short, p.capped, p.by_max], [week, false, false, false]);
+  }
+  // when a plan's money a week doesn't fit, all that's free is to live on, and nothing goes to your future
+  const tight = c.planForWeek({ ...snap, free: 2000, days }, 700);
+  assert.deepEqual([tight.spend, tight.future, tight.save, tight.invest, tight.short], [2000, 0, 0, 0, true]);
 });
 
 test("months that mean the month that ended: moving every log back by one", () => {

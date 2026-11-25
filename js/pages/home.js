@@ -215,7 +215,7 @@ function paydaySteps(ctx, live, saved, changes, days) {
       : budget.again ? `Check them on the Budget tab and save the budget again (${fmtSek(saved.left)} left after fixed costs)`
         : `${fmtSek(saved.left)} left after fixed costs`;
   const plan = upd?.changed ? { key: "plan", done: false, title: "Update the plan",
-    sub: `The budget changed since you picked ${profileName(P.profile)}${upd.why.length ? ` (${joinAnd(upd.why)})` : ""}: update it to use the new numbers`,
+    sub: `Things changed since you picked ${profileName(P.profile)}${upd.why.length ? ` (${joinAnd(upd.why)})` : ""}: update it to use the new numbers`,
     go: () => { startSwitching(false); ctx.go("plan"); document.querySelector("[data-page='plan'] .plan-details")?.scrollIntoView({ behavior: "smooth", block: "start" }); } }
     : autoStep(live.base, redo, "plan", Boolean(P), { title: "Pick this month's plan",
       // unticked: Plan details opens with the plans, to pick one again (or keep yours)
