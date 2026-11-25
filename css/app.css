@@ -25,7 +25,8 @@
   }
 }
 
-* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* touch-action: a quick second tap is a tap, not a zoom; pinch-zoom still works */
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 html.locked, html.locked body { overflow: hidden; }
 body {
