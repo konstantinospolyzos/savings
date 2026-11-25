@@ -459,8 +459,8 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
 .tile-why { font-size: 12.5px; color: var(--gray); margin-top: 6px; line-height: 1.35; }
 .plan-note { margin-bottom: 12px; }
 .once-card .list-row .chev { color: var(--gray3); flex: none; }
-.halve-btn { font-size: 15px; padding: 0; }
-.halve-btn:disabled { color: var(--gray); }
+.btn.halve-btn { padding: 5px 10px; min-width: 38px; font-size: 16px; border-radius: 9px; }
+.btn.halve-btn:disabled { opacity: 0.4; }
 .once-month { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--gray); padding: 10px 0 2px; }
 .note-actions { margin-top: 8px; }
 .move-row { cursor: default; }

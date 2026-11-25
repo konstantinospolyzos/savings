@@ -80,14 +80,14 @@ export function openExpenseSheet(ctx, snap, shownCost = null) {
   const pocket = toggle(Boolean(original?.pocket), () => {}, "Revolut pocket");
   // split with your partner: type the whole bill and halve it, instead of working out your half yourself
   let halvedFrom = null;
-  const halveBtn = h("button", { type: "button", class: "link-btn halve-btn", onclick: () => {
+  const halveBtn = h("button", { type: "button", class: "btn tinted small halve-btn", "aria-label": "Split in half", onclick: () => {
     const v = parseNumber(amount.value);
     if (v === null || !(v > 0)) return;
     halvedFrom = v;
     amount.value = shown(Math.round(v / 2 * 100) / 100);
     typed = true;
     validate();
-  } }, "Split in half with your partner");
+  } }, "½");
   const stepper = monthStepper(() => endMonth, (m) => { endMonth = m; });
   const hasEnd = toggle(Boolean(original?.end_month), (on) => { stepper.style.visibility = on ? "" : "hidden"; }, "Last month");
   stepper.style.visibility = hasEnd.input.checked ? "" : "hidden";
@@ -146,7 +146,7 @@ export function openExpenseSheet(ctx, snap, shownCost = null) {
       else if (yearly) t = `Counts as ${fmtSek(perMonth)} a month in the budget.`;
       else t = `That's ${fmtSek(v * 12)} a year.`;
     }
-    if (halvedFrom !== null && v !== null && Math.abs(v * 2 - halvedFrom) < 0.02) t = `Your half of ${own(halvedFrom)}. Your partner pays the other half. ${t}`;
+    if (halvedFrom !== null && v !== null && Math.abs(v * 2 - halvedFrom) < 0.02) t = `Half of ${own(halvedFrom)}. ${t}`;
     amountFooter.textContent = t;
     halveBtn.disabled = !(v > 0);
     whenFooter.textContent = whenText(v);
@@ -193,8 +193,8 @@ export function openExpenseSheet(ctx, snap, shownCost = null) {
   const earlier = amountRows();
   const body = h("div", { class: "form" },
     caption("DETAILS"),
-    group(row("Name", name), row("Amount", amount, CUR.single ? localSym() : null, curSeg),
-      h("div", { class: "form-row" }, halveBtn), plainRow("Paid", perSeg), catRow),
+    group(row("Name", name), row("Amount", amount, CUR.single ? localSym() : null, h("span", { class: "form-right" }, halveBtn, curSeg)),
+      plainRow("Paid", perSeg), catRow),
     amountFooter,
     caption(original && !waiting ? "THE AMOUNT COUNTS FROM" : "COUNTS FROM"),
     group(h("div", { class: "form-row" }, whenSeg)),
