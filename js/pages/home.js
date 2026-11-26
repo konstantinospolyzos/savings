@@ -1,6 +1,7 @@
 // Home: the first tab of the savings section. Your money, the living money you should have left today (with a
-// check-in), the steps that are due (payday, the 1st, the days before payday), how you're spending, where this
-// pay period's salary goes, and your one-time expenses. The plan in detail is a page of its own (Plan details).
+// check-in, and a chart of how you're spending), the steps that are due (payday, the 1st, the days before
+// payday), where this pay period's salary goes, and your one-time expenses. The plan in detail is a page of its
+// own (Plan details).
 import { h, chip, dot, splitBar, toast, icon, s, sheet, group, caption, footer } from "../ui.js";
 import {
   COLORS, CUR, MONTHS, fmtSek, fmtEur, fmtRange, shortDate, longDate, dayMonth, addDays, addMonths, daysBetween, isoDay, logName,
@@ -62,25 +63,27 @@ function moneyCard(ctx, live, days) {
 // ---------------------------------------------------------------------------
 // Living money: what you should have left today, and a check-in against it
 // ---------------------------------------------------------------------------
-function checkResult(P, live, last) {
-  const today = live.today;
+/** Your last check-in, in one line: how it stands against the plan, and what a day makes it last. */
+function checkLine(P, live, last) {
   const r = planCheck(P, live.start, live.end, last);
-  const when = last.date === isoDay(today) ? "checked today" : `checked ${shortDate(asDay(last.date))}`;
-  const diff = Math.abs(r.diff) < 10 ? `Just what the plan has for the ${plural(r.days_left, "day")} to payday.`
-    : `${money(Math.abs(r.diff))} ${r.diff > 0 ? "more" : "less"} than the plan has for the ${r.days_left === 1 ? "last day" : `last ${r.days_left} days`}.`;
-  const age = daysBetween(asDay(last.date), today);
-  return h("div", { class: "check-result" },
-    h("div", { class: "cap-row" }, chip(r.status, r.tone), h("span", { class: "hint amt-soft" }, `${fmtSek(last.left)} left, ${when}`)),
-    h("div", { class: "check-line amt-soft" }, `${diff} To make it last: ≈ ${money(r.per_day_now)} a day.`),
-    age >= 3 ? h("div", { class: "hint" }, `That was ${plural(age, "day")} ago: check again to keep this right.`) : null);
+  const when = last.date === isoDay(live.today) ? "today" : `on ${shortDate(asDay(last.date))}`;
+  const diff = Math.abs(r.diff) < 10 ? "just what the plan has" : `${money(Math.abs(r.diff))} ${r.diff > 0 ? "more" : "less"} than the plan has`;
+  const age = daysBetween(asDay(last.date), live.today);
+  return h("div", { class: "check-result" }, chip(r.status, r.tone),
+    h("span", { class: "check-line amt-soft" }, `${fmtSek(last.left)} left ${when}, ${diff}. ≈ ${money(r.per_day_now)} a day makes it last.`
+      + (age >= 3 ? ` That was ${plural(age, "day")} ago: check again.` : "")));
 }
 
+/*
+ * Living money, in one card: what you should have left today, your last check-in against it, and how you're
+ * spending (the chart: each check-in as what you've spent, against the budget and the on-track pace). − folds
+ * the chart to a bar of the pay period. The dates and the plan are in the page's subtitle, so they aren't here.
+ */
 function livingCard(ctx, live, saved) {
   const P = live.plan;
   if (!P) {
     return card("home-living",
-      h("div", { class: "cap-row" }, dot(LIVING_C, 8), h("span", { class: "caption" }, "LIVING MONEY"),
-        h("span", { class: "hint" }, fmtRange(live.start, addDays(live.end, -1)))),
+      h("div", { class: "cap-row" }, dot(LIVING_C, 8), h("span", { class: "caption" }, "LIVING MONEY")),
       h("div", { class: "muted living-empty" }, "No plan this pay period yet. Pick one and this shows what you should have left each day, with a check-in."),
       h("div", { class: "card-actions" }, saved
         ? h("button", { type: "button", class: "btn primary small", onclick: () => ctx.go("plan") }, "Pick this month's plan")
@@ -88,11 +91,10 @@ function livingCard(ctx, live, saved) {
   }
   const today = live.today;
   const pr = planProgress(P, live.start, live.end, today);
-  const toPayday = daysBetween(today, live.end);
   const checks = (P.checks || []).filter((c) => c.date >= isoDay(live.start) && c.date <= isoDay(today));
   const last = checks.at(-1) || null;
   const input = h("input", { class: "check-input amt", type: "text", inputmode: "decimal", autocomplete: "off",
-    placeholder: plainNumber(roundTo10(pr.expected)), "aria-label": "What's in your spending account now" });
+    placeholder: "Left in your account", "aria-label": "What's in your spending account now" });
   const check = () => {
     const v = parseNumber(input.value);
     if (v === null || v < 0) { input.classList.add("invalid"); return; }
@@ -104,23 +106,29 @@ function livingCard(ctx, live, saved) {
   };
   input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); check(); } });
   input.addEventListener("input", () => input.classList.remove("invalid"));
-  return card("home-living",
-    h("div", { class: "cap-row" }, dot(LIVING_C, 8), h("span", { class: "caption" }, "LIVING MONEY"),
-      h("span", { class: "hint" }, fmtRange(live.start, addDays(live.end, -1))),
-      h("span", { class: "plan-day" }, chip(`Day ${pr.day} of ${pr.days}`, "info"))),
+  let folded = Boolean(store.pref("home_spend_folded", false));
+  const foldBtn = h("button", { type: "button", class: "fold-btn" });
+  const el = card("home-living",
+    h("div", { class: "cap-row living-head" }, dot(LIVING_C, 8), h("span", { class: "caption" }, "LIVING MONEY"),
+      h("button", { type: "button", class: "link-btn living-details", onclick: () => { startSwitching(false); ctx.go("plan"); } }, "Plan details"),
+      foldBtn),
     h("div", { class: "living-label" }, "You should have left today"),
     h("div", { class: "big-value amt" }, money(pr.expected)),
-    h("div", { class: "muted amt-soft" }, `to stay on track  ·  ≈ ${money(pr.per_day)} a day`),
-    h("div", { class: "plan-progress" }, splitBar([[pr.day, LIVING_C], [pr.days - pr.day, "var(--fill)"]], 8)),
-    h("div", { class: "plan-progress-labels" }, h("span", null, `Payday ${dayMonth(live.start)}`),
-      h("span", null, toPayday === 1 ? `Payday tomorrow, ${dayMonth(live.end)}` : `${toPayday} days to payday, ${dayMonth(live.end)}`)),
-    last ? checkResult(P, live, last) : null,
-    h("div", { class: "check-row" }, h("span", { class: "check-label" }, "What's in your spending account now?"),
-      h("span", { class: "check-field" }, input, h("span", { class: "check-unit" }, localSym()),
-        h("button", { type: "button", class: "btn tinted small", onclick: check }, "Check"))),
-    h("div", { class: "card-actions" },
-      h("button", { type: "button", class: "btn tinted small", onclick: () => { startSwitching(false); ctx.go("plan"); } }, "Plan details"),
-      h("button", { type: "button", class: "btn plain small", onclick: () => { startSwitching(); ctx.go("plan"); } }, "Switch plan")));
+    h("div", { class: "muted amt-soft" }, `≈ ${money(pr.per_day)} a day to stay on track`),
+    last ? checkLine(P, live, last) : null,
+    h("div", { class: "living-chart" }, spendChart(P, live, checks)),
+    h("div", { class: "living-bar", title: `Day ${pr.day} of ${pr.days}` }, splitBar([[pr.day, LIVING_C], [pr.days - pr.day, "var(--fill)"]], 6)),
+    h("div", { class: "check-row" }, input, h("span", { class: "check-unit" }, localSym()),
+      h("button", { type: "button", class: "btn tinted small", onclick: check }, "Check")));
+  const set = () => {
+    el.classList.toggle("chart-off", folded);
+    foldBtn.textContent = folded ? "+" : "−";
+    foldBtn.setAttribute("aria-label", folded ? "Show the chart" : "Hide the chart");
+    foldBtn.setAttribute("aria-expanded", String(!folded));
+  };
+  foldBtn.addEventListener("click", () => { folded = !folded; store.setPref("home_spend_folded", folded); set(); });
+  set();
+  return el;
 }
 
 // ---------------------------------------------------------------------------
@@ -348,59 +356,38 @@ function niceStep(v) {
 }
 
 function spendChart(P, live, checks) {
-  const W = 340, H = 196, pad = { l: 40, r: 12, t: 22, b: 26 };
+  const W = 340, H = 158, pad = { l: 34, r: 8, t: 6, b: 22 };
   const days = live.days, living = P.living;
   const pts = [{ d: 0, spent: 0 }, ...checks.map((c) => ({ d: Math.min(Math.max(daysBetween(live.start, asDay(c.date)), 0), days), spent: Math.max(living - c.left, 0), date: c.date }))];
-  const most = Math.max(living * 1.08, ...pts.map((p) => p.spent));
-  const step = niceStep(most), top = Math.ceil(most / step) * step;
+  // a little room above the budget line for its label and the key; gridlines at round amounts below the top
+  const top = Math.max(living * 1.24, ...pts.map((p) => p.spent * 1.06), 1);
+  const step = niceStep(top);
   const X = (d) => pad.l + (d / days) * (W - pad.l - pad.r);
   const Y = (v) => pad.t + (1 - v / top) * (H - pad.t - pad.b);
-  const grid = Array.from({ length: Math.round(top / step) + 1 }, (_, k) => {
+  const grid = Array.from({ length: Math.floor(top / step + 1e-9) + 1 }, (_, k) => {
     const v = step * k;
     return [s("line", { x1: pad.l, x2: W - pad.r, y1: Y(v), y2: Y(v), class: "sc-grid" }),
       s("text", { x: pad.l - 6, y: Y(v) + 3.5, class: "sc-axis amt", "text-anchor": "end" }, k ? fmtAxisSek(v).replace(localSym(), "").trim() : "0")];
   }).flat();
   const ticks = [0, 7, 14, 21, days].filter((d, k, a) => d <= days && (k === a.length - 1 || days - d >= 4)).map((d) =>
-    s("text", { x: X(d), y: H - 8, class: "sc-axis", "text-anchor": d === 0 ? "start" : d === days ? "end" : "middle" }, dayMonth(addDays(live.start, d))));
+    s("text", { x: X(d), y: H - 6, class: "sc-axis", "text-anchor": d === 0 ? "start" : d === days ? "end" : "middle" }, dayMonth(addDays(live.start, d))));
   const line = pts.map((p, k) => `${k ? "L" : "M"}${X(p.d).toFixed(1)},${Y(p.spent).toFixed(1)}`).join(" ");
-  const today = pts.at(-1);
+  const now = pts.at(-1);
   const todayD = daysBetween(live.start, live.today);
-  return s("svg", { viewBox: `0 0 ${W} ${H}`, class: "spend-chart", role: "img", "aria-label": "What you've spent this pay period, from your check-ins" },
+  const keyY = pad.t + 9;
+  return s("svg", { viewBox: `0 0 ${W} ${H}`, class: "spend-chart", role: "img", "aria-label": "What you've spent this pay period, from your check-ins, against the budget" },
     ...grid, ...ticks,
-    todayD >= 0 && todayD <= days ? s("line", { x1: X(todayD), x2: X(todayD), y1: pad.t - 4, y2: H - pad.b, class: "sc-today" }) : null,
+    todayD >= 0 && todayD <= days ? s("line", { x1: X(todayD), x2: X(todayD), y1: pad.t, y2: H - pad.b, class: "sc-today" }) : null,
     s("line", { x1: X(0), y1: Y(0), x2: X(days), y2: Y(living), class: "sc-pace" }),
     s("line", { x1: pad.l, x2: W - pad.r, y1: Y(living), y2: Y(living), class: "sc-budget" }),
     s("text", { x: W - pad.r, y: Y(living) - 6, class: "sc-label amt", "text-anchor": "end" }, `Budget ${fmtSek(living)}`),
+    // the key, top left: what the line and the dashes are
+    s("circle", { cx: pad.l + 8, cy: keyY - 3.5, r: 3.5, class: "sc-dot now" }),
+    s("text", { x: pad.l + 16, y: keyY, class: "sc-key" }, "spent"),
+    s("line", { x1: pad.l + 58, x2: pad.l + 76, y1: keyY - 3.5, y2: keyY - 3.5, class: "sc-pace" }),
+    s("text", { x: pad.l + 81, y: keyY, class: "sc-key" }, "on track"),
     pts.length > 1 ? s("path", { d: line, class: "sc-line" }) : null,
-    ...pts.slice(1).map((p) => s("circle", { cx: X(p.d), cy: Y(p.spent), r: p === today ? 4.5 : 3, class: p === today ? "sc-dot now" : "sc-dot" })),
-    pts.length > 1 ? s("text", { x: Math.min(Math.max(X(today.d), pad.l + 30), W - pad.r - 30), y: Math.max(Y(today.spent) - 10, pad.t + 8),
-      class: "sc-label now amt", "text-anchor": "middle" }, fmtSek(today.spent)) : null);
-}
-
-function spendCard(ctx, live) {
-  const P = live.plan;
-  const checks = (P.checks || []).filter((c) => c.date >= isoDay(live.start) && c.date <= isoDay(live.today));
-  const last = checks.at(-1) || null;
-  let folded = Boolean(store.pref("home_spend_folded", false));
-  const sub = last ? `${fmtSek(Math.max(P.living - last.left, 0))} of ${fmtSek(P.living)} spent  ·  ${fmtSek(last.left)} to go`
-    : "Each check-in above adds a point: what you've spent so far.";
-  const body = h("div", { class: "spend-body" },
-    spendChart(P, live, checks),
-    h("div", { class: "legend spend-legend" },
-      h("span", { class: "legend-item" }, dot(LIVING_C, 8), "Spent, from your checks"),
-      h("span", { class: "legend-item" }, h("span", { class: "line-swatch solid" }), "Budget"),
-      h("span", { class: "legend-item" }, h("span", { class: "line-swatch" }), "On-track pace")));
-  const btn = h("button", { type: "button", class: "fold-btn", "aria-label": folded ? "Show the chart" : "Hide the chart" }, folded ? "+" : "−");
-  const el = card("home-spend", head("Spending this pay period", sub, btn), body);
-  const set = () => {
-    el.classList.toggle("collapsed", folded);
-    btn.textContent = folded ? "+" : "−";
-    btn.setAttribute("aria-label", folded ? "Show the chart" : "Hide the chart");
-    btn.setAttribute("aria-expanded", String(!folded));
-  };
-  btn.addEventListener("click", () => { folded = !folded; store.setPref("home_spend_folded", folded); set(); });
-  set();
-  return el;
+    ...pts.slice(1).map((p) => s("circle", { cx: X(p.d), cy: Y(p.spent), r: p === now ? 4.5 : 3, class: p === now ? "sc-dot now" : "sc-dot" })));
 }
 
 // ---------------------------------------------------------------------------
@@ -442,7 +429,6 @@ export function renderHome(ctx) {
     moneyCard(ctx, live, days),
     livingCard(ctx, live, saved),
     ...due,
-    P ? spendCard(ctx, live) : null,
     P ? periodCard(live) : null,
     oneTimeCard(live, ctx)];
 }

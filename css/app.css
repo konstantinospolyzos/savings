@@ -656,9 +656,18 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
 .home-living .big-value { margin-top: 0; }
 .home-living .muted { font-size: 14px; }
 .living-empty { font-size: 14.5px; line-height: 1.45; margin-top: 10px; }
-.home-living .check-result { margin-top: 4px; padding-top: 12px; border-top: 0.5px solid var(--sep); }
-.home-living .check-row { padding-top: 12px; border-top: 0.5px solid var(--sep); }
-.home-living .check-result + .check-row { border-top: 0; padding-top: 2px; }
+.living-head .living-details { margin-left: auto; font-size: 15px; padding: 4px 2px; }
+.living-head .fold-btn { margin-left: 6px; }
+.home-living .check-result { flex-direction: row; align-items: flex-start; gap: 8px; margin: 12px 0 0; padding-top: 12px; border-top: 0.5px solid var(--sep); }
+.home-living .check-result .chip { flex: none; margin-top: 1px; }
+.home-living .check-result .check-line { flex: 1; min-width: 0; }
+.living-chart { margin-top: 12px; }
+.living-bar { margin-top: 14px; }
+.home-living.chart-off .living-chart, .home-living:not(.chart-off) .living-bar { display: none; }
+.home-living .check-row { flex-wrap: nowrap; margin-top: 12px; padding-top: 12px; border-top: 0.5px solid var(--sep); }
+.home-living .check-input { flex: 1 1 auto; width: auto; }
+.home-living .check-input::placeholder { font-size: 15px; font-weight: 400; }
+.home-living .check-row .btn { flex: none; }
 .check-field { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
 .home-steps .card-head { margin-bottom: 6px; }
 .home-done .card-head { margin-bottom: 0; }
@@ -677,8 +686,6 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
 .fold-btn { width: 30px; height: 30px; flex: none; border-radius: 15px; background: var(--fill); color: var(--blue); font-size: 20px; font-weight: 600;
   line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
 .fold-btn:active { opacity: 0.6; }
-.home-spend.collapsed .spend-body { display: none; }
-.home-spend.collapsed .card-head { margin-bottom: 0; }
 .spend-chart { display: block; width: 100%; height: auto; overflow: visible; }
 .spend-chart .sc-grid { stroke: var(--sep); stroke-width: 1; }
 .spend-chart .sc-axis { fill: var(--gray); font-size: 10.5px; }
@@ -686,13 +693,10 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
 .spend-chart .sc-pace { stroke: var(--gray); stroke-width: 1.4; stroke-dasharray: 5 4; }
 .spend-chart .sc-budget { stroke: var(--red); stroke-width: 1.6; }
 .spend-chart .sc-label { fill: var(--label2); font-size: 11px; font-weight: 600; }
-.spend-chart .sc-label.now { fill: var(--purple); font-size: 12px; font-weight: 700; }
+.spend-chart .sc-key { fill: var(--gray); font-size: 10.5px; }
 .spend-chart .sc-line { fill: none; stroke: var(--purple); stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
 .spend-chart .sc-dot { fill: var(--card); stroke: var(--purple); stroke-width: 2; }
 .spend-chart .sc-dot.now { fill: var(--purple); }
-.spend-legend { margin: 8px 0 0; padding: 0; flex-wrap: wrap; row-gap: 6px; column-gap: 14px; overflow: visible; }
-.line-swatch.solid { border-top-style: solid; border-color: var(--red); }
-.spend-legend .line-swatch:not(.solid) { border-color: var(--gray); }
 .back-link { align-self: flex-start; display: inline-flex; align-items: center; gap: 2px; color: var(--blue); font-size: 16px; font-weight: 500;
   margin: -6px 0 -2px -4px; padding: 4px 6px 4px 0; }
 .back-link:active { opacity: 0.5; }
