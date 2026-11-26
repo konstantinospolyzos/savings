@@ -54,6 +54,7 @@ export function openExpenseSheet(ctx, snap, shownCost = null) {
   // (when the bills are paid) is over, a new amount is most likely an invoice for the next payday.
   let when = snap.start > snap.today || waiting || (budgetSaved && daysBetween(paydayFor(cur), snap.today) >= 7) ? 1 : 0;
   let typed = false;
+  let halvedFrom = null;          // while ½ is on: the whole bill (the amount shown is your half of it)
   const amountOf = (i) => expenseAmountFor(original, i ? nxt : cur);
   const shown = (a) => (a ? plainNumber(a, a === Math.round(a) ? 0 : 2) : "");
   let endMonth = original?.end_month || addMonths(snap.base, 11);
@@ -69,7 +70,7 @@ export function openExpenseSheet(ctx, snap, shownCost = null) {
   whenFooter.classList.add("amt");
   const whenSeg = segmented(["This pay period", `Payday ${dayMonth(nextPayday)}`], when, (i) => {
     when = i;
-    if (original && !typed) amount.value = shown(amountOf(i));        // what it is then, until you type another
+    if (original && !typed) { amount.value = shown(amountOf(i)); halvedFrom = wholeOf(amountOf(i)); }    // what it is then, until you type another
     validate();
   }, "full");
 
@@ -78,13 +79,21 @@ export function openExpenseSheet(ctx, snap, shownCost = null) {
   const perSeg = segmented(["Per month", "Per year"], per, (i) => { per = i; validate(); }, "small");
   const active = toggle(original ? original.active : true, () => {}, "Include in budget");
   const pocket = toggle(Boolean(original?.pocket), () => {}, "Revolut pocket");
-  // split with your partner: type the whole bill and halve it, instead of working out your half yourself
-  let halvedFrom = null;
-  const halveBtn = h("button", { type: "button", class: "btn tinted small halve-btn", "aria-label": "Split in half", onclick: () => {
-    const v = parseNumber(amount.value);
-    if (v === null || !(v > 0)) return;
-    halvedFrom = v;
-    amount.value = shown(Math.round(v / 2 * 100) / 100);
+  // split with your partner: type the whole bill and tap ½ for your half; tap it again for the whole bill. The cost
+  // remembers which of its amounts are halves (halves), so ½ is on when you open it again, and tapping it gives the
+  // whole bill back.
+  const halfOf = (v) => Math.round(v / 2 * 100) / 100;
+  const wholeOf = (v) => original?.halves?.find((p) => Math.abs(p.half - v) < 0.005)?.full ?? null;
+  const halveBtn = h("button", { type: "button", class: "btn tinted small halve-btn", "aria-label": "Split in half", "aria-pressed": "false", onclick: () => {
+    if (halvedFrom !== null) {
+      amount.value = shown(halvedFrom);          // the whole bill again
+      halvedFrom = null;
+    } else {
+      const v = parseNumber(amount.value);
+      if (v === null || !(v > 0)) return;
+      halvedFrom = v;
+      amount.value = shown(halfOf(v));
+    }
     typed = true;
     validate();
   } }, "½");
@@ -99,6 +108,7 @@ export function openExpenseSheet(ctx, snap, shownCost = null) {
   if (original) {
     name.value = original.name;
     amount.value = shown(amountOf(when));
+    halvedFrom = wholeOf(amountOf(when));
   }
 
   /** An amount in the cost's unit, as picked in the sheet. */
@@ -146,14 +156,16 @@ export function openExpenseSheet(ctx, snap, shownCost = null) {
       else if (yearly) t = `Counts as ${fmtSek(perMonth)} a month in the budget.`;
       else t = `That's ${fmtSek(v * 12)} a year.`;
     }
-    if (halvedFrom !== null && v !== null && Math.abs(v * 2 - halvedFrom) < 0.02) t = `Half of ${own(halvedFrom)}. ${t}`;
+    if (halvedFrom !== null) t = `Your half of ${own(halvedFrom)}. Tap ½ again for the whole bill. ${t}`;
     amountFooter.textContent = t;
-    halveBtn.disabled = !(v > 0);
+    halveBtn.disabled = halvedFrom === null && !(v > 0);
+    halveBtn.classList.toggle("on", halvedFrom !== null);
+    halveBtn.setAttribute("aria-pressed", String(halvedFrom !== null));
     whenFooter.textContent = whenText(v);
     api?.setRight({ disabled: !(name.value.trim() && v !== null && v >= 0) });
   }
   name.addEventListener("input", validate);
-  amount.addEventListener("input", () => { typed = true; validate(); });
+  amount.addEventListener("input", () => { typed = true; halvedFrom = null; validate(); });     // a new amount: not a half any more
 
   function save(sh) {
     const v = parseNumber(amount.value);
@@ -177,6 +189,13 @@ export function openExpenseSheet(ctx, snap, shownCost = null) {
       x = { ...fields, amount: dated.amount, ...(dated.history ? { history: dated.history } : {}), ...started };
       if (when && v !== amountOf(0)) note = `${own(v)} from payday ${dayMonth(nextPayday)}`;
     }
+    // which of its amounts are halves of a bill: this one if ½ is on, and the others it still has
+    let halves = (original?.halves || []).filter((p) => Math.abs(p.half - v) >= 0.005);
+    if (halvedFrom !== null && Math.abs(halfOf(halvedFrom) - v) < 0.005) halves.push({ half: v, full: halvedFrom });
+    if (newUnit()) halves = halvedFrom !== null ? halves.filter((p) => p.half === v) : [];
+    const amounts = expenseSteps(x).map(([, a]) => a);
+    halves = halves.filter((p) => amounts.some((a) => Math.abs(a - p.half) < 0.005)).slice(-12);
+    if (halves.length) x.halves = halves; else delete x.halves;
     store.saveExpense(x);
     sh.close();
     toast(`✓  ${original ? "Saved" : "Added"} ${x.name}${note ? `: ${note}` : ""}`);

@@ -57,6 +57,13 @@ function costHistory(list) {
 const PERIOD_KEYS = ["in_period", "amount_before", "amount_next"];
 
 /** Check and tidy a data file (from Drive, a backup, or the desktop import). */
+/** [{half, full}]: which of a cost's amounts are your half of a bill you split with ½, so ½ shows on when you open it. */
+function costHalves(v) {
+  if (!Array.isArray(v)) return [];
+  return v.filter((p) => p && typeof p.half === "number" && typeof p.full === "number" && Number.isFinite(p.half) && Number.isFinite(p.full)
+    && p.half > 0 && Math.abs(p.full / 2 - p.half) < 0.01).slice(-12).map((p) => ({ half: p.half, full: p.full }));
+}
+
 export function normalize(raw) {
   if (!raw || typeof raw !== "object" || !Array.isArray(raw.entries))
     throw new Error("This isn't a Savings Tracker file.");
@@ -77,7 +84,7 @@ export function normalize(raw) {
   const ids = new Set();
   const takeId = (v) => { let id = Number.isInteger(v) && !ids.has(v) ? v : null; if (id === null) { while (ids.has(nextId)) nextId++; id = nextId; } ids.add(id); return id; };
   const expenses = (Array.isArray(raw.expenses) ? raw.expenses : []).filter((x) => x && x.name).map((x, i) => {
-    const history = costHistory(x.history), start = optMonth(x.start_month);
+    const history = costHistory(x.history), start = optMonth(x.start_month), halves = costHalves(x.halves);
     return {
       id: takeId(x.id), name: String(x.name), amount: num(x.amount), per: x.per === "year" ? "year" : "month",
       category: String(x.category || "Other"), active: x.active !== false && x.active !== 0, end_month: optMonth(x.end_month),
@@ -85,6 +92,7 @@ export function normalize(raw) {
       ...(x.pocket ? { pocket: true } : {}),         // paid from a Revolut pocket, filled on payday
       ...(history.length ? { history } : {}),        // what it was in earlier pay periods (amount is the newest)
       ...(start ? { start_month: start } : {}),      // the first pay period it counts in
+      ...(halves.length ? { halves } : {}),          // amounts that are your half of a bill you split (½), with the whole bill
     };
   }).sort(byPosition);
   ids.clear(); nextId = 1;

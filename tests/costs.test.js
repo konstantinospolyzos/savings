@@ -124,3 +124,23 @@ test("the row's switch and a row's copy can't change the stored amounts", () => 
   store.setExpenseActive(1, false);
   assert.deepEqual([store.data.expenses[0].active, store.data.expenses[0].amount], [false, 9870]);
 });
+
+test("a cost remembers which of its amounts are your half of a bill you split (½)", () => {
+  const raw = { entries: [], expenses: [
+    { id: 1, name: "Electricity", amount: 920, per: "month", category: "Home", active: true, position: 0, currency: "SEK",
+      history: [{ until: "2026-11", amount: 700 }], start_month: null, halves: [{ half: 920, full: 1840 }, { half: 700, full: 1400 }] },
+    // not a half of its whole bill, not numbers, not a list: left out
+    { id: 2, name: "Rent", amount: 6000, per: "month", category: "Home", active: true, position: 1, currency: "SEK",
+      halves: [{ half: 6000, full: 13000 }, { half: "6000", full: 12000 }, null, { half: 0, full: 0 }] },
+    { id: 3, name: "Internet", amount: 250, per: "month", category: "Home", active: true, position: 2, currency: "SEK", halves: { half: 250, full: 500 } },
+  ] };
+  const d = normalize(raw);
+  assert.deepEqual(d.expenses[0].halves, [{ half: 920, full: 1840 }, { half: 700, full: 1400 }]);
+  assert.equal("halves" in d.expenses[1], false);
+  assert.equal("halves" in d.expenses[2], false);
+  // saved and read back as it was
+  assert.deepEqual(normalize(JSON.parse(JSON.stringify(d))).expenses, d.expenses);
+  // half an öre off from rounding is still a half
+  assert.deepEqual(normalize({ entries: [], expenses: [{ id: 1, name: "Water", amount: 459.5, halves: [{ half: 459.5, full: 919 }] }] }).expenses[0].halves,
+    [{ half: 459.5, full: 919 }]);
+});

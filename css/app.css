@@ -461,6 +461,7 @@ body.welcome-mode #navbar, body.welcome-mode #tabbar { display: none; }
 .once-card .list-row .chev { color: var(--gray3); flex: none; }
 .btn.halve-btn { padding: 5px 10px; min-width: 38px; font-size: 16px; border-radius: 9px; }
 .btn.halve-btn:disabled { opacity: 0.4; }
+.btn.halve-btn.on { background: var(--blue); color: #fff; }          /* on: the amount is your half */
 .once-month { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--gray); padding: 10px 0 2px; }
 .note-actions { margin-top: 8px; }
 .move-row { cursor: default; }
