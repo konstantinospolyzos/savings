@@ -35,7 +35,8 @@ const head = (title, sub = null, right = null) => h("div", { class: "card-head" 
 const addBtn = (onClick) => h("button", { type: "button", class: "btn tinted small", onclick: onClick }, "+  Add");
 
 // ---------------------------------------------------------------------------
-function paydayCard(today) {
+/** The next payday (with days to go) and the three after it: on Home, at the top. */
+export function nextPaydayCard(today) {
   const ps = paydayStatus(today);
   const days = daysBetween(today, ps.next);
   const frac = Math.min(1, daysBetween(ps.prev, today) / Math.max(daysBetween(ps.prev, ps.next), 1));
@@ -426,7 +427,6 @@ export function renderBudget(ctx) {
   const snap = budgetSnapshot(ctx.data, ctx.today, offset);
   snap.entries = ctx.entries;
   return ["Your salary, costs and the rules payday uses",
-    paydayCard(ctx.today),          // the next payday first
     periodCard(snap, ctx),
     costsCard(snap, ctx),
     goalsCard(snap, ctx),

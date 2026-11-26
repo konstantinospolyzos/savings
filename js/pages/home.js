@@ -1,4 +1,4 @@
-// Home: the first tab of the savings section. Your money, the living money you should have left today (with a
+// Home: the first tab of the savings section. The next payday, your money, the living money you should have left today (with a
 // check-in, and a chart of how you're spending), the steps that are due (payday, the 1st, the days before
 // payday), where this pay period's salary goes, and your one-time expenses. The plan in detail is a page of its
 // own (Plan details).
@@ -13,7 +13,7 @@ import { openMonthSheet } from "./month.js";
 import { oneTimeCard } from "./onetime.js";
 import { emptyState } from "./overview.js";
 import { periodSnapshot, paydayMoves, revolutPockets, pocketsList, saveOf, setPlan, profileName, startSwitching, budgetFor, planChanges } from "./plan.js";
-import { showPeriod, setPeriodSalary, nextPaydayChanges } from "./budget.js";
+import { showPeriod, setPeriodSalary, nextPaydayChanges, nextPaydayCard } from "./budget.js";
 import { setStep } from "./steps.js";
 
 const FIXED_C = "var(--gray3)", LIVING_C = COLORS.purple, BANK_C = COLORS.blue, INVEST_C = COLORS.orange;
@@ -432,15 +432,15 @@ export function renderHome(ctx) {
   const saved = loadBudgets(ctx.data)[live.base] || null;
   const changes = saved ? budgetChanges(saved, live) : [];
   const today = ctx.today;
-  const toPayday = daysBetween(today, live.end);
-  const when = isoDay(today) === isoDay(live.start) ? "payday today" : toPayday === 1 ? "payday tomorrow" : `payday in ${toPayday} days`;
-  const subtitle = `${P ? `${profileName(P.profile)} plan  ·  ` : ""}${fmtRange(live.start, addDays(live.end, -1))}  ·  ${when}`;
+  // the days to payday are on the card at the top, so not here
+  const subtitle = `${P ? `${profileName(P.profile)} plan  ·  ` : ""}${fmtRange(live.start, addDays(live.end, -1))}`;
   // what's due: payday's steps until they're done (and the 1st has come), the 1st's, and the days before payday
   const due = [];
   if (!P || today < days.first) due.push(paydayCard(ctx, live, saved, changes, days));
   if (P && today >= days.first) due.push(firstCard(ctx, live, days));
   if (today >= days.fifteenth && today < live.end) due.push(beforeCard(ctx, live));
   return [subtitle,
+    nextPaydayCard(today),
     moneyCard(ctx, live, days),
     livingCard(ctx, live, saved),
     ...due,
