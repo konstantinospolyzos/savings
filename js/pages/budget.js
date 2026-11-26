@@ -426,11 +426,11 @@ export function renderBudget(ctx) {
   const snap = budgetSnapshot(ctx.data, ctx.today, offset);
   snap.entries = ctx.entries;
   return ["Your salary, costs and the rules payday uses",
+    paydayCard(ctx.today),          // the next payday first
     periodCard(snap, ctx),
     costsCard(snap, ctx),
     goalsCard(snap, ctx),
     plansCard(snap),
     draftCard(ctx),
-    paydayCard(ctx.today),
     h("div", { class: "hint page-foot" }, `The buffer and the plans are rules of thumb (${inSweden() ? "Finansinspektionen, Swedbank" : "common guidance"}), not financial advice. Change the numbers to fit you.`)];
 }
