@@ -75,9 +75,10 @@ function checkLine(P, live, last) {
 }
 
 /*
- * Living money, in one card: what you should have left today, your last check-in against it, and how you're
- * spending (the chart: each check-in as what you've spent, against the budget and the on-track pace). − folds
- * the chart to a bar of the pay period. The dates and the plan are in the page's subtitle, so they aren't here.
+ * Living money, in one card: your last check-in, and the chart of what's left in your spending account: each
+ * check-in, the plan (the living money spent evenly to payday), and a green dashed line at what you should have
+ * left today, with the amount. − folds the chart to a line with that amount and a bar of the pay period. The
+ * dates and the plan are in the page's subtitle, so they aren't here.
  */
 function livingCard(ctx, live, saved) {
   const P = live.plan;
@@ -112,12 +113,12 @@ function livingCard(ctx, live, saved) {
     h("div", { class: "cap-row living-head" }, dot(LIVING_C, 8), h("span", { class: "caption" }, "LIVING MONEY"),
       h("button", { type: "button", class: "link-btn living-details", onclick: () => { startSwitching(false); ctx.go("plan"); } }, "Plan details"),
       foldBtn),
-    h("div", { class: "living-label" }, "You should have left today"),
-    h("div", { class: "big-value amt" }, money(pr.expected)),
-    h("div", { class: "muted amt-soft" }, `≈ ${money(pr.per_day)} a day to stay on track`),
-    last ? checkLine(P, live, last) : null,
-    h("div", { class: "living-chart" }, spendChart(P, live, checks)),
+    // folded: what you should have left today in words, and the pay period as a bar
+    h("div", { class: "living-today" }, "Should have left today: ", h("b", { class: "amt" }, money(pr.expected)),
+      h("span", { class: "muted amt-soft" }, `  ·  ≈ ${money(pr.per_day)} a day`)),
     h("div", { class: "living-bar", title: `Day ${pr.day} of ${pr.days}` }, splitBar([[pr.day, LIVING_C], [pr.days - pr.day, "var(--fill)"]], 6)),
+    last ? checkLine(P, live, last) : h("div", { class: "muted amt-soft living-hint" }, `≈ ${money(pr.per_day)} a day to stay on track. Check what's left in your account below.`),
+    h("div", { class: "living-chart" }, leftChart(P, live, checks, pr)),
     h("div", { class: "check-row" }, input, h("span", { class: "check-unit" }, localSym()),
       h("button", { type: "button", class: "btn tinted small", onclick: check }, "Check")));
   const set = () => {
@@ -355,12 +356,16 @@ function niceStep(v) {
   return [1, 2, 2.5, 5, 10].map((f) => f * p).find((x) => x >= raw);
 }
 
-function spendChart(P, live, checks) {
-  const W = 340, H = 158, pad = { l: 34, r: 8, t: 6, b: 22 };
+/*
+ * What's left in your spending account over the pay period: the living money at payday, then each check-in
+ * (purple), against the plan (the gray dashes: the living money spent evenly, down to nothing at payday). The green
+ * dashed line is what you should have left today, with the amount: above it you're ahead, below it behind.
+ */
+function leftChart(P, live, checks, pr) {
+  const W = 340, H = 176, pad = { l: 34, r: 8, t: 18, b: 22 };
   const days = live.days, living = P.living;
-  const pts = [{ d: 0, spent: 0 }, ...checks.map((c) => ({ d: Math.min(Math.max(daysBetween(live.start, asDay(c.date)), 0), days), spent: Math.max(living - c.left, 0), date: c.date }))];
-  // a little room above the budget line for its label and the key; gridlines at round amounts below the top
-  const top = Math.max(living * 1.24, ...pts.map((p) => p.spent * 1.06), 1);
+  const pts = [{ d: 0, left: living }, ...checks.map((c) => ({ d: Math.min(Math.max(daysBetween(live.start, asDay(c.date)), 0), days), left: Math.max(c.left, 0) }))];
+  const top = Math.max(living, ...pts.map((p) => p.left), 1);
   const step = niceStep(top);
   const X = (d) => pad.l + (d / days) * (W - pad.l - pad.r);
   const Y = (v) => pad.t + (1 - v / top) * (H - pad.t - pad.b);
@@ -371,23 +376,33 @@ function spendChart(P, live, checks) {
   }).flat();
   const ticks = [0, 7, 14, 21, days].filter((d, k, a) => d <= days && (k === a.length - 1 || days - d >= 4)).map((d) =>
     s("text", { x: X(d), y: H - 6, class: "sc-axis", "text-anchor": d === 0 ? "start" : d === days ? "end" : "middle" }, dayMonth(addDays(live.start, d))));
-  const line = pts.map((p, k) => `${k ? "L" : "M"}${X(p.d).toFixed(1)},${Y(p.spent).toFixed(1)}`).join(" ");
+  const line = pts.map((p, k) => `${k ? "L" : "M"}${X(p.d).toFixed(1)},${Y(p.left).toFixed(1)}`).join(" ");
   const now = pts.at(-1);
-  const todayD = daysBetween(live.start, live.today);
-  const keyY = pad.t + 9;
-  return s("svg", { viewBox: `0 0 ${W} ${H}`, class: "spend-chart", role: "img", "aria-label": "What you've spent this pay period, from your check-ins, against the budget" },
+  const today = Math.min(Math.max(daysBetween(live.start, live.today), 0), days);
+  // today's amount on its line, where nothing else is: right of today and above it (your check-ins are left of
+  // today, the plan's rest is below); late in the pay period, at the left and below it (they're above it there)
+  const should = pr.expected, yS = Y(should);
+  const text = `${money(should)} today`;
+  const late = X(today) >= W - pad.r - text.length * 7.4 - 10;
+  const y = late ? (Y(0) - yS > 18 ? yS + 15 : yS - 6) : (yS - pad.t > 16 ? yS - 6 : yS + 15);
+  const label = s("text", { x: late ? pad.l + 4 : W - pad.r, y, class: "sc-label should amt", "text-anchor": late ? "start" : "end" }, text);
+  const keyY = 11, kx = W - pad.r;
+  return s("svg", { viewBox: `0 0 ${W} ${H}`, class: "spend-chart", role: "img",
+    "aria-label": `What's left in your spending account this pay period, from your check-ins. You should have ${money(should)} left today.` },
     ...grid, ...ticks,
-    todayD >= 0 && todayD <= days ? s("line", { x1: X(todayD), x2: X(todayD), y1: pad.t, y2: H - pad.b, class: "sc-today" }) : null,
-    s("line", { x1: X(0), y1: Y(0), x2: X(days), y2: Y(living), class: "sc-pace" }),
-    s("line", { x1: pad.l, x2: W - pad.r, y1: Y(living), y2: Y(living), class: "sc-budget" }),
-    s("text", { x: W - pad.r, y: Y(living) - 6, class: "sc-label amt", "text-anchor": "end" }, `Budget ${fmtSek(living)}`),
-    // the key, top left: what the line and the dashes are
-    s("circle", { cx: pad.l + 8, cy: keyY - 3.5, r: 3.5, class: "sc-dot now" }),
-    s("text", { x: pad.l + 16, y: keyY, class: "sc-key" }, "spent"),
-    s("line", { x1: pad.l + 58, x2: pad.l + 76, y1: keyY - 3.5, y2: keyY - 3.5, class: "sc-pace" }),
-    s("text", { x: pad.l + 81, y: keyY, class: "sc-key" }, "on track"),
+    s("line", { x1: X(0), y1: Y(living), x2: X(days), y2: Y(0), class: "sc-pace" }),
+    s("line", { x1: pad.l, x2: W - pad.r, y1: yS, y2: yS, class: "sc-should" }),
+    label,
+    s("circle", { cx: X(today), cy: yS, r: 3.5, class: "sc-should-dot" }),
     pts.length > 1 ? s("path", { d: line, class: "sc-line" }) : null,
-    ...pts.slice(1).map((p) => s("circle", { cx: X(p.d), cy: Y(p.spent), r: p === now ? 4.5 : 3, class: p === now ? "sc-dot now" : "sc-dot" })));
+    ...pts.slice(1).map((p) => s("circle", { cx: X(p.d), cy: Y(p.left), r: p === now ? 4.5 : 3, class: p === now ? "sc-dot now" : "sc-dot" })),
+    // the key, top right: your check-ins, the plan, and what you should have
+    s("text", { x: kx, y: keyY, class: "sc-key should", "text-anchor": "end" }, "should have"),
+    s("line", { x1: kx - 78, x2: kx - 62, y1: keyY - 3.5, y2: keyY - 3.5, class: "sc-should" }),
+    s("text", { x: kx - 88, y: keyY, class: "sc-key", "text-anchor": "end" }, "plan"),
+    s("line", { x1: kx - 132, x2: kx - 116, y1: keyY - 3.5, y2: keyY - 3.5, class: "sc-pace" }),
+    s("text", { x: kx - 142, y: keyY, class: "sc-key", "text-anchor": "end" }, "left"),
+    s("circle", { cx: kx - 168, cy: keyY - 3.5, r: 3.5, class: "sc-dot now" }));
 }
 
 // ---------------------------------------------------------------------------
